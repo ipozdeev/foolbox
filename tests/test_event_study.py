@@ -1,14 +1,13 @@
 import unittest
 from numpy.testing import assert_almost_equal
 import scipy.stats as st
-st.norm().cdf(-1.65)
 
 import pandas as pd
 import numpy as np
 import string
 import random
 
-from EventStudy import EventStudy
+from foolbox.EventStudy import EventStudy
 
 class TestEventStudy(unittest.TestCase):
     """
@@ -53,31 +52,31 @@ class TestEventStudy(unittest.TestCase):
         cls.K = K
         cls.N = N
 
-class TestEventStudyInit(TestEventStudy):
-    """
-    """
-    def test_init_1d(self):
-        """
-        """
-        randint = random.randint(3,10)
-        evt_study = EventStudy(
-            data=self.data_1d,
-            events=self.events,
-            window=[-randint,-1,0,randint])
-
-        self.assertTupleEqual(evt_study.before.shape, (randint, self.K))
-
-    def test_init_2d(self):
-        """
-        """
-        randint = random.randint(3,10)
-        evt_study = EventStudy(
-            data=self.data_2d,
-            events=self.events,
-            window=[-randint,-1,0,randint])
-
-        self.assertTupleEqual(evt_study.before.shape,
-            (self.N, randint, self.K))
+# class TestEventStudyInit(TestEventStudy):
+#     """
+#     """
+#     def test_init_1d(self):
+#         """
+#         """
+#         randint = random.randint(3,10)
+#         evt_study = EventStudy(
+#             data=self.data_1d,
+#             events=self.events,
+#             window=[-randint,-1,0,randint])
+#
+#         self.assertTupleEqual(evt_study.before.shape, (randint, self.K))
+#
+#     def test_init_2d(self):
+#         """
+#         """
+#         randint = random.randint(3,10)
+#         evt_study = EventStudy(
+#             data=self.data_2d,
+#             events=self.events,
+#             window=[-randint,-1,0,randint])
+#
+#         self.assertTupleEqual(evt_study.before.shape,
+#             (self.N, randint, self.K))
 
 class TestEventStudyStuff(TestEventStudy):
     """
@@ -99,34 +98,40 @@ class TestEventStudyStuff(TestEventStudy):
         self.evt_study = evt_study
         self.randint = randint
 
-    def test_get_ts_cumsum(self):
-        """
-        """
-        ts_mu = self.evt_study.get_ts_cumsum()
-        self.assertTupleEqual(ts_mu.shape,
-            (self.N, self.randint*2+1, self.K))
+    # def test_get_ts_cumsum(self):
+    #     """
+    #     """
+    #     ts_mu = self.evt_study.get_ts_cumsum()
+    #     self.assertTupleEqual(ts_mu.shape,
+    #         (self.N, self.randint*2+1, self.K))
+    #
+    # def test_get_cs_mean(self):
+    #     """
+    #     """
+    #     cs_mu = self.evt_study.get_cs_mean()
+    #     self.assertTupleEqual(cs_mu.shape,
+    #         (self.randint*2+1, self.N))
+    #
+    # def test_ci_simple(self):
+    #     """
+    #     """
+    #     ci = self.evt_study.get_ci(ps=(0.05,0.95), method="simple")
+    #     assert_almost_equal(ci.iloc[0,:,-1].values, self.true_ci, decimal=0)
+    #
+    # def test_ci_boot(self):
+    #     """
+    #     """
+    #     ci = self.evt_study.get_ci(ps=0.9, method="boot", M=5000)
+    #     assert_almost_equal(
+    #         ci.iloc[0,:,-1].values,
+    #         self.true_ci,
+    #         decimal=0)
 
-    def test_get_cs_mean(self):
+    def test_plot(self):
         """
         """
-        cs_mu = self.evt_study.get_cs_mean()
-        self.assertTupleEqual(cs_mu.shape,
-            (self.randint*2+1, self.N))
-
-    def test_ci_simple(self):
-        """
-        """
-        ci = self.evt_study.get_ci(ps=(0.05,0.95), method="simple")
-        assert_almost_equal(ci.iloc[0,:,-1].values, self.true_ci, decimal=0)
-
-    def test_ci_boot(self):
-        """
-        """
-        ci = self.evt_study.get_ci(ps=0.9, method="boot", M=5000)
-        assert_almost_equal(
-            ci.iloc[0,:,-1].values,
-            self.true_ci,
-            decimal=0)
+        fig = self.evt_study.plot()
+        fig.savefig("c:/users/hsg-spezial/desktop/fig_evt.png")
 
 if __name__ == "__main__":
     unittest.main()

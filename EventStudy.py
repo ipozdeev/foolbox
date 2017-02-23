@@ -10,6 +10,9 @@ from assetpricing import portfolio_construction as poco
 import matplotlib.pyplot as plt
 # %matplotlib
 
+# matplotlib settings
+gr_1 = "#8c8c8c"
+
 class EventStudy():
     """
     Parameters
@@ -32,13 +35,19 @@ class EventStudy():
     def __init__(self, data, events, window):
         """ Create class, pivot data and center on events.
         """
+        # unpack window into individual items
         ta, tb, tc, td = window
 
-        # if events are a list
+        # if events are a list -> dataframe them
         if not isinstance(events, pd.DataFrame):
             events = pd.DataFrame(data=np.arange(len(events)),index=events)
 
-        # if data is a Series:
+        # check that events are uniquely labelled (e.g. 0,1,2...)
+        if len(pd.unique(events.iloc[0])) < len(events):
+            events = \
+                pd.DataFrame(index=events.index,data=np.arange(len(events)))
+
+        # if data is a series -> dataframe it
         if isinstance(data, pd.Series):
             data = data.to_frame()
 
@@ -70,17 +79,15 @@ class EventStudy():
 
     @staticmethod
     def pivot_for_event_study(data, events, window):
-        """ Pivot `data` to center on event.
+        """ Pivot `data` to center on events.
         """
         # pdb.set_trace()
         ta, tb, tc, td = window
 
-        # loop over events, save snapshot of returns at -n'th day,
-        #   n=1,2,...,window
+        # loop over events, save snapshot of returns around each
         before_dict = {}
         after_dict = {}
         for (t, number) in events.iterrows():
-            # print(t)
             # fetch index of this event
             this_t = get_idx(data,t)
             # from a to b
@@ -95,7 +102,7 @@ class EventStudy():
             this_df.index = np.arange(tc, td+1)
             after_dict[number.values[0]] = this_df
 
-        # create panel of before-event dataframes, where minor_axis keeps
+        # create panel of event-centered dataframes, where minor_axis keeps
         #   individual events, items keeps columns of Y
         before = pd.Panel.from_dict(before_dict, orient="minor")
 
@@ -104,8 +111,8 @@ class EventStudy():
 
         return before, after
 
-    def get_ts_cumsum(self, inplace=False):
-        """ Calculate cumulative sum along time.
+    def get_ts_cumsum(self):
+        """ Calculate cumulative sum over time.
         """
         # the idea is to buy stuff at relative date a, where T is the event
         #   date and keep it until and including relative date b, so need to
@@ -117,13 +124,11 @@ class EventStudy():
         # concat
         ts_mu = pd.concat((ts_mu_before, ts_mu_after), axis=1)
 
-        if inplace:
-            self.before = ts_mu_before
-            self.after = ts_mu_after
+        self.ts_mu = ts_mu
 
         return ts_mu
 
-    def get_cs_mean(self, inplace=False):
+    def get_cs_mean(self):
         """ Calculate mean across events
         """
         cs_mu_before = self.before.mean(axis="minor_axis")
@@ -132,11 +137,19 @@ class EventStudy():
         # concat
         cs_mu = pd.concat((cs_mu_before, cs_mu_after), axis=0)
 
-        if inplace:
-            self.before = cs_mean_before
-            self.after = cs_mean_after
+        self.cs_mu = cs_mu
 
         return cs_mu
+
+    def get_cs_ts(self):
+        """ Calculate time-series cumulative sum and its average across events.
+        """
+        ts_mu = self.get_ts_cumsum()
+        cs_ts_mu = ts_mu.mean(axis="minor_axis")
+
+        self.cs_ts_mu = cs_ts_mu
+
+        return cs_ts_mu
 
     def get_ci(self, ps, method="simple", **kwargs):
         """ Calculate confidence bands.
@@ -173,6 +186,8 @@ class EventStudy():
         elif method == "boot":
             ci = self.boot_ci(boot_from=boot_from, ps=ps, **kwargs)
 
+        self.ci = ci
+
         return ci
 
     def simple_ci(self, boot_from, ps):
@@ -180,7 +195,7 @@ class EventStudy():
         """
         ta, tb, tc, td = self.window
 
-        mu = boot_from.mean()
+        # mu = boot_from.mean()
 
         # sd of mean across events is mean outside of events divided
         #   through sqrt(number of events)
@@ -198,7 +213,7 @@ class EventStudy():
         ci_hi = norm.ppf(ps[1])*q*sd_across.values[np.newaxis,:] + \
             boot_from.mean().values[np.newaxis,:]*q**2
 
-        # concatenate
+        # concatenate: items keeps columns of Y
         ci = pd.Panel(
             major_axis=self.stacked_idx,
             items=self.data.columns,
@@ -261,6 +276,53 @@ class EventStudy():
         ci.loc[:,:,ps[1]] = ci_hi
 
         return ci
+
+    def plot(self):
+        """
+        """
+        # check if cross-sectional avg of cumsum exists
+        if not hasattr(self, "cs_mu"):
+            cs_mu = self.get_cs_mean()
+        if not hasattr(self, "ts_mu"):
+            ts_mu = self.get_cs_mean()
+        if not hasattr(self, "cs_ts_mu"):
+            cs_ts_mu = self.get_cs_ts()
+        if not hasattr(self, "ci"):
+            ci = self.get_ci(ps=0.9,method="simple")
+
+        # for each column in `data` create one plot with three subplots
+        for c in self.data.columns:
+            fig, ax = plt.subplots(3, figsize=(12,12*0.9), sharex=True)
+
+            # 1st plot: before and after for each event in light gray
+            self.before.loc[c,:,:].plot(ax=ax[0], color=gr_1)
+            self.after.loc[c,:,:].plot(ax=ax[0], color=gr_1)
+            # plot mean in black =)
+            self.cs_mu.loc[:,c].plot(ax=ax[0], color='k', linewidth=1.5)
+
+            # 2nd plot: cumulative sums
+            self.ts_mu.loc[c,:,:].plot(ax=ax[1], color=gr_1)
+            # mean in black
+            self.cs_ts_mu.loc[:,c].plot(ax=ax[1], color='k', linewidth=1.5)
+
+            # 3rd plot: ci around avg cumsum
+            self.cs_ts_mu.loc[:,c].plot(ax=ax[2], color='k', linewidth=1.5)
+            ax[2].fill_between(self.stacked_idx,
+                self.ci.loc[c,:,:].iloc[:,0].values,
+                self.ci.loc[c,:,:].iloc[:,1].values,
+                color=gr_1, alpha=0.66, label="conf. interval")
+
+            # some parameters common for all ax
+            for x in range(len(ax)):
+                # ax[x].legend_.remove()
+                ax[x].xaxis.set_ticks(self.stacked_idx)
+                plt.axhline(y=0, color='r', linestyle='--')
+                ax[x].grid(axis="both", alpha=0.33, linestyle=":")
+
+            ax[x].set_xlabel("periods after event")
+            ax[x].set_ylabel("cumulative return, in %")
+
+        return fig
 
 def get_idx(data, t):
     """ Fetch integer index given time index.
