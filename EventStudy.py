@@ -38,18 +38,18 @@ class EventStudy():
         # unpack window into individual items
         ta, tb, tc, td = window
 
-        # if events are a list -> dataframe them
-        if not isinstance(events, pd.DataFrame):
+        # if `events` is not a pandas object:
+        if not issubclass(events.__class__, pd.core.generic.NDFrame):
             events = pd.DataFrame(data=np.arange(len(events)),index=events)
 
+        # if not a DataFrame already -> convert to it because iterrows later
+        if isinstance(events, pd.Series):
+            events = events.to_frame()
+
         # check that events are uniquely labelled (e.g. 0,1,2...)
-        if len(pd.unique(events.iloc[0])) < len(events):
+        if events.duplicated().sum() > 0:
             events = \
                 pd.DataFrame(index=events.index,data=np.arange(len(events)))
-
-        # if data is a series -> dataframe it
-        if isinstance(data, pd.Series):
-            data = data.to_frame()
 
         # shape
         T,N = data.shape
@@ -84,23 +84,35 @@ class EventStudy():
         # pdb.set_trace()
         ta, tb, tc, td = window
 
+        # find dates belonging to two event windows simultaneously
+        belongs_idx = pd.Series(data=0,index=data.index)
+        for t, evt in events.iterrows():
+            # fetch position index of this event
+            this_t = get_idx(data,t)
+            # record span of its event window
+            belongs_idx.ix[(this_t+ta):(this_t+td+1)] += 1
+
+        # set values in rows belonging to multiple events to nan
+        data_to_pivot = data.copy()
+        data_to_pivot.loc[belongs_idx > 1] *= np.nan
+
         # loop over events, save snapshot of returns around each
         before_dict = {}
         after_dict = {}
-        for (t, number) in events.iterrows():
+        for (t, evt) in events.iterrows():
             # fetch index of this event
-            this_t = get_idx(data,t)
+            this_t = get_idx(data_to_pivot,t)
             # from a to b
-            this_df = data.ix[(this_t+ta):(this_t+tb+1),:]
+            this_df = data_to_pivot.ix[(this_t+ta):(this_t+tb+1),:]
             # index with [a,...,b]
             this_df.index = np.arange(ta, tb+1)
             # store
-            before_dict[number.values[0]] = this_df
+            before_dict[evt.values[0]] = this_df
 
             # from c to d, same steps
-            this_df = data.ix[(this_t+tc):(this_t+td+1),:]
+            this_df = data_to_pivot.ix[(this_t+tc):(this_t+td+1),:]
             this_df.index = np.arange(tc, td+1)
-            after_dict[number.values[0]] = this_df
+            after_dict[evt.values[0]] = this_df
 
         # create panel of event-centered dataframes, where minor_axis keeps
         #   individual events, items keeps columns of Y
@@ -168,14 +180,14 @@ class EventStudy():
         if isinstance(ps, float):
             ps = ((1-ps)/2, ps/2+1/2)
 
-        # drop dates around events, 2 times window length
+        # drop dates around events, G times window length
         # TODO: control for overlaps
         boot_from = self.data.copy()
         # pdb.set_trace()
         for (t, number) in self.events.iterrows():
             this_t = get_idx(boot_from, t)
             boot_from.drop(
-                boot_from.index[(this_t+ta*2):(this_t+td*2)],
+                boot_from.index[(this_t+ta):(this_t+td)],
                 axis="index",
                 inplace=True)
 
@@ -223,7 +235,7 @@ class EventStudy():
 
         return ci
 
-    def boot_ci(self, boot_from, ps, M=1000):
+    def boot_ci(self, boot_from, ps, M=500):
         """
         """
         # space for df's of pivoted tables
@@ -277,9 +289,11 @@ class EventStudy():
 
         return ci
 
-    def plot(self):
+    def plot(self, ci_method="simple"):
         """
         """
+        ta, tb, tc, td = self.window
+
         # check if cross-sectional avg of cumsum exists
         if not hasattr(self, "cs_mu"):
             cs_mu = self.get_cs_mean()
@@ -288,7 +302,7 @@ class EventStudy():
         if not hasattr(self, "cs_ts_mu"):
             cs_ts_mu = self.get_cs_ts()
         if not hasattr(self, "ci"):
-            ci = self.get_ci(ps=0.9,method="simple")
+            ci = self.get_ci(ps=0.9, method=ci_method)
 
         # for each column in `data` create one plot with three subplots
         for c in self.data.columns:
@@ -297,30 +311,47 @@ class EventStudy():
             # 1st plot: before and after for each event in light gray
             self.before.loc[c,:,:].plot(ax=ax[0], color=gr_1)
             self.after.loc[c,:,:].plot(ax=ax[0], color=gr_1)
+            # add points at initiation
+            self.before.loc[c,[-1],:].plot(ax=ax[0], color="k",
+                linestyle="none", marker=".", markerfacecolor="k")
+            self.after.loc[c,[0],:].plot(ax=ax[0], color="k",
+                linestyle="none", marker=".", markerfacecolor="k")
             # plot mean in black =)
             self.cs_mu.loc[:,c].plot(ax=ax[0], color='k', linewidth=1.5)
+            ax[0].set_title("at respective period")
 
             # 2nd plot: cumulative sums
-            self.ts_mu.loc[c,:,:].plot(ax=ax[1], color=gr_1)
+            self.ts_mu.loc[c,:tb,:].plot(ax=ax[1], color=gr_1)
+            self.ts_mu.loc[c,tc:,:].plot(ax=ax[1], color=gr_1)
+            # add points at initiation
+            self.before.loc[c,[-1],:].plot(ax=ax[1], color="k",
+                linestyle="none", marker=".", markerfacecolor="k")
+            self.after.loc[c,[0],:].plot(ax=ax[1], color="k",
+                linestyle="none", marker=".", markerfacecolor="k")
             # mean in black
             self.cs_ts_mu.loc[:,c].plot(ax=ax[1], color='k', linewidth=1.5)
+            ax[1].set_title("cumulative")
 
             # 3rd plot: ci around avg cumsum
-            self.cs_ts_mu.loc[:,c].plot(ax=ax[2], color='k', linewidth=1.5)
+            self.cs_ts_mu.loc[:tb,c].plot(ax=ax[2], color='k', linewidth=1.5)
+            self.cs_ts_mu.loc[tc:,c].plot(ax=ax[2], color='k', linewidth=1.5)
             ax[2].fill_between(self.stacked_idx,
                 self.ci.loc[c,:,:].iloc[:,0].values,
                 self.ci.loc[c,:,:].iloc[:,1].values,
-                color=gr_1, alpha=0.66, label="conf. interval")
+                color=gr_1, alpha=0.5, label="conf. interval")
+            ax[2].set_title("average cumulative")
 
             # some parameters common for all ax
             for x in range(len(ax)):
                 # ax[x].legend_.remove()
                 ax[x].xaxis.set_ticks(self.stacked_idx)
-                plt.axhline(y=0, color='r', linestyle='--')
+                ax[x].axhline(y=0, color='r', linestyle='--', linewidth=1.0)
                 ax[x].grid(axis="both", alpha=0.33, linestyle=":")
+                legend = ax[x].legend()
+                legend.remove()
 
             ax[x].set_xlabel("periods after event")
-            ax[x].set_ylabel("cumulative return, in %")
+            ax[x].set_ylabel("return, in % per period")
 
         return fig
 
@@ -331,46 +362,46 @@ def get_idx(data, t):
     """
     return data.index.get_loc(t, method="ffill")
 
-def run_event_study(data, events, window, ps, wght=None, ci_method="simple",
-    plot=True, **kwargs):
-    """
-    """
-    if wght is not None:
-        if wght == "mean":
-            data = data.mean(axis=1)
-        else:
-            data = data.dot(wght)
-
-    evt_study = EventStudy(
-        data=data,
-        events=events,
-        window=window)
-
-    ts_mu = evt_study.get_ts_cumsum(inplace=True)
-    cs_mu = evt_study.get_cs_mean()
-
-    ci = evt_study.get_ci(ps=ps, method=ci_method, **kwargs)
-    ci = ci.ix[0,:,:]
-
-    # plot ------------------------------------------------------------------
-    fig, ax = plt.subplots(figsize=(10, 10/4*3))
-    cs_mu.plot(ax=ax, linewidth=1.5, color='k')
-    ax.legend_.remove()
-    ax.fill_between(evt_study.stacked_idx,
-        ci.iloc[:,0].values,
-        ci.iloc[:,1].values,
-        color="#b7b7b7", alpha=0.66, label="conf. interval")
-    ax.xaxis.set_ticks(evt_study.stacked_idx)
-    ax.set_xlabel("days after event")
-    ax.set_ylabel("cumulative return, in %")
-    # ax.set_title("currencies vs. dollar after opec meetings")
-    plt.axhline(y=0, color='k', linestyle='--')
-    ax.grid(axis="both", alpha=0.33, linestyle=":")
-    # ax.legend(loc="upper right")
-    grey_patch = mpatches.Patch(color="#b7b7b7", label="90% ci")
-    plt.legend(handles=[ax.get_lines()[0], grey_patch])
-
-    return cs_mu, ci, ax
+# def run_event_study(data, events, window, ps, wght=None, ci_method="simple",
+#     plot=True, **kwargs):
+#     """
+#     """
+#     if wght is not None:
+#         if wght == "mean":
+#             data = data.mean(axis=1)
+#         else:
+#             data = data.dot(wght)
+#
+#     evt_study = EventStudy(
+#         data=data,
+#         events=events,
+#         window=window)
+#
+#     ts_mu = evt_study.get_ts_cumsum(inplace=True)
+#     cs_mu = evt_study.get_cs_mean()
+#
+#     ci = evt_study.get_ci(ps=ps, method=ci_method, **kwargs)
+#     ci = ci.ix[0,:,:]
+#
+#     # plot ------------------------------------------------------------------
+#     fig, ax = plt.subplots(figsize=(10, 10/4*3))
+#     cs_mu.plot(ax=ax, linewidth=1.5, color='k')
+#     ax.legend_.remove()
+#     ax.fill_between(evt_study.stacked_idx,
+#         ci.iloc[:,0].values,
+#         ci.iloc[:,1].values,
+#         color="#b7b7b7", alpha=0.66, label="conf. interval")
+#     ax.xaxis.set_ticks(evt_study.stacked_idx)
+#     ax.set_xlabel("days after event")
+#     ax.set_ylabel("cumulative return, in %")
+#     # ax.set_title("currencies vs. dollar after opec meetings")
+#     plt.axhline(y=0, color='k', linestyle='--')
+#     ax.grid(axis="both", alpha=0.33, linestyle=":")
+#     # ax.legend(loc="upper right")
+#     grey_patch = mpatches.Patch(color="#b7b7b7", label="90% ci")
+#     plt.legend(handles=[ax.get_lines()[0], grey_patch])
+#
+#     return cs_mu, ci, ax
 
 if __name__ == "__main__":
     pass
