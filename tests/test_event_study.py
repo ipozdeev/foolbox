@@ -52,31 +52,31 @@ class TestEventStudy(unittest.TestCase):
         cls.K = K
         cls.N = N
 
-# class TestEventStudyInit(TestEventStudy):
-#     """
-#     """
-#     def test_init_1d(self):
-#         """
-#         """
-#         randint = random.randint(3,10)
-#         evt_study = EventStudy(
-#             data=self.data_1d,
-#             events=self.events,
-#             window=[-randint,-1,0,randint])
-#
-#         self.assertTupleEqual(evt_study.before.shape, (randint, self.K))
-#
-#     def test_init_2d(self):
-#         """
-#         """
-#         randint = random.randint(3,10)
-#         evt_study = EventStudy(
-#             data=self.data_2d,
-#             events=self.events,
-#             window=[-randint,-1,0,randint])
-#
-#         self.assertTupleEqual(evt_study.before.shape,
-#             (self.N, randint, self.K))
+class TestEventStudyInit(TestEventStudy):
+    """
+    """
+    def test_init_1d(self):
+        """
+        """
+        randint = random.randint(3,10)
+        evt_study = EventStudy(
+            data=self.data_1d,
+            events=self.events,
+            window=[-randint,-1,0,randint])
+
+        self.assertTupleEqual(evt_study.before.shape, (1, randint, self.K))
+
+    def test_init_2d(self):
+        """
+        """
+        randint = random.randint(3,10)
+        evt_study = EventStudy(
+            data=self.data_2d,
+            events=self.events,
+            window=[-randint,-1,0,randint])
+
+        self.assertTupleEqual(evt_study.before.shape,
+            (self.N, randint, self.K))
 
 class TestEventStudyStuff(TestEventStudy):
     """
@@ -98,62 +98,42 @@ class TestEventStudyStuff(TestEventStudy):
         self.evt_study = evt_study
         self.randint = randint
 
-    # def test_get_ts_cumsum(self):
-    #     """
-    #     """
-    #     ts_mu = self.evt_study.get_ts_cumsum()
-    #     self.assertTupleEqual(ts_mu.shape,
-    #         (self.N, self.randint*2+1, self.K))
-    #
-    # def test_get_cs_mean(self):
-    #     """
-    #     """
-    #     cs_mu = self.evt_study.get_cs_mean()
-    #     self.assertTupleEqual(cs_mu.shape,
-    #         (self.randint*2+1, self.N))
-    #
-    # def test_ci_simple(self):
-    #     """
-    #     """
-    #     ci = self.evt_study.get_ci(ps=(0.05,0.95), method="simple")
-    #     assert_almost_equal(ci.iloc[0,:,-1].values, self.true_ci, decimal=0)
-    #
-    # def test_ci_boot(self):
-    #     """
-    #     """
-    #     ci = self.evt_study.get_ci(ps=0.9, method="boot", M=5000)
-    #     assert_almost_equal(
-    #         ci.iloc[0,:,-1].values,
-    #         self.true_ci,
-    #         decimal=0)
+    def test_get_ts_cumsum(self):
+        """
+        """
+        ts_mu = self.evt_study.get_ts_cumsum()
+        self.assertTupleEqual(ts_mu.shape,
+            (self.N, self.randint*2+1, self.K))
+
+    def test_get_cs_mean(self):
+        """
+        """
+        cs_mu = self.evt_study.get_cs_mean()
+        self.assertTupleEqual(cs_mu.shape,
+            (self.randint*2+1, self.N))
+
+    def test_ci_simple(self):
+        """
+        """
+        ci = self.evt_study.get_ci(ps=(0.05,0.95), method="simple")
+        assert_almost_equal(ci.iloc[0,:,-1].values, self.true_ci, decimal=0)
+
+    def test_ci_boot(self):
+        """
+        """
+        ci = self.evt_study.get_ci(ps=0.9, method="boot", M=500)
+        assert_almost_equal(
+            ci.iloc[0,:,-1].values,
+            self.true_ci,
+            decimal=0)
 
     def test_plot(self):
         """
         """
+        ci = self.evt_study.get_ci(ps=0.9, method="boot", M=250)
         fig = self.evt_study.plot()
-        fig.savefig("c:/users/hsg-spezial/desktop/fig_evt.png")
+        fig.show()
+        # fig.savefig("c:/users/hsg-spezial/desktop/fig_evt.png")
 
 if __name__ == "__main__":
     unittest.main()
-# lol.cumsum().ix[:,3,:]
-# lol
-# wut = cumulants*lol.mean(axis=2).mean().values[np.newaxis,:]
-# waf = -10*cumulants*lol.mean(axis=2).mean().values[np.newaxis,:]
-# np.dstack((wut,waf)).shape
-# pd.Panel(data=np.swapaxes(np.dstack((wut,waf)), 0, 1))
-# cumulants*lol.mean(axis=2).mean().values[np.newaxis,:][0,0]
-# np.arange(6)[3::-1]
-# lol.apply(lambda x: x.quantile(0.95), axis="minor")
-# lol = pd.Panel(np.empty(shape=(2,3,4)))
-# lol
-# lol.ix[:,:,0]
-# lol.iloc[[0,],:,:].squeeze()
-# lol.iloc[:,:,1]
-# 1.5/np.sqrt(10)*1.95+1.
-# lol.iloc[:,:,1].values.mean(axis=0)
-# lol = pd.Panel(
-#     data=np.random.normal(size=(5,1000,10)))
-# wut = lol.cumsum(axis="items")
-# wut = wut.mean(axis="minor_axis")
-# 1/np.sqrt(10)*1.64*np.sqrt(np.arange(1,6))
-# wut.quantile(0.95)

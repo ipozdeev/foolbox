@@ -11,6 +11,7 @@ import matplotlib.pyplot as plt
 # %matplotlib
 
 # matplotlib settings
+plt.rc("font", family="serif", size=12)
 gr_1 = "#8c8c8c"
 
 class EventStudy():
@@ -289,8 +290,11 @@ class EventStudy():
 
         return ci
 
-    def plot(self, ci_method="simple"):
+    def plot(self, **kwargs):
         """
+        Returns
+        -------
+        figs :
         """
         ta, tb, tc, td = self.window
 
@@ -302,9 +306,10 @@ class EventStudy():
         if not hasattr(self, "cs_ts_mu"):
             cs_ts_mu = self.get_cs_ts()
         if not hasattr(self, "ci"):
-            ci = self.get_ci(ps=0.9, method=ci_method)
+            ci = self.get_ci(**kwargs)
 
         # for each column in `data` create one plot with three subplots
+        figs = {}
         for c in self.data.columns:
             fig, ax = plt.subplots(3, figsize=(12,12*0.9), sharex=True)
 
@@ -353,7 +358,30 @@ class EventStudy():
             ax[x].set_xlabel("periods after event")
             ax[x].set_ylabel("return, in % per period")
 
-        return fig
+            figs[c] = ax
+
+        # fig, ax = plt.subplots(3, figsize=(12,12/1.25), sharex=True)
+        # cnt = 0
+        # for c in self.data.columns:
+        #     # 3rd plot: ci around avg cumsum
+        #     self.cs_ts_mu.loc[tc:,c].plot(ax=ax[cnt], color='k', linewidth=1.5)
+        #     self.cs_ts_mu.loc[tc:,c].plot(ax=ax[cnt], color='k',
+        #         linestyle="none", marker="o", markerfacecolor="k",
+        #         markersize=6)
+        #     ax[cnt].fill_between(self.after_idx,
+        #         np.zeros(6),
+        #         self.ci.loc[c,tc:,:].iloc[:,0].values,
+        #         color=gr_1, alpha=0.5, label="conf. interval")
+        #     # ax[cnt].axhline(y=0, color='r', linestyle='--', linewidth=1.0)
+        #     legend = ax[cnt].legend()
+        #     legend.remove()
+        #     ax[cnt].grid(axis="both", alpha=0.33, linestyle=":")
+        #     ax[cnt].set_ylim([-90,10])
+        #     cnt += 1
+        #
+        # ax[2].set_xlim([-0.5, 5.5])
+
+        return figs
 
 def get_idx(data, t):
     """ Fetch integer index given time index.
@@ -405,3 +433,6 @@ def get_idx(data, t):
 
 if __name__ == "__main__":
     pass
+
+    data = pd.read_clipboard(index_col=0,parse_dates=True,delimiter=",")
+    skew =
