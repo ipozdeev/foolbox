@@ -6,7 +6,7 @@ from pandas.tseries.offsets import DateOffset
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 import pdb
-from assetpricing import portfolio_construction as poco
+# from assetpricing import portfolio_construction as poco
 import matplotlib.pyplot as plt
 # %matplotlib
 
@@ -433,6 +433,3 @@ def get_idx(data, t):
 
 if __name__ == "__main__":
     pass
-
-    data = pd.read_clipboard(index_col=0,parse_dates=True,delimiter=",")
-    skew =
