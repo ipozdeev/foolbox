@@ -358,7 +358,10 @@ class EventStudy():
             ax[x].set_xlabel("periods after event")
             ax[x].set_ylabel("return, in % per period")
 
-            figs[c] = ax
+            # super title
+            fig.suptitle(c, fontsize=14)
+
+            figs[c] = fig
 
         # fig, ax = plt.subplots(3, figsize=(12,12/1.25), sharex=True)
         # cnt = 0
