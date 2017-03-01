@@ -76,52 +76,6 @@ class EventStudy():
         self.after_idx = after.major_axis
         self.stacked_idx = np.hstack((before.major_axis, after.major_axis))
 
-    # @staticmethod
-    # def pivot_for_event_study(data, events, window):
-    #     """ Pivot `data` to center on events.
-    #     """
-    #     # pdb.set_trace()
-    #     ta, tb, tc, td = window
-    #
-    #     # find dates belonging to two event windows simultaneously
-    #     belongs_idx = pd.Series(data=0,index=data.index)
-    #     for t, evt in events.iterrows():
-    #         # fetch position index of this event
-    #         this_t = get_idx(data,t)
-    #         # record span of its event window
-    #         belongs_idx.ix[(this_t+ta):(this_t+td+1)] += 1
-    #
-    #     # set values in rows belonging to multiple events to nan
-    #     data_to_pivot = data.copy()
-    #     data_to_pivot.loc[belongs_idx > 1] *= np.nan
-    #
-    #     # loop over events, save snapshot of returns around each
-    #     before_dict = {}
-    #     after_dict = {}
-    #     for (t, evt) in events.iterrows():
-    #         # fetch index of this event
-    #         this_t = get_idx(data_to_pivot,t)
-    #         # from a to b
-    #         this_df = data_to_pivot.ix[(this_t+ta):(this_t+tb+1),:]
-    #         # index with [a,...,b]
-    #         this_df.index = np.arange(ta, tb+1)
-    #         # store
-    #         before_dict[evt.values[0]] = this_df
-    #
-    #         # from c to d, same steps
-    #         this_df = data_to_pivot.ix[(this_t+tc):(this_t+td+1),:]
-    #         this_df.index = np.arange(tc, td+1)
-    #         after_dict[evt.values[0]] = this_df
-    #
-    #     # create panel of event-centered dataframes, where minor_axis keeps
-    #     #   individual events, items keeps columns of Y
-    #     before = pd.Panel.from_dict(before_dict, orient="minor")
-    #
-    #     # after
-    #     after = pd.Panel.from_dict(after_dict, orient="minor")
-    #
-    #     return before, after
-
     @staticmethod
     def pivot_for_event_study(data, events, window):
         """ Pivot `data` to center on events.
@@ -130,10 +84,10 @@ class EventStudy():
         ta, tb, tc, td = window
 
         # find dates belonging to two event windows simultaneously
-        belongs_idx = pd.Series(data=0, index=data.index)
-        for t in events.index:
-            # fetch position index of this event (ffill if missing in `data`)
-            this_t = get_idx(data, t)
+        belongs_idx = pd.Series(data=0,index=data.index)
+        for t, evt in events.iterrows():
+            # fetch position index of this event
+            this_t = get_idx(data,t)
             # record span of its event window
             belongs_idx.ix[(this_t+ta):(this_t+td+1)] += 1
 
@@ -142,7 +96,9 @@ class EventStudy():
         data_to_pivot.loc[belongs_idx > 1] *= np.nan
 
         # loop over events, save snapshot of returns around each
-        for t, evt in events.iteritems():
+        before_dict = {}
+        after_dict = {}
+        for (t, evt) in events.iterrows():
             # fetch index of this event
             this_t = get_idx(data_to_pivot,t)
             # from a to b
@@ -476,7 +432,7 @@ def event_study_wrapper(data, events, exclude_cols=[], direction="all",
         this_data = this_data.loc[start_at:,:]
 
     # init EventStudy
-    es = EventStudy.EventStudy(data=this_data, events=events, window=window)
+    es = EventStudy(data=this_data, events=events, window=window)
     # plot
     es.plot(ps=ps, method=ci_method)
 
