@@ -4,10 +4,8 @@ from scipy.stats import norm
 import random
 from pandas.tseries.offsets import DateOffset
 import matplotlib.pyplot as plt
-import matplotlib.patches as mpatches
-import pdb
-# from assetpricing import portfolio_construction as poco
-import matplotlib.pyplot as plt
+# import matplotlib.patches as mpatches
+# import pdb
 # %matplotlib
 
 # matplotlib settings
@@ -78,6 +76,52 @@ class EventStudy():
         self.after_idx = after.major_axis
         self.stacked_idx = np.hstack((before.major_axis, after.major_axis))
 
+    # @staticmethod
+    # def pivot_for_event_study(data, events, window):
+    #     """ Pivot `data` to center on events.
+    #     """
+    #     # pdb.set_trace()
+    #     ta, tb, tc, td = window
+    #
+    #     # find dates belonging to two event windows simultaneously
+    #     belongs_idx = pd.Series(data=0,index=data.index)
+    #     for t, evt in events.iterrows():
+    #         # fetch position index of this event
+    #         this_t = get_idx(data,t)
+    #         # record span of its event window
+    #         belongs_idx.ix[(this_t+ta):(this_t+td+1)] += 1
+    #
+    #     # set values in rows belonging to multiple events to nan
+    #     data_to_pivot = data.copy()
+    #     data_to_pivot.loc[belongs_idx > 1] *= np.nan
+    #
+    #     # loop over events, save snapshot of returns around each
+    #     before_dict = {}
+    #     after_dict = {}
+    #     for (t, evt) in events.iterrows():
+    #         # fetch index of this event
+    #         this_t = get_idx(data_to_pivot,t)
+    #         # from a to b
+    #         this_df = data_to_pivot.ix[(this_t+ta):(this_t+tb+1),:]
+    #         # index with [a,...,b]
+    #         this_df.index = np.arange(ta, tb+1)
+    #         # store
+    #         before_dict[evt.values[0]] = this_df
+    #
+    #         # from c to d, same steps
+    #         this_df = data_to_pivot.ix[(this_t+tc):(this_t+td+1),:]
+    #         this_df.index = np.arange(tc, td+1)
+    #         after_dict[evt.values[0]] = this_df
+    #
+    #     # create panel of event-centered dataframes, where minor_axis keeps
+    #     #   individual events, items keeps columns of Y
+    #     before = pd.Panel.from_dict(before_dict, orient="minor")
+    #
+    #     # after
+    #     after = pd.Panel.from_dict(after_dict, orient="minor")
+    #
+    #     return before, after
+
     @staticmethod
     def pivot_for_event_study(data, events, window):
         """ Pivot `data` to center on events.
@@ -86,10 +130,10 @@ class EventStudy():
         ta, tb, tc, td = window
 
         # find dates belonging to two event windows simultaneously
-        belongs_idx = pd.Series(data=0,index=data.index)
-        for t, evt in events.iterrows():
-            # fetch position index of this event
-            this_t = get_idx(data,t)
+        belongs_idx = pd.Series(data=0, index=data.index)
+        for t in events.index:
+            # fetch position index of this event (ffill if missing in `data`)
+            this_t = get_idx(data, t)
             # record span of its event window
             belongs_idx.ix[(this_t+ta):(this_t+td+1)] += 1
 
@@ -98,9 +142,7 @@ class EventStudy():
         data_to_pivot.loc[belongs_idx > 1] *= np.nan
 
         # loop over events, save snapshot of returns around each
-        before_dict = {}
-        after_dict = {}
-        for (t, evt) in events.iterrows():
+        for t, evt in events.iteritems():
             # fetch index of this event
             this_t = get_idx(data_to_pivot,t)
             # from a to b
@@ -292,9 +334,15 @@ class EventStudy():
 
     def plot(self, **kwargs):
         """
+        Parameters
+        ----------
+        kwargs : dict
+            of arguments to EventStudy.get_ci() method.
+
         Returns
         -------
-        figs :
+        figs : list
+             of figures
         """
         ta, tb, tc, td = self.window
 
@@ -363,28 +411,76 @@ class EventStudy():
 
             figs[c] = fig
 
-        # fig, ax = plt.subplots(3, figsize=(12,12/1.25), sharex=True)
-        # cnt = 0
-        # for c in self.data.columns:
-        #     # 3rd plot: ci around avg cumsum
-        #     self.cs_ts_mu.loc[tc:,c].plot(ax=ax[cnt], color='k', linewidth=1.5)
-        #     self.cs_ts_mu.loc[tc:,c].plot(ax=ax[cnt], color='k',
-        #         linestyle="none", marker="o", markerfacecolor="k",
-        #         markersize=6)
-        #     ax[cnt].fill_between(self.after_idx,
-        #         np.zeros(6),
-        #         self.ci.loc[c,tc:,:].iloc[:,0].values,
-        #         color=gr_1, alpha=0.5, label="conf. interval")
-        #     # ax[cnt].axhline(y=0, color='r', linestyle='--', linewidth=1.0)
-        #     legend = ax[cnt].legend()
-        #     legend.remove()
-        #     ax[cnt].grid(axis="both", alpha=0.33, linestyle=":")
-        #     ax[cnt].set_ylim([-90,10])
-        #     cnt += 1
-        #
-        # ax[2].set_xlim([-0.5, 5.5])
-
         return figs
+
+def event_study_wrapper(data, events, exclude_cols=[], direction="all",
+    crisis="both", window=None, ps=0.9, ci_method="simple"):
+    """ Convenience fun to run studies of many series on the same `events`.
+
+    Parameters
+    ----------
+    data : pandas.DataFrame
+        of data, with columns for something summable (e.g. log-returns)
+    events : pandas.Series/DataFrame
+        of events, indexed by event dates; values can be e.g. interest rates
+    exclude_cols : list-like
+        of columns to drop from data when doing the magic
+    direction : str
+        'ups' for considering positive changes in `events`.values only;
+        'downs' for negative changes;
+        'changes' for positive and negative changes;
+        'constants' for no changes whatsoever;
+        everything else for considering all events
+    crisis : str
+        'pre' for considering pre-crisis subsample only;
+        'post' for post-crisis one;
+        everything else - for the whole sample.
+        Crisis date is taken to be 2008-06-30.
+    window : list
+        of 4 elements as in EventStudy
+    ps : float/tuple
+        confidence interval/bands thereof
+
+    Returns:
+    es : EventStudy
+        isntance of EventStudy with all attributes (cs, ts etc.) calculated
+
+    """
+    # window default
+    if window is None:
+        window = [-5,-1,0,5]
+    # drop certain currencies
+    this_data = data.drop(exclude_cols, axis=1)
+
+    # subsample events: ups, downs, constants, ups and down or all
+    if direction == "ups":
+        events = events.where(events.diff() > 0).dropna()
+    elif direction == "downs":
+        events = events.where(events.diff() < 0).dropna()
+    elif direction == "changes":
+        events = events.where(events.diff() != 0).dropna()
+    elif direction == "constants":
+        events = events.where(events.diff() == 0).dropna()
+
+    # index to start data at: needed to discard stuff way too old
+    start_at = min(events.index) - DateOffset(months=2)
+
+    # pre- or post-crisis
+    if crisis == "pre":
+        this_data = this_data.loc[start_at:"2008-06-30",:]
+        events = events.loc[:"2008-06-30",:]
+    elif crisis == "post":
+        this_data = this_data.loc["2008-06-30":,:]
+        events = events.loc["2008-06-30":,:]
+    else:
+        this_data = this_data.loc[start_at:,:]
+
+    # init EventStudy
+    es = EventStudy.EventStudy(data=this_data, events=events, window=window)
+    # plot
+    es.plot(ps=ps, method=ci_method)
+
+    return es
 
 def get_idx(data, t):
     """ Fetch integer index given time index.
@@ -393,46 +489,31 @@ def get_idx(data, t):
     """
     return data.index.get_loc(t, method="ffill")
 
-# def run_event_study(data, events, window, ps, wght=None, ci_method="simple",
-#     plot=True, **kwargs):
-#     """
-#     """
-#     if wght is not None:
-#         if wght == "mean":
-#             data = data.mean(axis=1)
-#         else:
-#             data = data.dot(wght)
-#
-#     evt_study = EventStudy(
-#         data=data,
-#         events=events,
-#         window=window)
-#
-#     ts_mu = evt_study.get_ts_cumsum(inplace=True)
-#     cs_mu = evt_study.get_cs_mean()
-#
-#     ci = evt_study.get_ci(ps=ps, method=ci_method, **kwargs)
-#     ci = ci.ix[0,:,:]
-#
-#     # plot ------------------------------------------------------------------
-#     fig, ax = plt.subplots(figsize=(10, 10/4*3))
-#     cs_mu.plot(ax=ax, linewidth=1.5, color='k')
-#     ax.legend_.remove()
-#     ax.fill_between(evt_study.stacked_idx,
-#         ci.iloc[:,0].values,
-#         ci.iloc[:,1].values,
-#         color="#b7b7b7", alpha=0.66, label="conf. interval")
-#     ax.xaxis.set_ticks(evt_study.stacked_idx)
-#     ax.set_xlabel("days after event")
-#     ax.set_ylabel("cumulative return, in %")
-#     # ax.set_title("currencies vs. dollar after opec meetings")
-#     plt.axhline(y=0, color='k', linestyle='--')
-#     ax.grid(axis="both", alpha=0.33, linestyle=":")
-#     # ax.legend(loc="upper right")
-#     grey_patch = mpatches.Patch(color="#b7b7b7", label="90% ci")
-#     plt.legend(handles=[ax.get_lines()[0], grey_patch])
-#
-#     return cs_mu, ci, ax
 
 if __name__ == "__main__":
     pass
+
+
+# ---------------------------------------------------------------------------
+# alternative spec, once needed for Mirkov, Pozdeev, Soederlind (2016)
+# ---------------------------------------------------------------------------
+# fig, ax = plt.subplots(3, figsize=(12,12/1.25), sharex=True)
+# cnt = 0
+# for c in self.data.columns:
+#     # 3rd plot: ci around avg cumsum
+#     self.cs_ts_mu.loc[tc:,c].plot(ax=ax[cnt], color='k', linewidth=1.5)
+#     self.cs_ts_mu.loc[tc:,c].plot(ax=ax[cnt], color='k',
+#         linestyle="none", marker="o", markerfacecolor="k",
+#         markersize=6)
+#     ax[cnt].fill_between(self.after_idx,
+#         np.zeros(6),
+#         self.ci.loc[c,tc:,:].iloc[:,0].values,
+#         color=gr_1, alpha=0.5, label="conf. interval")
+#     # ax[cnt].axhline(y=0, color='r', linestyle='--', linewidth=1.0)
+#     legend = ax[cnt].legend()
+#     legend.remove()
+#     ax[cnt].grid(axis="both", alpha=0.33, linestyle=":")
+#     ax[cnt].set_ylim([-90,10])
+#     cnt += 1
+#
+# ax[2].set_xlim([-0.5, 5.5])
