@@ -1,16 +1,17 @@
 #
-import pandas as pd
-import numpy as np
-import string
 import itertools
-import statsmodels.api as sm
+import logging
+import string
 import warnings
 
-import logging
+import numpy as np
+import pandas as pd
+import statsmodels.api as sm
+
 logging.basicConfig(level=logging.INFO)
 
-from foolbox.set_credentials import set_path
-path = set_path()
+import foolbox.data_mgmt.set_credentials as set_credentials
+set_credentials.set_r_environment()
 
 import rpy2.robjects as robj
 from rpy2.robjects.packages import importr

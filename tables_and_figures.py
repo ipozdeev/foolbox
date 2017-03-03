@@ -2,9 +2,10 @@ import pandas as pd
 import numpy as np
 import statsmodels.api as sm
 from scipy import stats
-from tools import econometrics as ec          
+from foolbox import econometrics as ec
 import matplotlib
 import matplotlib.pyplot as plt
+
 
 def descriptives(data, scale=12):
     """Estimates frequency-adjusted descriptive statistics for each series in 

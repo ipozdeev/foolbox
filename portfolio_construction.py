@@ -61,7 +61,7 @@ def rank_sort(returns, signals, n_portfolios):
         # Finally, append the dataframes in portf_list with new rows
         for p in np.arange(1, n_portfolios+1):
             portf_list[p-1] = portf_list[p-1].append(rank_cuts[p-1])
-    returns.index
+
     # Write the list's contents into output dictionary
     for p in np.arange(1, n_portfolios+1):
         # Write each portfolios'constituent assets
