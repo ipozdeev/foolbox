@@ -1,10 +1,8 @@
 import unittest
 from numpy.testing import assert_almost_equal
-import scipy.stats as st
 
 import pandas as pd
 import numpy as np
-import string
 import random
 
 from foolbox.EventStudy import EventStudy
@@ -30,22 +28,17 @@ class TestEventStudy(unittest.TestCase):
         idx = pd.date_range("1990-01-01", periods=T, frequency='D')
 
         # simulate data
-        data_1d = pd.DataFrame(
-            data=np.random.normal(size=(T,1))*sigma+mu,
-            index=idx,
-            columns=random.sample(string.ascii_lowercase, 1))
-
-        data_2d = pd.DataFrame(
-            data=np.random.normal(size=(T,N))*sigma+mu,
-            index=idx,
-            columns=random.sample(string.ascii_lowercase, N))
+        data_1d = pd.Series(
+            data=np.random.normal(size=(T,))*sigma+mu,
+            index=idx)
+        data_1d.name = "haha"
 
         # simulate events
         events = sorted(random.sample(idx.tolist()[T//3:T//2], K))
+        events = pd.Series(index=events, data=np.arange(len(events)))
 
         # store
         cls.data_1d = data_1d
-        cls.data_2d = data_2d
         cls.sigma = sigma
         cls.mu = mu
         cls.events = events
@@ -64,19 +57,7 @@ class TestEventStudyInit(TestEventStudy):
             events=self.events,
             window=[-randint,-1,0,randint])
 
-        self.assertTupleEqual(evt_study.before.shape, (1, randint, self.K))
-
-    def test_init_2d(self):
-        """
-        """
-        randint = random.randint(3,10)
-        evt_study = EventStudy(
-            data=self.data_2d,
-            events=self.events,
-            window=[-randint,-1,0,randint])
-
-        self.assertTupleEqual(evt_study.before.shape,
-            (self.N, randint, self.K))
+        self.assertTupleEqual(evt_study.before.shape, (randint, self.K))
 
 class TestEventStudyStuff(TestEventStudy):
     """
@@ -86,7 +67,7 @@ class TestEventStudyStuff(TestEventStudy):
         """
         randint = random.randint(3,10)
         evt_study = EventStudy(
-            data=self.data_2d,
+            data=self.data_1d,
             events=self.events,
             window=[-randint,-1,0,randint])
 
@@ -101,36 +82,38 @@ class TestEventStudyStuff(TestEventStudy):
     def test_get_ts_cumsum(self):
         """
         """
-        ts_mu = self.evt_study.get_ts_cumsum()
+        ts_mu = self.evt_study.get_ts_cumsum(
+            self.evt_study.before, self.evt_study.after)
         self.assertTupleEqual(ts_mu.shape,
-            (self.N, self.randint*2+1, self.K))
+            (self.randint*2+1, self.K))
 
     def test_get_cs_mean(self):
         """
         """
-        cs_mu = self.evt_study.get_cs_mean()
+        cs_mu = self.evt_study.get_cs_mean(
+            self.evt_study.before, self.evt_study.after)
         self.assertTupleEqual(cs_mu.shape,
-            (self.randint*2+1, self.N))
+            (self.randint*2+1,))
 
     def test_ci_simple(self):
         """
         """
         ci = self.evt_study.get_ci(ps=(0.05,0.95), method="simple")
-        assert_almost_equal(ci.iloc[0,:,-1].values, self.true_ci, decimal=0)
+        assert_almost_equal(ci.iloc[:,-1].values, self.true_ci, decimal=0)
 
-    def test_ci_boot(self):
-        """
-        """
-        ci = self.evt_study.get_ci(ps=0.9, method="boot", M=500)
-        assert_almost_equal(
-            ci.iloc[0,:,-1].values,
-            self.true_ci,
-            decimal=0)
+    # def test_ci_boot(self):
+    #     """
+    #     """
+    #     ci = self.evt_study.get_ci(ps=0.9, method="boot", M=500)
+    #     assert_almost_equal(
+    #         ci.iloc[:,-1].values,
+    #         self.true_ci,
+    #         decimal=0)
 
     def test_plot(self):
         """
         """
-        ci = self.evt_study.get_ci(ps=0.9, method="boot", M=250)
+        ci = self.evt_study.get_ci(ps=0.9, method="simple")
         fig = self.evt_study.plot()
         fig.show()
         # fig.savefig("c:/users/hsg-spezial/desktop/fig_evt.png")
