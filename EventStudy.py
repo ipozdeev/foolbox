@@ -5,7 +5,7 @@ import random
 from pandas.tseries.offsets import DateOffset
 import matplotlib.pyplot as plt
 # import matplotlib.patches as mpatches
-# import pdb
+# import ipdb
 # %matplotlib
 
 # matplotlib settings
@@ -39,126 +39,156 @@ class EventStudy():
 
         # if `events` is not a pandas object:
         if not issubclass(events.__class__, pd.core.generic.NDFrame):
-            events = pd.DataFrame(data=np.arange(len(events)),index=events)
+            events = pd.Series(data=np.arange(len(events)),index=events)
 
         # if not a DataFrame already -> convert to it because iterrows later
-        if isinstance(events, pd.Series):
-            events = events.to_frame()
+        if isinstance(events, pd.DataFrame):
+            events = events.iloc[:,0]
 
         # check that events are uniquely labelled (e.g. 0,1,2...)
         if events.duplicated().sum() > 0:
             events = \
-                pd.DataFrame(index=events.index,data=np.arange(len(events)))
+                pd.Series(index=events.index,data=np.arange(len(events)))
 
         # shape
-        T,N = data.shape
-
-        # keep record of dimensions (needed for later)
-        self.is_1d = N < 2
+        T = len(data)
+        #
+        # # keep record of dimensions (needed for later)
+        # self.is_1d = N < 2
 
         # if last event is closer to the end than td - delete last event
         # TODO: write logger for that
         good_evt_idx = events.index.map(
             lambda x: (get_idx(data, x) < (T-td)) & \
                 (get_idx(data, x) > -ta-1))
-        events = events.ix[good_evt_idx,:]
+        events = events.ix[good_evt_idx]
 
         # pivot
-        before, after = self.pivot_for_event_study(data, events, window)
-        # pdb.set_trace()
+        before, after, grp_var, grp_mu = self.pivot_for_event_study(
+            data, events, window)
 
         self.data = data
         self.events = events
         self.window = window
         self.before = before
         self.after = after
-        self.before_idx = before.major_axis
-        self.after_idx = after.major_axis
-        self.stacked_idx = np.hstack((before.major_axis, after.major_axis))
+        self.before_idx = before.index
+        self.after_idx = after.index
+        self.stacked_idx = np.hstack((before.index, after.index))
+        self.grp_var = grp_var
+        self.grp_mu = grp_mu
 
     @staticmethod
     def pivot_for_event_study(data, events, window):
         """ Pivot `data` to center on events.
         """
+        assert isinstance(data, pd.Series)
+
+        if data.name is None:
+            data.name = "response"
+
         # pdb.set_trace()
         ta, tb, tc, td = window
 
         # find dates belonging to two event windows simultaneously
         belongs_idx = pd.Series(data=0,index=data.index)
-        for t, evt in events.iterrows():
+        for t in events.index:
             # fetch position index of this event
             this_t = get_idx(data,t)
             # record span of its event window
             belongs_idx.ix[(this_t+ta):(this_t+td+1)] += 1
 
         # set values in rows belonging to multiple events to nan
-        data_to_pivot = data.copy()
+        data_to_pivot = data.copy().to_frame()
         data_to_pivot.loc[belongs_idx > 1] *= np.nan
 
+        # introduce columns for pivoting
+        data_to_pivot["event_window"] = np.nan
+        # introduce columns for pivoting
+        data_to_pivot["event_no"] = np.nan
+        # introduce columns for standard deviations
+        data_to_pivot["which_evt"] = 0
+
         # loop over events, save snapshot of returns around each
-        before_dict = {}
-        after_dict = {}
-        for (t, evt) in events.iterrows():
+        for t, evt in events.iteritems():
             # fetch index of this event
             this_t = get_idx(data_to_pivot,t)
-            # from a to b
-            this_df = data_to_pivot.ix[(this_t+ta):(this_t+tb+1),:]
-            # index with [a,...,b]
-            this_df.index = np.arange(ta, tb+1)
-            # store
-            before_dict[evt.values[0]] = this_df
+            # index [ta:tb]+[tc:td]
+            window_idx = np.concatenate((
+                np.arange((this_t+ta),(this_t+tb+1)),
+                np.arange((this_t+tc),(this_t+td+1))))
+            # put event identifier to be used for pivoting later
+            data_to_pivot.ix[window_idx,"event_no"] = evt
+            # index with [ta:tb]+[tc:td]
+            data_to_pivot.ix[window_idx,"event_window"] = \
+                    np.concatenate((np.arange(ta, tb+1),
+                    np.arange(tc, td+1)))
+            # for standard deviations
+            data_to_pivot.ix[(this_t+ta):,"which_evt"] += 1
 
-            # from c to d, same steps
-            this_df = data_to_pivot.ix[(this_t+tc):(this_t+td+1),:]
-            this_df.index = np.arange(tc, td+1)
-            after_dict[evt.values[0]] = this_df
+        # drop rows except those selected around event
+        pivoted = data_to_pivot.dropna(subset=["event_no"])
 
-        # create panel of event-centered dataframes, where minor_axis keeps
-        #   individual events, items keeps columns of Y
-        before = pd.Panel.from_dict(before_dict, orient="minor")
+        # column to integers: need events and periods to be integers
+        pivoted.loc[:,"event_no"] = pivoted.loc[:,"event_no"].map(int)
+        pivoted.loc[:,"event_window"] = pivoted.loc[:,"event_window"].map(int)
 
+        pivoted = pivoted.pivot(
+            index="event_window",
+            columns="event_no",
+            values=data.name)
+        # for std
+        for_var = data_to_pivot.where(data_to_pivot["event_no"].isnull())
+
+        # calculate variances
+        grouped_var = for_var[data.name].groupby(for_var["which_evt"]).var()
+        grouped_var.index = grouped_var.index.map(int)
+
+        # calculate means
+        grouped_mu = for_var[data.name].groupby(for_var["which_evt"]).mean()\
+            .mean()
+
+        # before
+        # ipdb.set_trace()
+        before = pivoted.loc[:tb,:]
         # after
-        after = pd.Panel.from_dict(after_dict, orient="minor")
+        after = pivoted.loc[tc:,:]
 
-        return before, after
+        return before, after, grouped_var, grouped_mu
 
-    def get_ts_cumsum(self):
+    @staticmethod
+    def get_ts_cumsum(before, after):
         """ Calculate cumulative sum over time.
         """
         # the idea is to buy stuff at relative date a, where T is the event
         #   date and keep it until and including relative date b, so need to
         #   reverse this Panel for further cumulative summation
-        ts_mu_before = self.before.ix[:,::-1,:].cumsum().ix[:,::-1,:]
+        ts_mu_before = before.ix[::-1,:].cumsum().ix[::-1,:]
         # after events is ok as is
-        ts_mu_after = self.after.cumsum()
+        ts_mu_after = after.cumsum()
 
         # concat
-        ts_mu = pd.concat((ts_mu_before, ts_mu_after), axis=1)
-
-        self.ts_mu = ts_mu
+        ts_mu = pd.concat((ts_mu_before, ts_mu_after), axis=0)
 
         return ts_mu
 
-    def get_cs_mean(self):
+    @staticmethod
+    def get_cs_mean(before, after):
         """ Calculate mean across events
         """
-        cs_mu_before = self.before.mean(axis="minor_axis")
-        cs_mu_after = self.after.mean(axis="minor_axis")
+        cs_mu_before = before.mean(axis=1)
+        cs_mu_after = after.mean(axis=1)
 
         # concat
         cs_mu = pd.concat((cs_mu_before, cs_mu_after), axis=0)
 
-        self.cs_mu = cs_mu
-
         return cs_mu
 
-    def get_cs_ts(self):
+    def get_cs_ts(self, before, after):
         """ Calculate time-series cumulative sum and its average across events.
         """
-        ts_mu = self.get_ts_cumsum()
-        cs_ts_mu = ts_mu.mean(axis="minor_axis")
-
-        self.cs_ts_mu = cs_ts_mu
+        ts_mu = self.get_ts_cumsum(before, after)
+        cs_ts_mu = ts_mu.mean(axis=1)
 
         return cs_ts_mu
 
@@ -173,75 +203,83 @@ class EventStudy():
         ci : pd.Panel
 
         """
-        ta, tb, tc, td = self.window
-
         # if `ps` was provided as single float
         if isinstance(ps, float):
             ps = ((1-ps)/2, ps/2+1/2)
 
+        # calculate confidence band
+        if method == "simple":
+            ci = self.simple_ci(ps=ps)
+        elif method == "boot":
+            ci = self.boot_ci(ps, **kwargs)
+        else:
+            raise NotImplementedError("ci you asked for is not implemented")
+
+        self.ci = ci
+
+        return ci
+
+    def simple_ci(self, ps):
+        """
+        """
+        ta, tb, tc, td = self.window
+
+        sigma = np.sqrt(self.grp_var.sum())/self.grp_var.count()
+
+        # mu = boot_from.mean()
+
+        # # sd of mean across events is mean outside of events divided
+        # #   through sqrt(number of events)
+        # sd_across = boot_from.std()/np.sqrt(len(self.events))
+        # # sd of cumulative sum of mean across events is sd times sqrt(# of
+        # #   cumulants)
+        # # pdb.set_trace()
+
+        q = np.sqrt(np.hstack(
+            (np.arange(-ta+tb+1,0,-1), np.arange(1,td-tc+2))))
+        # q = q[:,np.newaxis]
+
+        # # multiply with broadcast, add mean
+        # ci_lo = norm.ppf(ps[0])*q*sd_across.values[np.newaxis,:] + \
+        #     boot_from.mean().values[np.newaxis,:]*q**2
+        # ci_hi = norm.ppf(ps[1])*q*sd_across.values[np.newaxis,:] + \
+        #     boot_from.mean().values[np.newaxis,:]*q**2
+        # multiply with broadcast, add mean
+        ci_lo = norm.ppf(ps[0])*q*sigma + self.grp_mu*(q**2)
+        ci_hi = norm.ppf(ps[1])*q*sigma + self.grp_mu*(q**2)
+
+        # concatenate: items keeps columns of Y
+        ci = pd.DataFrame(
+            index=self.stacked_idx,
+            columns=ps)
+
+        ci.loc[:,ps[0]] = ci_lo
+        ci.loc[:,ps[1]] = ci_hi
+
+        return ci
+
+    def boot_ci(self, ps, M=500):
+        """
+        Returns
+        -------
+        ci : pandas.DataFrame
+            with columns for confidence interval bands
+        """
+        ta, tb, tc, td = self.window
+
         # drop dates around events, G times window length
-        # TODO: control for overlaps
         boot_from = self.data.copy()
-        # pdb.set_trace()
-        for (t, number) in self.events.iterrows():
+        for t in self.events.index:
             this_t = get_idx(boot_from, t)
             boot_from.drop(
                 boot_from.index[(this_t+ta):(this_t+td)],
                 axis="index",
                 inplace=True)
 
-        # calculate confidence band
-        if method == "simple":
-            ci = self.simple_ci(boot_from=boot_from, ps=ps)
-
-        elif method == "boot":
-            ci = self.boot_ci(boot_from=boot_from, ps=ps, **kwargs)
-
-        self.ci = ci
-
-        return ci
-
-    def simple_ci(self, boot_from, ps):
-        """
-        """
-        ta, tb, tc, td = self.window
-
-        # mu = boot_from.mean()
-
-        # sd of mean across events is mean outside of events divided
-        #   through sqrt(number of events)
-        sd_across = boot_from.std()/np.sqrt(len(self.events))
-        # sd of cumulative sum of mean across events is sd times sqrt(# of
-        #   cumulants)
-        # pdb.set_trace()
-        q = np.sqrt(np.hstack(
-            (np.arange(-ta+tb+1,0,-1), np.arange(1,td-tc+2))))
-        q = q[:,np.newaxis]
-
-        # multiply with broadcast, add mean
-        ci_lo = norm.ppf(ps[0])*q*sd_across.values[np.newaxis,:] + \
-            boot_from.mean().values[np.newaxis,:]*q**2
-        ci_hi = norm.ppf(ps[1])*q*sd_across.values[np.newaxis,:] + \
-            boot_from.mean().values[np.newaxis,:]*q**2
-
-        # concatenate: items keeps columns of Y
-        ci = pd.Panel(
-            major_axis=self.stacked_idx,
-            items=self.data.columns,
-            minor_axis=ps)
-        ci.loc[:,:,ps[0]] = ci_lo.T
-        ci.loc[:,:,ps[1]] = ci_hi.T
-
-        return ci
-
-    def boot_ci(self, boot_from, ps, M=500):
-        """
-        """
         # space for df's of pivoted tables
-        booted = pd.Panel(
-            items=self.data.columns,
-            major_axis=self.stacked_idx,
-            minor_axis=range(M))
+        booted = pd.DataFrame(
+            columns=range(M),
+            index=self.stacked_idx)
 
         # possible times should exclude values that are too early or too late
         possible_dates = boot_from.index.tolist()[
@@ -252,39 +290,22 @@ class EventStudy():
             # draw sequence of events, sort them
             events_batch = sorted(
                 random.sample(possible_dates, len(self.events)))
-            events_batch = pd.DataFrame(
+            events_batch = pd.Series(
                 data=np.arange(len(self.events)), index=events_batch)
 
             # pivot this batch
-            bef, aft = self.pivot_for_event_study(
+            bef, aft, _, _ = self.pivot_for_event_study(
                 boot_from, events_batch, self.window)
 
-            # cumsum
-            bef = bef.ix[:,::-1,:].cumsum().ix[:,::-1,:]
-            # after events is ok as is
-            aft = aft.cumsum()
-            # concat (automatically along major_axis)
-            tot = pd.concat((bef, aft), axis=1)
-
-            # mean across events
-            tot = tot.mean(axis="minor_axis")
+            # calculate cumsum + cross-sectional mean
+            this_cs_ts = self.get_cs_ts(bef, aft)
 
             # store
-            booted.iloc[:,:,p] = tot
+            booted.iloc[:,p] = this_cs_ts
 
         # quantiles
-        # lower
-        ci_lo = booted.apply(lambda x: x.quantile(ps[0]), axis="minor")
-        # upper
-        ci_hi = booted.apply(lambda x: x.quantile(ps[1]), axis="minor")
-
-        # concatenate
-        ci = pd.Panel(
-            major_axis=self.stacked_idx,
-            items=self.data.columns,
-            minor_axis=ps)
-        ci.loc[:,:,ps[0]] = ci_lo
-        ci.loc[:,:,ps[1]] = ci_hi
+        # lower, upper
+        ci = booted.quantile(ps, axis=1).T
 
         return ci
 
@@ -302,75 +323,68 @@ class EventStudy():
         """
         ta, tb, tc, td = self.window
 
-        # check if cross-sectional avg of cumsum exists
-        if not hasattr(self, "cs_mu"):
-            cs_mu = self.get_cs_mean()
-        if not hasattr(self, "ts_mu"):
-            ts_mu = self.get_cs_mean()
-        if not hasattr(self, "cs_ts_mu"):
-            cs_ts_mu = self.get_cs_ts()
+        cs_mu = self.get_cs_mean(self.before, self.after)
+        ts_mu = self.get_ts_cumsum(self.before, self.after)
+        cs_ts_mu = self.get_cs_ts(self.before, self.after)
+
         if not hasattr(self, "ci"):
             ci = self.get_ci(**kwargs)
 
         # for each column in `data` create one plot with three subplots
         figs = {}
-        for c in self.data.columns:
-            fig, ax = plt.subplots(3, figsize=(12,12*0.9), sharex=True)
 
-            # 1st plot: before and after for each event in light gray
-            self.before.loc[c,:,:].plot(ax=ax[0], color=gr_1)
-            self.after.loc[c,:,:].plot(ax=ax[0], color=gr_1)
-            # add points at initiation
-            self.before.loc[c,[-1],:].plot(ax=ax[0], color="k",
-                linestyle="none", marker=".", markerfacecolor="k")
-            self.after.loc[c,[0],:].plot(ax=ax[0], color="k",
-                linestyle="none", marker=".", markerfacecolor="k")
-            # plot mean in black =)
-            self.cs_mu.loc[:,c].plot(ax=ax[0], color='k', linewidth=1.5)
-            ax[0].set_title("at respective period")
+        fig, ax = plt.subplots(3, figsize=(12,12*0.9), sharex=True)
 
-            # 2nd plot: cumulative sums
-            self.ts_mu.loc[c,:tb,:].plot(ax=ax[1], color=gr_1)
-            self.ts_mu.loc[c,tc:,:].plot(ax=ax[1], color=gr_1)
-            # add points at initiation
-            self.before.loc[c,[-1],:].plot(ax=ax[1], color="k",
-                linestyle="none", marker=".", markerfacecolor="k")
-            self.after.loc[c,[0],:].plot(ax=ax[1], color="k",
-                linestyle="none", marker=".", markerfacecolor="k")
-            # mean in black
-            self.cs_ts_mu.loc[:,c].plot(ax=ax[1], color='k', linewidth=1.5)
-            ax[1].set_title("cumulative")
+        # 1st plot: before and after for each event in light gray
+        self.before.plot(ax=ax[0], color=gr_1)
+        self.after.plot(ax=ax[0], color=gr_1)
+        # add points at initiation
+        self.before.iloc[[-1],:].plot(ax=ax[0], color="k",
+            linestyle="none", marker=".", markerfacecolor="k")
+        self.after.iloc[[0],:].plot(ax=ax[0], color="k",
+            linestyle="none", marker=".", markerfacecolor="k")
+        # plot mean in black =)
+        cs_mu.plot(ax=ax[0], color='k', linewidth=1.5)
 
-            # 3rd plot: ci around avg cumsum
-            self.cs_ts_mu.loc[:tb,c].plot(ax=ax[2], color='k', linewidth=1.5)
-            self.cs_ts_mu.loc[tc:,c].plot(ax=ax[2], color='k', linewidth=1.5)
-            ax[2].fill_between(self.stacked_idx,
-                self.ci.loc[c,:,:].iloc[:,0].values,
-                self.ci.loc[c,:,:].iloc[:,1].values,
-                color=gr_1, alpha=0.5, label="conf. interval")
-            ax[2].set_title("average cumulative")
+        # 2nd plot: cumulative sums
+        ts_mu.loc[:tb,:].plot(ax=ax[1], color=gr_1)
+        ts_mu.loc[tc:,:].plot(ax=ax[1], color=gr_1)
+        # add points at initiation
+        self.before.iloc[[-1],:].plot(ax=ax[1], color="k",
+            linestyle="none", marker=".", markerfacecolor="k")
+        self.after.iloc[[0],:].plot(ax=ax[1], color="k",
+            linestyle="none", marker=".", markerfacecolor="k")
+        # mean in black
+        cs_ts_mu.plot(ax=ax[1], color='k', linewidth=1.5)
+        ax[1].set_title("cumulative")
 
-            # some parameters common for all ax
-            for x in range(len(ax)):
-                # ax[x].legend_.remove()
-                ax[x].xaxis.set_ticks(self.stacked_idx)
-                ax[x].axhline(y=0, color='r', linestyle='--', linewidth=1.0)
-                ax[x].grid(axis="both", alpha=0.33, linestyle=":")
-                legend = ax[x].legend()
-                legend.remove()
+        # 3rd plot: ci around avg cumsum
+        cs_ts_mu.loc[:tb].plot(ax=ax[2], color='k', linewidth=1.5)
+        cs_ts_mu.loc[tc:].plot(ax=ax[2], color='k', linewidth=1.5)
+        ax[2].fill_between(self.stacked_idx,
+            self.ci.iloc[:,0].values,
+            self.ci.iloc[:,1].values,
+            color=gr_1, alpha=0.5, label="conf. interval")
 
-            ax[x].set_xlabel("periods after event")
-            ax[x].set_ylabel("return, in % per period")
+        # some parameters common for all ax
+        for x in range(len(ax)):
+            # ax[x].legend_.remove()
+            ax[x].xaxis.set_ticks(self.stacked_idx)
+            ax[x].axhline(y=0, color='r', linestyle='--', linewidth=1.0)
+            ax[x].grid(axis="both", alpha=0.33, linestyle=":")
+            legend = ax[x].legend()
+            legend.remove()
 
-            # super title
-            fig.suptitle(c, fontsize=14)
+        ax[x].set_xlabel("periods after event")
+        ax[x].set_ylabel("cumulative average")
 
-            figs[c] = fig
+        # super title
+        fig.suptitle(self.data.name, fontsize=14)
 
-        return figs
+        return fig
 
-def event_study_wrapper(data, events, exclude_cols=[], direction="all",
-    crisis="both", window=None, ps=0.9, ci_method="simple"):
+def event_study_wrapper(data, events, reix_w_bday=False,
+    direction="all", crisis="both", window=None, ps=0.9, ci_method="simple"):
     """ Convenience fun to run studies of many series on the same `events`.
 
     Parameters
@@ -379,8 +393,8 @@ def event_study_wrapper(data, events, exclude_cols=[], direction="all",
         of data, with columns for something summable (e.g. log-returns)
     events : pandas.Series/DataFrame
         of events, indexed by event dates; values can be e.g. interest rates
-    exclude_cols : list-like
-        of columns to drop from data when doing the magic
+    reix_w_bday : boolean
+        if `data` should be reindexed with business days
     direction : str
         'ups' for considering positive changes in `events`.values only;
         'downs' for negative changes;
@@ -405,8 +419,13 @@ def event_study_wrapper(data, events, exclude_cols=[], direction="all",
     # window default
     if window is None:
         window = [-5,-1,0,5]
-    # drop certain currencies
-    this_data = data.drop(exclude_cols, axis=1)
+
+    this_data = data.copy()
+
+    # reindex if needed
+    if reix_w_bday:
+        bday_idx = pd.date_range(data.index[0], data.index[-1], freq='B')
+        this_data = this_data.reindex(index=bday_idx)
 
     # subsample events: ups, downs, constants, ups and down or all
     if direction == "ups":
@@ -423,13 +442,13 @@ def event_study_wrapper(data, events, exclude_cols=[], direction="all",
 
     # pre- or post-crisis
     if crisis == "pre":
-        this_data = this_data.loc[start_at:"2008-06-30",:]
-        events = events.loc[:"2008-06-30",:]
+        this_data = this_data.loc[start_at:"2008-06-30"]
+        events = events.loc[:"2008-06-30"]
     elif crisis == "post":
-        this_data = this_data.loc["2008-06-30":,:]
-        events = events.loc["2008-06-30":,:]
+        this_data = this_data.loc["2008-06-30":]
+        events = events.loc["2008-06-30":]
     else:
-        this_data = this_data.loc[start_at:,:]
+        this_data = this_data.loc[start_at:]
 
     # init EventStudy
     es = EventStudy(data=this_data, events=events, window=window)
@@ -445,10 +464,105 @@ def get_idx(data, t):
     """
     return data.index.get_loc(t, method="ffill")
 
-
 if __name__ == "__main__":
-    pass
+    # parameters of distribution
+    sigma = 1.5
+    mu = 1.0
+    # number of observations
+    T = 2000
+    # number of events
+    K = 10
 
+    # time index
+    idx = pd.date_range("1990-01-01", periods=T, frequency='D')
+
+    # simulate data
+    data_1d = pd.Series(
+        data=np.random.normal(size=(T,))*sigma+mu,
+        index=idx)
+
+    # simulate events
+    events = sorted(random.sample(idx.tolist()[T//3:T//2], K))
+    events = pd.Series(index=events, data=np.arange(len(events)))
+
+    evt_study = EventStudy(
+        data=data_1d,
+        events=events,
+        window=[-5,-1,0,5])
+
+    # fig = evt_study.plot(ps=0.9)
+
+def signal_from_events(data, events, window, func=None):
+    """ Create signal based on events.
+
+    Returns a DataFrame where at each index from `events` there will be a
+    statistic of `data` calculated over `window` near each event in `events`.
+
+    Parameters
+    ----------
+    data : (T,N) pandas.DataFrame
+        of data
+    events : (K,) pandas.Series
+        of events
+    window : tuple of int
+        (start, end)
+    func : callable
+        function to apply to window of data
+
+    Returns
+    -------
+    pivoted : (K,N) pd.DataFrame
+        of statistics of `data` over `window` near each event
+
+    Example
+    -------
+    with open(data_path+"data_dev_d.p", mode='rb') as fname:
+        data = pickle.load(fname)
+    with open(data_path+"events.p", mode='rb') as fname:
+        events = pickle.load(fname)
+    s_d = data["spot_ret"]
+    fomc = events["fomc"].squeeze()
+    # maximal rally
+    res = signal_from_events(s_d, fomc, (-10, -2), lambda x: max(x.cumsum()))
+    """
+    assert isinstance(data, pd.DataFrame)
+    assert isinstance(events, pd.Series)
+
+    if func is None:
+        func = np.nansum
+
+    # pdb.set_trace()
+    # unpack window ---------------------------------------------------------
+    t_start, t_end = window
+
+    # find dates belonging to two event windows simultaneously --------------
+    belongs_idx = pd.Series(data=0,index=data.index)
+    for t in events.index:
+        # fetch position index of this event
+        this_t = get_idx(data,t)
+        # record span of its event window
+        belongs_idx.ix[(this_t+t_start):(this_t+t_end+1)] += 1
+
+    # set values in rows belonging to multiple events to nan
+    data_to_pivot = data.copy()
+    data_to_pivot.loc[belongs_idx > 1] *= np.nan
+
+    # space for result ------------------------------------------------------
+    pivoted = pd.DataFrame(
+        columns=data.columns,
+        index=events.index)
+
+    # loop over events, save snapshot of returns around each ----------------
+    for t, evt in events.iteritems():
+        # fetch index of this event
+        this_t = get_idx(data_to_pivot, t)
+        # index as [t_start:t_end]
+        window_idx = np.arange(this_t+t_start, this_t+t_end+1)
+        # put event identifier to be used for pivoting later
+        pivoted.loc[t,:] = data_to_pivot.ix[window_idx,:].apply(func)
+
+
+    return pivoted
 
 # ---------------------------------------------------------------------------
 # alternative spec, once needed for Mirkov, Pozdeev, Soederlind (2016)
