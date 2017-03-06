@@ -1,6 +1,7 @@
 import pandas as pd
 import numpy as np
 
+
 def rank_sort_adv(returns, signals, n_portfolios, holding_period=None,
                   rebalance_dates=None):
     """Experimental version of the 'rank_sort' funciton. Sorts a dataframe of
@@ -44,11 +45,11 @@ def rank_sort_adv(returns, signals, n_portfolios, holding_period=None,
                   for portfolio in range(n_portfolios)]
 
     # Consider observationas where both signals and returns are available
-    returns = returns[pd.notnull(signals)]
-    signals = signals[pd.notnull(returns)]
+    #returns = returns[pd.notnull(signals)]
+    #signals = signals[pd.notnull(returns)]
 
     # Align two frames to ensure the index is the same
-    returns, signals = returns.align(signals, axis=0)
+    # returns, signals = returns.align(signals, axis=0)
 
     # Get signal ranks row by row
     signal_ranks = signals.rank(axis=1,             # get ranks for each row
@@ -114,7 +115,7 @@ def rank_sort_adv(returns, signals, n_portfolios, holding_period=None,
             holdings_masks[portf_num] =\
                 holdings_masks[portf_num].append(tmp_mask)
 
-    # Apply masks to returns, getting portfolios with costituents
+    # Apply masks to returns, getting portfolios with constituents
     for p in np.arange(1, n_portfolios+1):
         # Write each portfolios'constituent assets
         portfolios["portfolio"+str(p)] = returns.where(holdings_masks[p-1])
@@ -122,7 +123,7 @@ def rank_sort_adv(returns, signals, n_portfolios, holding_period=None,
         portfolios["p"+str(p)] = portfolios["portfolio"+str(p)].mean(axis=1)
         portfolios["p"+str(p)].name = "p" + str(p)
 
-    return(portfolios)
+    return portfolios
 
 
 def rank_sort(returns, signals, n_portfolios):
