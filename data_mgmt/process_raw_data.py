@@ -14,6 +14,7 @@ name_dev_d = path + "data_dev_d.p"  # developed sample, daily data
 name_dev_m = path + "data_dev_m.p"  # developed sample, monthly data
 name_all_d = path + "data_all_d.p"  # all sample, daily data
 name_all_m = path + "data_all_m.p"  # all sample, monthly data
+name_all_evt = path + "events.p"  # events
 
 # Definitions and settings
 eur_nan_date = "1999-01-04"           # First consistent EUR data begins on 5th
@@ -275,7 +276,7 @@ monthly_data["rx"] =\
 
 """
 ===============================================================================
-=== PART IV: ALLOCATE DATA INTO SAMPLES, PICKLE IT FOR THE GREAT JUSTICE    ===
+=== PART IV: ALLOCATE DATA INTO SAMPLES                                     ===
 ===============================================================================
 """
 # Developed data are also in dictionaries
@@ -296,8 +297,42 @@ for key in daily_data.keys():
     else:
         daily_data_developed[key] = daily_data[key]
 
+"""
+===============================================================================
+=== PART V: EVENTS DATA                                                     ===
+===============================================================================
+"""
+opec = pd.read_csv(path+"opec_meetings_1984_2016.txt", sep=',',
+    index_col=0, parse_dates=True, header=0)
+fomc = pd.read_csv(path+"fomc_meetings_1994_2016.txt", sep=',',
+    index_col=0, parse_dates=True, header=0)
+boe = pd.read_csv(path+"boe_meetings_1997_2017.txt", sep=',',
+    index_col=0, parse_dates=True, header=0)
+ecb = pd.read_csv(path+"ecb_meetings_1999_2017.txt", sep=',',
+    index_col=0, parse_dates=True, header=0)
+us_cpi = pd.read_csv(path+"cpi_releases_1994_2017.txt", sep=',',
+    index_col=0, parse_dates=True, header=0)
+
+events = {
+    "opec" : opec,
+    "fomc" : fomc,
+    "boe" : boe,
+    "ecb" : ecb,
+    "us_cpi" : us_cpi}
+
+"""
+===============================================================================
+=== , PICKLE IT FOR THE GREAT JUSTICE                                       ===
+===============================================================================
+"""
 # Pickle it for future (ab)use
-pickle.dump(daily_data, open(name_all_d, "wb"))
-pickle.dump(monthly_data, open(name_all_m, "wb"))
-pickle.dump(daily_data_developed, open(name_dev_d, "wb"))
-pickle.dump(monthly_data_developed, open(name_dev_m, "wb"))
+with open(name_all_d, "wb") as fname:
+    pickle.dump(daily_data, fname)
+with open(name_all_m, "wb") as fname:
+    pickle.dump(monthly_data, fname)
+with open(name_dev_d, "wb") as fname:
+    pickle.dump(daily_data_developed, fname)
+with open(name_dev_m, "wb") as fname:
+    pickle.dump(monthly_data_developed, fname)
+with open(name_all_evt, "wb") as fname:
+    pickle.dump(events, fname)
