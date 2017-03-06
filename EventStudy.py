@@ -492,7 +492,77 @@ if __name__ == "__main__":
 
     # fig = evt_study.plot(ps=0.9)
 
+def signal_from_events(data, events, window, func=None):
+    """ Create signal based on events.
 
+    Returns a DataFrame where at each index from `events` there will be a
+    statistic of `data` calculated over `window` near each event in `events`.
+
+    Parameters
+    ----------
+    data : (T,N) pandas.DataFrame
+        of data
+    events : (K,) pandas.Series
+        of events
+    window : tuple of int
+        (start, end)
+    func : callable
+        function to apply to window of data
+
+    Returns
+    -------
+    pivoted : (K,N) pd.DataFrame
+        of statistics of `data` over `window` near each event
+
+    Example
+    -------
+    with open(data_path+"data_dev_d.p", mode='rb') as fname:
+        data = pickle.load(fname)
+    with open(data_path+"events.p", mode='rb') as fname:
+        events = pickle.load(fname)
+    s_d = data["spot_ret"]
+    fomc = events["fomc"].squeeze()
+    # maximal rally
+    res = signal_from_events(s_d, fomc, (-10, -2), lambda x: max(x.cumsum()))
+    """
+    assert isinstance(data, pd.DataFrame)
+    assert isinstance(events, pd.Series)
+
+    if func is None:
+        func = np.nansum
+
+    # pdb.set_trace()
+    # unpack window ---------------------------------------------------------
+    t_start, t_end = window
+
+    # find dates belonging to two event windows simultaneously --------------
+    belongs_idx = pd.Series(data=0,index=data.index)
+    for t in events.index:
+        # fetch position index of this event
+        this_t = get_idx(data,t)
+        # record span of its event window
+        belongs_idx.ix[(this_t+t_start):(this_t+t_end+1)] += 1
+
+    # set values in rows belonging to multiple events to nan
+    data_to_pivot = data.copy()
+    data_to_pivot.loc[belongs_idx > 1] *= np.nan
+
+    # space for result ------------------------------------------------------
+    pivoted = pd.DataFrame(
+        columns=data.columns,
+        index=events.index)
+
+    # loop over events, save snapshot of returns around each ----------------
+    for t, evt in events.iteritems():
+        # fetch index of this event
+        this_t = get_idx(data_to_pivot, t)
+        # index as [t_start:t_end]
+        window_idx = np.arange(this_t+t_start, this_t+t_end+1)
+        # put event identifier to be used for pivoting later
+        pivoted.loc[t,:] = data_to_pivot.ix[window_idx,:].apply(func)
+
+
+    return pivoted
 
 # ---------------------------------------------------------------------------
 # alternative spec, once needed for Mirkov, Pozdeev, Soederlind (2016)
