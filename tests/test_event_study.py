@@ -5,7 +5,7 @@ import pandas as pd
 import numpy as np
 import random
 
-from foolbox.EventStudy import EventStudy
+from foolbox.EventStudy import EventStudy, signal_from_events
 
 class TestEventStudy(unittest.TestCase):
     """
@@ -117,6 +117,47 @@ class TestEventStudyStuff(TestEventStudy):
         fig = self.evt_study.plot()
         fig.show()
         # fig.savefig("c:/users/hsg-spezial/desktop/fig_evt.png")
+
+class TestSignalFromEvents(unittest.TestCase):
+    """
+    """
+    def setUp(self):
+        """
+        """
+        data = pd.DataFrame(
+            data=np.random.normal(size=(20,2)),
+            index=pd.date_range("2011-01-01",periods=20,freq='D'),
+            columns=["first","second"])
+        events = pd.Series(
+            index=["2011-01-06", "2011-01-15"],
+            data=np.arange(2))
+        window = (-3,-1)
+
+        self.data = data
+        self.events = events
+        self.window = window
+
+    def test_signal_from_events_sum(self):
+        """
+        """
+        res = signal_from_events(self.data, self.events, self.window)
+
+        self.assertTupleEqual(res.shape, (2,2))
+        self.assertEqual(
+            res.ix[0,0],
+            self.data.loc["2011-01-03":"2011-01-05","first"].sum())
+
+    def test_signal_from_events_max_cumsum(self):
+        """
+        """
+        func = lambda x: max(x.cumsum())
+        res = signal_from_events(self.data, self.events, self.window, func)
+
+        self.assertTupleEqual(res.shape, (2,2))
+        self.assertEqual(
+            res.ix[0,0],
+            self.data.loc["2011-01-03":"2011-01-05","first"].cumsum().max())
+
 
 if __name__ == "__main__":
     unittest.main()
