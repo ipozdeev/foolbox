@@ -106,8 +106,13 @@ def rank_sort_adv(returns, signals, n_portfolios, holding_period=None,
             else:
                 # The case where holding period is effectively spans time
                 # between rebalancings. Enforce right-open time interval
-                tmp_idx = returns[(returns.index >= t) &
-                                  (returns.index < rebalance_dates[k+1])].index
+
+                # Check for the last period
+                if k+1 == len(rebalance_dates):
+                    tmp_idx = returns[(returns.index >= t)].index
+                else:
+                    tmp_idx = returns[(returns.index >= t) &
+                                (returns.index < rebalance_dates[k+1])].index
 
             tmp_mask = pd.DataFrame(False, columns=returns.columns,
                                     index=tmp_idx)
