@@ -129,6 +129,7 @@ def rank_sort_adv_2(ret, sig, n_portf, hold_per=None, reb_dt=None,
     hold_between=None):
     """
     """
+    no_hold_per = False
     if hold_per is None:
         no_hold_per = True
         hold_per = 0
@@ -151,7 +152,7 @@ def rank_sort_adv_2(ret, sig, n_portf, hold_per=None, reb_dt=None,
 
     # now hold_pattern is an array of integers -> use it to select dates and
     #   convert to pandas.Index (otherwise complains on .reindex)
-    hold_index = pd.Index(returns.index[hold_pattern])
+    hold_index = pd.Index(ret.index[hold_pattern])
 
     # reindex with forward fill: overlaps are taken care of
     sig = sig.reindex(index=hold_index, method="ffill")
@@ -163,7 +164,7 @@ def rank_sort_adv_2(ret, sig, n_portf, hold_per=None, reb_dt=None,
     al_sig, al_ret = sig.align(ret, join='left')
 
     # sort
-    pf = rank_sort(al_ret, al_sig, n_portf)
+    pf = rank_sort(returns=al_ret, signals=al_sig, n_portfolios=n_portf)
 
     if hold_between is not None:
         # hold_between = pd.DataFrame.from_dict(
@@ -225,14 +226,13 @@ def rank_sort(returns, signals, n_portfolios):
 
 
     # Start iteration through signals' rows
-
-    for row in signal_ranks.iterrows():
+    for idx, row in signal_ranks.iterrows():
         # Get number of assets available in the row xs
-        n_assets = pd.notnull(row[1]).sum()
+        n_assets = pd.notnull(row).sum()
         # Generate quantile bins, applying rule specified in 'custom_bins'
         bins = custom_bins(n_assets, n_portfolios)
         # Get portfolios by cutting xs into bins
-        rank_cuts = rank_cut(returns.ix[row[0]], row[1], bins)
+        rank_cuts = rank_cut(returns.ix[idx], row, bins)
         # Finally, append the dataframes in portf_list with new rows
         for p in np.arange(1, n_portfolios+1):
             portf_list[p-1] = portf_list[p-1].append(rank_cuts[p-1])
