@@ -4,7 +4,7 @@ import foolbox.portfolio_construction as poco
 import foolbox.tables_and_figures as taf
 import foolbox.data_mgmt.set_credentials as set_credentials
 set_credentials.set_r_environment()
-data_path = path = set_credentials.gdrive_path("research_data/fx_and_events/")
+data_path = set_credentials.gdrive_path("research_data/fx_and_events/")
 
 
 print("imported poco, taf, EventStudy, and data_path. Environmental variables "

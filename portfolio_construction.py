@@ -1,9 +1,133 @@
 import pandas as pd
 import numpy as np
 
-def rank_sort(returns, signals, n_portfolios):
+
+def rank_sort_adv(returns, signals, n_portfolios, holding_period=None,
+                  rebalance_dates=None):
+    """Experimental version of the 'rank_sort' funciton. Sorts a dataframe of
+    returns into portfolios according to dataframe of signals, holding period,
+    and rebalancing dates. If in any given cross-section the number of assets
+    is not a multiple of number of portfolios, additional assets are allocated
+    according to the rule specified in 'custom_bins' function.
+
+    Parameters
+    ----------
+    returns: pandas.DataFrame
+        of returns on assets to be sorted into portfolios
+    signals: pandas.DataFrame
+        of signals according to which returns are sorted
+    n_portfolios: int
+        specifying the number of portfolios to sort returns into
+    holding_period: int
+        number of periods after which the portfolio is liquidated. If None, the
+        portoflio is either held for a single period (if rebalance_dates is
+        also None), or until the next rebalancing date. Default is None
+    rebalance_dates: pandas.DatetimeIndex
+        specifying a sequence of rebalance dates. If None, then portfolio is
+        either held for a single period (if holding period is also None), or
+        dates are derived from the holding period. Default is None
+
+    Returns
+    -------
+    portfolios: dict
+        of dataframes. Keys p1, p2, ..., pN, where N = n_portfolios contain
+        returns on equally weighted portfolios from low to high. Keys
+        portfolio1, portfolio2, ..., portfolioN contain returns of individual
+        asssets in the corresponding portfolio
+
     """
-    Sorts a dataframe of returns into portfolios according to dataframe of
+    # Assign output structure, ensure inputs integrity
+    portfolios = {}
+
+    # Create a list of dataframes with number of elements equal n_portfolios
+    # the first element of the list is the 'low' portfolio, the last is 'high'
+    portf_list = [pd.DataFrame(columns=returns.columns)
+                  for portfolio in range(n_portfolios)]
+
+    # Consider observationas where both signals and returns are available
+    #returns = returns[pd.notnull(signals)]
+    #signals = signals[pd.notnull(returns)]
+
+    # Align two frames to ensure the index is the same
+    # returns, signals = returns.align(signals, axis=0)
+
+    # Get signal ranks row by row
+    signal_ranks = signals.rank(axis=1,             # get ranks for each row
+                                numeric_only=True,  # ignore NaNs
+                                pct=True,           # map ranks to [0, 1]
+                                method="average")   # equal values' ranks are
+                                                    # averaged
+
+    # Deal with rebalancing dates and holding periods
+
+    # First valid date, and the corresponding integer value
+    first_date = returns.first_valid_index()
+    first_date_int = returns.index.get_loc(first_date)
+
+    # CASE 1: neither rebalance dates nor holding periods are supplied,
+    # rebalance each period
+    if holding_period is None and rebalance_dates is None:
+        # Set rebalance dates to index values of the returns
+        rebalance_dates = returns.ix[first_date:].index
+
+    # CASE 2: no rebalance dates, portfolio rebalanced at the end of the
+    # holding period
+    if holding_period is not None and rebalance_dates is None:
+        # Set rebalance dates, every holding_periods steps from the first obs
+        rebalance_dates = returns.iloc[first_date_int::holding_period, :].\
+            index
+
+    # Create a list of holdings masks, i.e. list of dataframes corresponding to
+    # the number of portfolios, where values will be set to True if an asset is
+    # in the portfolio at some date. The first element of the list corresponds
+    # to the 'low' portfolio, and the last element to the 'high' portfolio
+    holdings_masks = [pd.DataFrame(columns=returns.columns) for portfolio in
+                      range(n_portfolios)]
+
+    # Start iteration over rebalancing dates
+    for k, t in enumerate(rebalance_dates.tolist()):
+        # Get number of assets available in the row xs
+        n_assets = pd.notnull(signal_ranks.ix[t]).sum()
+        # Generate quantile bins, applying rule specified in 'custom_bins'
+        bins = custom_bins(n_assets, n_portfolios)
+        # Get positions by cutting xs into bins
+        rank_cuts = rank_cut(pd.Series(True, index=signal_ranks.columns,
+                                       name=t), signal_ranks.ix[t], bins)
+
+        # Append masks with True/False dataframes reflecting holdings in the
+        # particular portfolio
+
+        for portf_num, mask in enumerate(holdings_masks):
+
+            if holding_period is not None and rebalance_dates is not None:
+                # The case where positions are liquidated before next rebalance
+                tmp_idx = returns.iloc[returns.index.get_loc(t):\
+                    returns.index.get_loc(t)+holding_period].index
+            else:
+                # The case where holding period is effectively spans time
+                # between rebalancings. Enforce right-open time interval
+                tmp_idx = returns[(returns.index >= t) &
+                                  (returns.index < rebalance_dates[k+1])].index
+
+            tmp_mask = pd.DataFrame(False, columns=returns.columns,
+                                    index=tmp_idx)
+            tmp_mask[rank_cuts[portf_num].index] = True
+            holdings_masks[portf_num] =\
+                holdings_masks[portf_num].append(tmp_mask)
+
+    # Apply masks to returns, getting portfolios with constituents
+    for p in np.arange(1, n_portfolios+1):
+        # Write each portfolios'constituent assets
+        portfolios["portfolio"+str(p)] = returns.where(holdings_masks[p-1])
+        # Get the equally-weighted return on each portfolio
+        portfolios["p"+str(p)] = portfolios["portfolio"+str(p)].mean(axis=1)
+        portfolios["p"+str(p)].name = "p" + str(p)
+
+    return portfolios
+
+
+def rank_sort(returns, signals, n_portfolios):
+    """Sorts a dataframe of returns into portfolios according to dataframe of
     signals. If in any given cross-section the number of assets is not a
     multiple of number of portfolios, additional assets are allocated according
     to the rule specified in 'custom_bins' function.
@@ -48,6 +172,7 @@ def rank_sort(returns, signals, n_portfolios):
     # the first element of the list is the 'low' portfolio, the last is 'high'
     portf_list = [pd.DataFrame(columns=returns.columns)
                     for portfolio in range(n_portfolios)]
+
 
     # Start iteration through signals' rows
 
