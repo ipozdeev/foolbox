@@ -314,11 +314,11 @@ us_cpi = pd.read_csv(path+"cpi_releases_1994_2017.txt", sep=',',
     index_col=0, parse_dates=True, header=0)
 
 events = {
-    "opec" : opec,
-    "fomc" : fomc,
-    "boe" : boe,
-    "ecb" : ecb,
-    "us_cpi" : us_cpi}
+    "opec": opec,
+    "fomc": fomc,
+    "boe": boe,
+    "ecb": ecb,
+    "us_cpi": us_cpi}
 
 """
 ===============================================================================
