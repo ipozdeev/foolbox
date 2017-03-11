@@ -130,6 +130,57 @@ def rank_sort_adv(returns, signals, n_portfolios, holding_period=None,
 
     return portfolios
 
+def rank_sort_adv_2(ret, sig, n_portf, hold_per=None, reb_dt=None,
+    hold_between=None):
+    """
+    """
+    no_hold_per = False
+    if hold_per is None:
+        no_hold_per = True
+        hold_per = 0
+    if reb_dt is None:
+        # rebalance dates are all time periods
+        reb_dt = ret.index
+
+    # check datatype of rebalance_dates
+    if isinstance(reb_dt[0], str):
+        reb_dt = pd.to_datetime(reb_dt)
+
+    # construct index -------------------------------------------------------
+    # from [jan 11] to [jan 11, jan 12, jan 13...]
+    hold_pattern = [
+        np.arange(hold_per+1) + ret.index.get_loc(p,"bfill") for p in reb_dt]
+
+    # hold_pattern is a list of arrays -> collapse; unique is needed because
+    #   of overlaps in hold_pattern
+    hold_pattern = np.unique(np.concatenate(hold_pattern))
+
+    # now hold_pattern is an array of integers -> use it to select dates and
+    #   convert to pandas.Index (otherwise complains on .reindex)
+    hold_index = pd.Index(ret.index[hold_pattern])
+
+    # reindex with forward fill: overlaps are taken care of
+    sig = sig.reindex(index=hold_index, method="ffill")
+
+    if no_hold_per:
+        sig = sig.reindex(index=ret.index, method="ffill")
+
+    # align
+    al_sig, al_ret = sig.align(ret, join='left')
+
+    # sort
+    pf = rank_sort(returns=al_ret, signals=al_sig, n_portfolios=n_portf)
+
+    if hold_between is not None:
+        # hold_between = pd.DataFrame.from_dict(
+        #     {c: hold_between.values for c in pf.keys if "portfolio" not in c)
+        for key in pf.keys():
+            if "portfolio" in key:
+                pf[key].fillna(hold_between, inplace=True)
+
+    return pf
+
+
 
 def rank_sort(returns, signals, n_portfolios):
     """Sorts a dataframe of returns into portfolios according to dataframe of
@@ -180,14 +231,13 @@ def rank_sort(returns, signals, n_portfolios):
 
 
     # Start iteration through signals' rows
-
-    for row in signal_ranks.iterrows():
+    for idx, row in signal_ranks.iterrows():
         # Get number of assets available in the row xs
-        n_assets = pd.notnull(row[1]).sum()
+        n_assets = pd.notnull(row).sum()
         # Generate quantile bins, applying rule specified in 'custom_bins'
         bins = custom_bins(n_assets, n_portfolios)
         # Get portfolios by cutting xs into bins
-        rank_cuts = rank_cut(returns.ix[row[0]], row[1], bins)
+        rank_cuts = rank_cut(returns.ix[idx], row, bins)
         # Finally, append the dataframes in portf_list with new rows
         for p in np.arange(1, n_portfolios+1):
             portf_list[p-1] = portf_list[p-1].append(rank_cuts[p-1])

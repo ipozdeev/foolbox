@@ -464,34 +464,6 @@ def get_idx(data, t):
     """
     return data.index.get_loc(t, method="ffill")
 
-if __name__ == "__main__":
-    # parameters of distribution
-    sigma = 1.5
-    mu = 1.0
-    # number of observations
-    T = 2000
-    # number of events
-    K = 10
-
-    # time index
-    idx = pd.date_range("1990-01-01", periods=T, frequency='D')
-
-    # simulate data
-    data_1d = pd.Series(
-        data=np.random.normal(size=(T,))*sigma+mu,
-        index=idx)
-
-    # simulate events
-    events = sorted(random.sample(idx.tolist()[T//3:T//2], K))
-    events = pd.Series(index=events, data=np.arange(len(events)))
-
-    evt_study = EventStudy(
-        data=data_1d,
-        events=events,
-        window=[-5,-1,0,5])
-
-    # fig = evt_study.plot(ps=0.9)
-
 def signal_from_events(data, events, window, func=None):
     """ Create signal based on events.
 
@@ -562,7 +534,36 @@ def signal_from_events(data, events, window, func=None):
         pivoted.loc[t,:] = data_to_pivot.ix[window_idx,:].apply(func)
 
 
-    return pivoted
+    return pivoted.astype(np.float)
+
+if __name__ == "__main__":
+    # parameters of distribution
+    sigma = 1.5
+    mu = 1.0
+    # number of observations
+    T = 2000
+    # number of events
+    K = 10
+
+    # time index
+    idx = pd.date_range("1990-01-01", periods=T, frequency='D')
+
+    # simulate data
+    data_1d = pd.Series(
+        data=np.random.normal(size=(T,))*sigma+mu,
+        index=idx)
+
+    # simulate events
+    events = sorted(random.sample(idx.tolist()[T//3:T//2], K))
+    events = pd.Series(index=events, data=np.arange(len(events)))
+
+    evt_study = EventStudy(
+        data=data_1d,
+        events=events,
+        window=[-5,-1,0,5])
+
+    # fig = evt_study.plot(ps=0.9)
+
 
 # ---------------------------------------------------------------------------
 # alternative spec, once needed for Mirkov, Pozdeev, Soederlind (2016)
