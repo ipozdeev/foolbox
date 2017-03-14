@@ -136,6 +136,83 @@ class PureOls(Regression):
 
         return eps.squeeze()
 
+class DynamicOLS():
+    """ One-factor (+constant) OLS setting.
+    """
+    def __init__(self, method, y0, x0, **kwargs):
+        """
+        """
+        self.method = method
+        self.kwargs = kwargs
+
+        self.y, self.x = y0.align(x0, join="inner", axis=0)
+
+        # add name in case `y` does not have one
+        if self.y.name is None:
+            self.y.name = "response"
+        if self.x.name is None:
+            self.x.name = "regressor"
+
+    def fit(self):
+        """ Calculate rolling one-factor (+constant) beta of `y` wrt `x`.
+        """
+        x = self.x.copy()
+        y = self.y.copy()
+
+        # align y and x, keep names (important because of name of `y` mostly)
+        yx = pd.concat((y, x), axis=1, ignore_index=False)
+
+        # calculate covariance:
+        #   items is time, major_axis and minor_axis are y.name + x.columns
+        if self.method == "rolling":
+            roll_cov_yx = yx.rolling(**self.kwargs).cov()
+            # calculate beta
+            b = roll_cov_yx.loc[:,y.name,x.name]/\
+                roll_cov_yx.loc[:,x.name,x.name]
+            # add name to `b`
+            b.name = y.name
+            # calculate alpha
+            a = self.y.rolling(**self.kwargs).mean()-\
+                b*self.x.rolling(**self.kwargs).mean()
+
+        elif self.method == "expanding":
+            roll_cov_yx = yx.expanding(**self.kwargs).cov()
+            # calculate beta
+            b = roll_cov_yx.loc[:,y.name,x.name]/\
+                roll_cov_yx.loc[:,x.name,x.name]
+            # add name to `b`
+            b.name = y.name
+            # calculate alpha
+            a = self.y.expanding(**self.kwargs).mean()-\
+                b*self.x.expanding(**self.kwargs).mean()
+
+        elif self.method == "grouped_by":
+            roll_cov_yx = yx.groupby(**self.kwargs).cov()
+            # TODO: make this generic
+            b = roll_cov_yx[y.name][:,:,x.name]/\
+                roll_cov_yx[x.name][:,:,x.name]
+            # add name to `b`
+            b.name = y.name
+            # calculate alpha
+            a = self.y.groupby(**self.kwargs).mean()-\
+                b*self.x.groupby(**self.kwargs).mean()
+
+        return a, b
+
+def get_dynamic_betas(Y, x, method, **kwargs):
+    """
+    """
+    if isinstance(Y, pd.Series):
+        Y = Y.to_frame()
+
+    res = Y*np.nan
+    for c in Y.columns:
+        mod = DynamicOLS(method=method, y0=Y[c], x0=x, **kwargs)
+        _, b = mod.fit()
+        res.loc[:,c] = b
+
+    return res
+
 if __name__ == '__main__':
     pass
     # X = pd.DataFrame(data=np.random.normal(size=(100,2)))
