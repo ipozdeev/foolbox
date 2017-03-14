@@ -1,4 +1,4 @@
-"""Here dwells generation and saving of momentum strategies
+"""Here dwell generation and saving of momentum strategies
 """
 from foolbox.api import *
 import itertools as itools
@@ -9,7 +9,7 @@ import pickle
 sample = "dev"        # set to "all" for al countries
 freq = "m"            # set to "d" to daily frequency
 sig_key = "spot_ret"  # spot returns for signals
-ret_key = "spot_ret"  # spot returns for portfolio formation
+ret_key = "rx"  # spot returns for portfolio formation
 
 # Set up the number of portoflios
 n_portfolios = 5
@@ -21,7 +21,7 @@ burn = np.arange(0, 12, 1)       # how many recent periods before rebalancing
                                 # are to be discarded
 
 # Set output name
-out_name = "mom_dev_m_s_s.p" # developed, monthly, spot, spot
+out_name = "mom_dev_m_s_rx.p" # developed, monthly, spot, spot
 
 # Get the data
 with open(data_path+"data_"+sample+"_"+freq+".p", mode='rb') as fname:
