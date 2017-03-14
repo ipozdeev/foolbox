@@ -91,7 +91,7 @@ def rank_sort_adv(returns, signals, n_portfolios, holding_period=None,
         # Generate quantile bins, applying rule specified in 'custom_bins'
         bins = custom_bins(n_assets, n_portfolios)
         # Get positions by cutting xs into bins
-        rank_cuts = rank_cut(pd.Series(True, index=signal_ranks.columns,
+        rank_cuts = rank_cut_old(pd.Series(True, index=signal_ranks.columns,
                                        name=t), signal_ranks.ix[t], bins)
 
         # Append masks with True/False dataframes reflecting holdings in the
@@ -129,6 +129,22 @@ def rank_sort_adv(returns, signals, n_portfolios, holding_period=None,
         portfolios["p"+str(p)].name = "p" + str(p)
 
     return portfolios
+
+def rank_cut_old(returns, signal_ranks, bins):
+    """
+    """
+    rank_cuts = []  # output is a list
+    # For each tuple in bins, select assets whose signals'percentile ranks lie
+    # within bins, then append the output
+    for p in range(len(bins)):
+        if p == 0:  # first bin is closed interval
+            rank_cuts.append(returns[
+                (signal_ranks >= bins[p][0]) & (signal_ranks <= bins[p][1])])
+        else:
+            rank_cuts.append(returns[
+                (signal_ranks > bins[p][0]) & (signal_ranks <= bins[p][1])])
+
+    return rank_cuts
 
 def rank_sort_adv_2(ret, sig, n_portf, hold_per=None, reb_dt=None,
     hold_between=None):
@@ -209,8 +225,10 @@ def rank_sort(returns, signals, n_portfolios=3):
     portfolios = {}
 
     # Consider observationas where both signals and returns are available
-    returns = returns.where(returns * signals).dropna(how="all")
-    signals = signals.where(returns * signals).dropna(how="all")
+    # returns = returns.where(returns * signals).dropna(how="all")
+    # signals = signals.where(returns * signals).dropna(how="all")
+    returns = returns.dropna(how="all")
+    signals = signals.dropna(how="all")
 
     # align two frames to ensure the index is the same
     returns, signals = returns.align(signals, axis=0)
