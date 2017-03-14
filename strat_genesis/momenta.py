@@ -8,7 +8,11 @@ import pickle
 # Set sample, frequency, signals' and returns' keys
 sample = "dev"        # set to "all" for al countries
 freq = "m"            # set to "d" to daily frequency
+<<<<<<< HEAD
 sig_key = "spot_ret"  # spot returns for signals
+=======
+sig_key = "rx"  # spot returns for signals
+>>>>>>> c467eba66f2d55ae9c1656eab0bd1b3350ec1ff6
 ret_key = "rx"  # spot returns for portfolio formation
 
 # Set up the number of portoflios
@@ -21,7 +25,11 @@ burn = np.arange(0, 12, 1)       # how many recent periods before rebalancing
                                 # are to be discarded
 
 # Set output name
+<<<<<<< HEAD
 out_name = "mom_dev_m_s_rx.p" # developed, monthly, spot, spot
+=======
+out_name = "mom_dev_m_rx_rx.p" # developed, monthly, spot, spot
+>>>>>>> c467eba66f2d55ae9c1656eab0bd1b3350ec1ff6
 
 # Get the data
 with open(data_path+"data_"+sample+"_"+freq+".p", mode='rb') as fname:
@@ -57,5 +65,5 @@ for lb, h, b in combos:
     print("Finished run "+str(t)+" out of " + str(N))
 
 # Save the output
-# with open(data_path+out_name, "wb") as fname:
-#     pickle.dump(mom, fname)
+with open(data_path+out_name, "wb") as fname:
+    pickle.dump(mom, fname)

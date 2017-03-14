@@ -5,6 +5,7 @@ from scipy import stats
 from foolbox import econometrics as ec
 import matplotlib
 import matplotlib.pyplot as plt
+plt.rc("font", family="serif", size=12)
 
 def fama_macbeth_first(Y, X):
     """ First stage of Fama-MacBeth
@@ -65,6 +66,9 @@ def fama_macbeth_second(Y, betas):
 
     >''<
     """
+    Y = Y.astype(np.float)
+    betas = betas.astype(np.float)
+
     if not isinstance(betas, pd.Panel):
         betas = pd.Panel.from_dict({"f1":betas}, orient="minor")
 
@@ -88,6 +92,7 @@ def fama_macbeth_second(Y, betas):
 
     # cross-sectional regression for each time period
     for idx, row in y.iterrows():
+        # idx, row = list(y.iterrows())[10]
         # betas are now regressors
         x2 = b.loc[:,idx,:].values.transpose()
         # responses are values of `row`
@@ -95,7 +100,10 @@ def fama_macbeth_second(Y, betas):
         # record index of nan's to use later when substituting betas
         nan_idx = np.isfinite(np.hstack((y2,x2))).any(axis=1)
         # there goes ols on values without nan's
-        B, _, _, _ = np.linalg.lstsq(x2[nan_idx,:], y2[nan_idx,:])
+        try:
+            B, _, _, _ = np.linalg.lstsq(x2[nan_idx,:], y2[nan_idx,:])
+        except:
+            B = np.nan*np.arange(x2.shape[1])
         # save premia and pricing errors
         lambdas.loc[idx,:] = B.squeeze()
         alphas.loc[idx,:] = row-(x2.dot(B)).squeeze()
@@ -577,7 +585,7 @@ def fmb_results(factors, lambdas, alphas, scale=12):
     return out
 
 
-def error_plot(realized, predicted, scale=12):
+def error_plot(realized, predicted, scale=12, **kwargs):
     """Produces a standard pricing errors plot, given average returns on test
     assets and average fitted returns of these assets
 
@@ -597,7 +605,7 @@ def error_plot(realized, predicted, scale=12):
     x = realized.values * scale
     labels = predicted.index.tolist()
 
-    fig, ax = plt.subplots(figsize=(6,6))
+    fig, ax = plt.subplots(**kwargs)
     ax.scatter(x, y)
 
     # Set axis limits to lowest and higest values of current instance
@@ -606,15 +614,16 @@ def error_plot(realized, predicted, scale=12):
     ax.set(xlim=(lower_lim, upper_lim), ylim=(lower_lim, upper_lim))
 
     # Set axis labels
-    plt.xlabel('Realized mean excess return (in % p.a.)', fontsize=14)
-    plt.ylabel('Fitted mean excess return (in % p.a.)', fontsize=14)
+    plt.xlabel('Realized (in % p.a.)')
+    plt.ylabel('Fitted (in % p.a.)')
+    plt.title("Mean excess return")
 
     # Draw a 45-degree line
     ax.plot(ax.get_xlim(), ax.get_ylim(), color="black", lw=1, ls="--")
 
     # Annotate portfolos
     for i, label in enumerate(labels):
-        ax.annotate(label, (x[i],y[i]), size=12, xycoords='data',
+        ax.annotate(label, (x[i],y[i]), xycoords='data',
                     xytext=(5, -10), textcoords="offset points")
 
     # Additional settings
