@@ -180,9 +180,7 @@ def rank_sort_adv_2(ret, sig, n_portf, hold_per=None, reb_dt=None,
 
     return pf
 
-
-
-def rank_sort(returns, signals, n_portfolios):
+def rank_sort(returns, signals, n_portfolios=3):
     """Sorts a dataframe of returns into portfolios according to dataframe of
     signals. If in any given cross-section the number of assets is not a
     multiple of number of portfolios, additional assets are allocated according
@@ -207,53 +205,59 @@ def rank_sort(returns, signals, n_portfolios):
         asssets in the corresponding portfolio
 
     """
-
-    portfolios = {}  # output is a dictionary
+    # output is a dictionary
+    portfolios = {}
 
     # Consider observationas where both signals and returns are available
-    returns = returns[pd.notnull(signals)]
-    signals = signals[pd.notnull(returns)]
+    returns = returns.where(returns * signals).dropna(how="all")
+    signals = signals.where(returns * signals).dropna(how="all")
 
     # align two frames to ensure the index is the same
-    returns, signals = returns.align(signals, axis = 0)
+    returns, signals = returns.align(signals, axis=0)
 
     # Get signal ranks row by row
-    signal_ranks = signals.rank(axis = 1,           # get ranks for each row
-                                numeric_only=True,  # ignore NaNs
-                                pct=True,           # map ranks to [0, 1]
-                                method="average")   # equal values' ranks are
-                                                    # averaged
+    signal_ranks = signals.rank(
+        axis = 1,           # get ranks for each row
+        numeric_only=True,  # ignore NaNs
+        pct=True,           # map ranks to [0, 1]
+        method="average")   # equal values' ranks are
+                            #   averaged
 
-    # Create a list of dataframes with number of elements equal n_portfolios
-    # the first element of the list is the 'low' portfolio, the last is 'high'
-    portf_list = [pd.DataFrame(columns=returns.columns)
-                    for portfolio in range(n_portfolios)]
+    # create panel with number of elements equal n_portfolios;
+    portfolio_pan = pd.Panel(
+        items=returns.columns,
+        major_axis=returns.index,
+        minor_axis=range(n_portfolios))
 
+    # hash bins
+    hash_bins = {}
 
-    # Start iteration through signals' rows
+    # iterate over signals' rows
     for idx, row in signal_ranks.iterrows():
-        # Get number of assets available in the row xs
-        n_assets = pd.notnull(row).sum()
-        # Generate quantile bins, applying rule specified in 'custom_bins'
-        bins = custom_bins(n_assets, n_portfolios)
-        # Get portfolios by cutting xs into bins
-        rank_cuts = rank_cut(returns.ix[idx], row, bins)
-        # Finally, append the dataframes in portf_list with new rows
-        for p in np.arange(1, n_portfolios+1):
-            portf_list[p-1] = portf_list[p-1].append(rank_cuts[p-1])
 
-    # Write the list's contents into output dictionary
-    for p in np.arange(1, n_portfolios+1):
-        # Write each portfolios'constituent assets
-        portfolios["portfolio" + str(p)] = portf_list[p-1]
-        # Get the equally-weighted return on each portfolio
-        portfolios["p" + str(p)] = portf_list[p-1].mean(axis=1)
-        portfolios["p" + str(p)].name = "p" + str(p)
+        # Get number of assets available in the row xs
+        n_assets = row.count()
+
+        # hash bins
+        if n_assets not in hash_bins:
+            # Generate quantile bins, applying rule specified in 'custom_bins'
+            hash_bins[n_assets] = custom_bins(n_assets, n_portfolios)
+
+        #  cut into bins
+        portfolio_pan.loc[:,idx,:] = rank_cut(row, hash_bins[n_assets])
+
+    # write the list's contents into output dictionary
+    for p in range(n_portfolios):
+        this_portf = returns.where(portfolio_pan.loc[:,:,p])
+        # write each portfolios'constituent assets
+        portfolios["portfolio" + str(p+1)] = this_portf
+        # get the equally-weighted return on each portfolio
+        portfolios["p" + str(p+1)] = this_portf.mean(axis=1)
+        portfolios["p" + str(p+1)].name = "p" + str(p+1)
 
     return portfolios
 
-
-def rank_cut(returns, signal_ranks, bins):
+def rank_cut(signal_ranks, bins):
     """
     Cuts a dataframe of returns into dataframes of returns on rank-sorted
     portfolios, accepting percentile signal ranks and custom bins to cut upon,
@@ -278,19 +282,19 @@ def rank_cut(returns, signal_ranks, bins):
         signal rank lies within quantiles in the corresponding element of bins
 
     """
-    rank_cuts = []  # output is a list
-    # For each tuple in bins, select assets whose signals'percentile ranks lie
-    # within bins, then append the output
-    for p in range(len(bins)):
-        if p == 0:  # first bin is closed interval
-            rank_cuts.append(returns[(signal_ranks >= bins[p][0]) &
-                          (signal_ranks <= bins[p][1])])
-        else:
-            rank_cuts.append(returns[(signal_ranks > bins[p][0]) &
-                          (signal_ranks <= bins[p][1])])
+    M, N = len(bins), len(signal_ranks)
+    rank_cuts = pd.DataFrame(
+        columns=signal_ranks.index,
+        index=range(M))
+
+    rank_cuts.loc[0,:] = \
+        (signal_ranks >= bins[0][0]) & (signal_ranks <= bins[0][1])
+
+    for p in range(1,M):
+        rank_cuts.loc[p,:] = \
+            (signal_ranks > bins[p][0]) & (signal_ranks <= bins[p][1])
 
     return rank_cuts
-
 
 def custom_bins(n_assets, n_portfolios):
     """
