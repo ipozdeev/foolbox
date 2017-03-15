@@ -310,14 +310,30 @@ boe = pd.read_csv(path+"boe_meetings_1997_2017.txt", sep=',',
     index_col=0, parse_dates=True, header=0)
 ecb = pd.read_csv(path+"ecb_meetings_1999_2017.txt", sep=',',
     index_col=0, parse_dates=True, header=0)
+norges = pd.read_csv(path+"norges_bank_meetings_1993_2017.txt", sep=",",
+                    index_col=0, parse_dates=True, header=0)
+riks = pd.read_csv(path+"riksbank_meetings_1994_2017.txt", sep=",",
+                   index_col=0, parse_dates=True, header=0)
+rba = pd.read_csv(path+"rba_meetings_1990_2017.txt", sep=",",
+                  index_col=0, parse_dates=True, header=0)
+rbnz = pd.read_csv(path+"rbnz_meetings_1999_2017.txt", sep=",",
+                   index_col=0, parse_dates=True, header=0)
+snb = pd.read_csv(path+"snb_meetings_2000_2017.txt", sep=",",
+                  index_col=0, parse_dates=True, header=0)
+
 us_cpi = pd.read_csv(path+"cpi_releases_1994_2017.txt", sep=',',
-    index_col=0, parse_dates=True, header=0)
+                     index_col=0, parse_dates=True, header=0)
 
 events = {
     "opec": opec,
     "fomc": fomc,
     "boe": boe,
     "ecb": ecb,
+    "norges": norges,
+    "riks": riks,
+    "rba": rba,
+    "rbnz": rbnz,
+    "snb": snb,
     "us_cpi": us_cpi}
 
 """
@@ -325,6 +341,29 @@ events = {
 === , PICKLE IT FOR THE GREAT JUSTICE                                       ===
 ===============================================================================
 """
+# Set columns to lower case and sort alphabetically for every dataset
+for key in daily_data.keys():
+    daily_data[key].columns = [col.lower() for col in daily_data[key].columns]
+    daily_data[key] = daily_data[key][sorted(daily_data[key].columns)]
+
+for key in daily_data_developed.keys():
+    daily_data_developed[key].columns = [col.lower() for col in
+                                         daily_data_developed[key].columns]
+    daily_data_developed[key] =\
+        daily_data_developed[key][sorted(daily_data_developed[key].columns)]
+
+for key in monthly_data.keys():
+    monthly_data[key].columns = [col.lower() for col in
+                                 monthly_data[key].columns]
+    monthly_data[key] = monthly_data[key][sorted(monthly_data[key].columns)]
+
+for key in monthly_data_developed.keys():
+    monthly_data_developed[key].columns = [col.lower() for col in
+                                           monthly_data_developed[key].columns]
+    monthly_data_developed[key] =\
+        monthly_data_developed[key][sorted(monthly_data_developed[key].columns)]
+
+
 # Pickle it for future (ab)use
 with open(name_all_d, "wb") as fname:
     pickle.dump(daily_data, fname)
