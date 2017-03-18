@@ -130,6 +130,7 @@ def rank_sort_adv(returns, signals, n_portfolios, holding_period=None,
 
     return portfolios
 
+
 def rank_cut_old(returns, signal_ranks, bins):
     """
     """
@@ -145,6 +146,7 @@ def rank_cut_old(returns, signal_ranks, bins):
                 (signal_ranks > bins[p][0]) & (signal_ranks <= bins[p][1])])
 
     return rank_cuts
+
 
 def rank_sort_adv_2(ret, sig, n_portf, hold_per=None, reb_dt=None,
     hold_between=None):
@@ -195,6 +197,7 @@ def rank_sort_adv_2(ret, sig, n_portf, hold_per=None, reb_dt=None,
                 pf[key].fillna(hold_between, inplace=True)
 
     return pf
+
 
 def rank_sort(returns, signals, n_portfolios=3):
     """Sorts a dataframe of returns into portfolios according to dataframe of
@@ -275,6 +278,7 @@ def rank_sort(returns, signals, n_portfolios=3):
 
     return portfolios
 
+
 def rank_cut(signal_ranks, bins):
     """
     Cuts a dataframe of returns into dataframes of returns on rank-sorted
@@ -313,6 +317,7 @@ def rank_cut(signal_ranks, bins):
             (signal_ranks > bins[p][0]) & (signal_ranks <= bins[p][1])
 
     return rank_cuts
+
 
 def custom_bins(n_assets, n_portfolios):
     """
@@ -358,6 +363,35 @@ def custom_bins(n_assets, n_portfolios):
                         assets_in_p.cumsum() / n_assets))
 
     return bins
+
+
+def get_holdings(portfolio):
+    """Ütility function, returning DataFrame of holdings corresponding to the
+    'portfolio' key of the 'rank_sort()' family of functions.
+
+    Parameters
+    ----------
+    portfolio: pandas.Data.Frame
+        corresponding to for example 'portfolio3' key of the 'rank_sort()'
+        function, i.e. returns for currencies which are in the protfolio, and
+        zeroes otherwise
+
+    Returns
+    -------
+    holdings: pd.DataFrame
+        of columns names of assets present in portfolio at each date. For
+        example "2012-12-31: ['AUD', 'NZD', 'CAD']"
+
+    """
+    holdings = pd.DataFrame(index=portfolio.index, columns=["holdings"],
+                            dtype="object")
+
+    # Loop over the portfolio's rows, filling holdings with lists
+    for date, row in portfolio.iterrows():
+        holdings.loc[date, "holdings"] = portfolio.ix[date].dropna().index\
+            .tolist()
+
+    return holdings
 
 
 def bas_adjustment(portfolio, spot_mid, spot_bid, spot_ask, fwd_mid, fwd_bid,
