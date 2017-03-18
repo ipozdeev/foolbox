@@ -39,7 +39,7 @@ for df_name in raw_data.keys():
 
         # Locate currencies quoted not per 1 USD and convert them
         non_usd = temp_df.columns.get_level_values(0) != 'U$'        # non-USD
-        #temp_df.iloc[:, non_usd] = temp_df.iloc[:, non_usd].pow(-1)  # convert
+        temp_df.iloc[:, non_usd] = temp_df.iloc[:, non_usd].pow(-1)  # convert
 
         # Drop multiindex quote  and convert index to DateTime
         temp_df.columns = temp_df.columns.droplevel()
