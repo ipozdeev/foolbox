@@ -318,6 +318,8 @@ rba = pd.read_csv(path+"rba_meetings_1990_2017.txt", sep=",",
                   index_col=0, parse_dates=True, header=0)
 rbnz = pd.read_csv(path+"rbnz_meetings_1999_2017.txt", sep=",",
                    index_col=0, parse_dates=True, header=0)
+boc = pd.read_csv(path+"boc_meetings_2001_2017.txt", sep=",",
+                  index_col=0, parse_dates=True, header=0)
 snb = pd.read_csv(path+"snb_meetings_2000_2017.txt", sep=",",
                   index_col=0, parse_dates=True, header=0)
 
@@ -333,6 +335,7 @@ events = {
     "riks": riks,
     "rba": rba,
     "rbnz": rbnz,
+    "boc": boc,
     "snb": snb,
     "us_cpi": us_cpi}
 
