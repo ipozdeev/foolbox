@@ -275,6 +275,132 @@ def rank_sort(returns, signals, n_portfolios=3):
 
     return portfolios
 
+def rank_sort_2(returns, signals, n_portfolios=3):
+    """
+    """
+    returns = returns.dropna(how="all")
+    signals = signals.dropna(how="all")
+
+    # align two frames to ensure the index is the same
+    returns, signals = returns.align(signals, axis=0, join="inner")
+
+    # Get signal ranks row by row
+    signal_ranks = signals.rank(
+        axis=1,
+        numeric_only=True,
+        pct=True,
+        method="average")
+
+    # -----------------------------------------------------------------------
+    # init space for bins
+    bins = signal_ranks*np.nan
+
+    # start hashing!
+    hash_bins = {}
+
+    # loop over rows; for each calculate # of assets, construct bins, hash
+    #   them; result is a DataFrame of bin numbers
+    for idx, row in signal_ranks.iterrows():
+        # drop nans: needed for digitize later
+        this_row = row.dropna()
+        # Get number of assets available in the row xs
+        n_assets = this_row.count()
+
+        # hash bins
+        if n_assets not in hash_bins:
+            # Generate quantile bins, applying rule specified in 'custom_bins'
+            hash_bins[n_assets] = custom_bins_2(n_assets, n_portfolios)
+
+        # cut into bins
+        bins.loc[idx,this_row.index] = np.digitize(
+            this_row, hash_bins[n_assets])
+
+    # -----------------------------------------------------------------------
+    # write the list's contents into output dictionary
+    portfolios = dict()
+
+    # allocate
+    for p in range(n_portfolios):
+        # where bins are equal to 1,2,...
+        this_portf = returns.where(bins == p)
+        # write each portfolio's constituent assets
+        portfolios["portfolio" + str(p+1)] = this_portf
+        # get the equally-weighted return on each portfolio
+        portfolios["p" + str(p+1)] = this_portf.mean(axis=1)
+        portfolios["p" + str(p+1)].name = "p" + str(p+1)
+
+    return portfolios
+
+def custom_bins_2(n_assets, n_portf, epsilon=1e-05):
+    """ Create bin ranges with Dmitry's rule for np.digitize to work on them.
+
+    Example with 4 portfolios
+    The idea is to have [0, 0.25+e), [0.25+e, 0.50+2e) etc.
+
+    Parameters
+    ----------
+    n_assets : int
+        number of assets
+    n_portf : int
+        number of portfolios
+    epsilon : float
+        such that epsilon*n_portf is less than 1/n_portf
+
+    Returns
+    -------
+    bins : list
+        with bin numbers
+
+    Esxample
+    --------
+    custom_bins_2(3, 4) -> [1/3+e, 1/3+2e, 2/3+3e, 3/3+4e]
+    """
+    # number of assets in each portfolio
+    nass = assets_in_each(n_assets, n_portf)
+
+    # bin ranges
+    bins = (np.array(nass)/n_assets+epsilon).cumsum()
+
+    return bins
+
+def assets_in_each(N, K):
+    """ Calculate the number of assets in each portfolio with Dmitry's rule.
+
+    Example with 7 assets, 5 portfolios: having assigned 2 assets to the 5th
+    portfolio, the problem is to assign 5 assets to 4 portfolios, but in
+    reversed order (2 to the first). The rest is careful handling of quotients.
+
+    Parameters
+    ----------
+    N : int
+        number of assets
+    K : int
+        number of portfolios
+
+    Returns
+    -------
+    res : list
+        with numbers of assets in portfolios
+
+    Esxample
+    --------
+    assets_in_each(5, 4) -> [1,1,1,2]
+
+    """
+    # quotient is the integer part of division, remainder is... well, you know
+    quot = N // K
+    rem = N % K
+
+    # if N is a multiple of K, just assign them equally
+    if rem == 0:
+        return [quot,]*K
+
+    # else start with the last portfolio
+    init = [quot+1]
+
+    # continue with the assigning fewer assets into fewer portfolios
+    return assets_in_each(N-quot-1, K-1)[::-1] + init
+
 def rank_cut(signal_ranks, bins):
     """
     Cuts a dataframe of returns into dataframes of returns on rank-sorted
