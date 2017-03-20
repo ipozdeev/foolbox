@@ -326,6 +326,15 @@ snb = pd.read_csv(path+"snb_meetings_2000_2017.txt", sep=",",
 us_cpi = pd.read_csv(path+"cpi_releases_1994_2017.txt", sep=',',
                      index_col=0, parse_dates=True, header=0)
 
+joint_events = pd.concat([rba.rate.diff(), boc.rate.diff(),
+                          snb.ix[snb.scheduled].mid.diff(),
+                          ecb.refinancing.diff(), boe.rate.diff()*100,
+                          norges.rate.diff(), rbnz.rate.diff(),
+                          riks.rate.diff(), fomc.rate.diff()*100],
+                         join="outer", axis=1)
+joint_events.columns = ["aud", "cad", "chf", "eur", "gbp", "nok", "nzd", "sek",
+                        "usd"]
+
 events = {
     "opec": opec,
     "fomc": fomc,
@@ -337,6 +346,7 @@ events = {
     "rbnz": rbnz,
     "boc": boc,
     "snb": snb,
+    "joint_cbs": joint_events,
     "us_cpi": us_cpi}
 
 """

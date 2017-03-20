@@ -520,6 +520,42 @@ def get_holdings(portfolio):
     return holdings
 
 
+def upsample_portfolios(portfolios, hfq_returns):
+    """Given rank_sort() output for low frequency returns, and dataframe of
+    higher frequency returns, upsamples the former, using higher frequency data
+    from the latter
+
+    Parameters
+    ----------
+    portfolios: dict
+        corresponding to output of the 'rank_sort()' family of functions
+    hfq_returns: pandas.DataFrame
+        of returns to be used for ubpsampling. For example daily re
+
+    Returns
+    -------
+    upsampled: dict
+        of upsampled portfolios in 'portfolios'
+
+    """
+    # Identify number of portfolios
+    n_portfolios = int(len(portfolios)/2)
+
+    upsampled = {}
+    for p in np.arange(1, n_portfolios+1, 1):
+        # Upsample the holdings
+        tmp = portfolios["portfolio"+str(p)].copy()
+        hfq_holdings = hfq_returns.where(tmp.reindex(hfq_returns.index,
+                                         method="bfill").notnull())
+        upsampled["portfolio"+str(p)] = hfq_holdings
+
+        # Get the corresponding factor portfolios
+        upsampled["p"+str(p)] = hfq_holdings.mean(axis=1)
+        upsampled["p"+str(p)].name = "p" + str(p)
+
+    return upsampled
+
+
 def bas_adjustment(portfolio, spot_mid, spot_bid, spot_ask, fwd_mid, fwd_bid,
                    fwd_ask, long=True):
     """Computes transaction costs-adjusted returns for a currency portfolio
