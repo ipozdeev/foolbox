@@ -1,6 +1,7 @@
 import pandas as pd
 import numpy as np
-
+from foolbox.data_mgmt import set_credentials as setc
+import pickle
 
 def rank_sort_adv(returns, signals, n_portfolios, holding_period=None,
                   rebalance_dates=None):
@@ -1100,3 +1101,21 @@ def risk_parity(returns, volas):
     risk_parity.columns = ["risk_parity"]
 
     return risk_parity
+
+def get_carry(pickle_name, key_name="spot_ret", transform=None, n_portf=3):
+    """ Construct carry using sorts on forward discounts.
+    """
+    if transform is None:
+        transform = lambda x: x
+
+    # fetch data
+    data_path = setc.gdrive_path("research_data/fx_and_events/")
+    with open(data_path + pickle_name + ".p", mode='rb') as fname:
+        data = pickle.load(fname)
+
+    s = data["spot_ret"]
+    f = data["fwd_disc"]
+
+    pfs = rank_sort_2(s, transform(f).shift(1), n_portfolios=n_portf)
+
+    return get_factor_portfolios(pfs, hml=True)
