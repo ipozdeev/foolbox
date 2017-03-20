@@ -1,6 +1,7 @@
 import pandas as pd
 import numpy as np
 import statsmodels.api as sm
+# import ipdb
 
 class Regression():
     """
@@ -187,10 +188,11 @@ class DynamicOLS():
                 b*self.x.expanding(**self.kwargs).mean()
 
         elif self.method == "grouped_by":
+            # ipdb.set_trace()
             roll_cov_yx = yx.groupby(**self.kwargs).cov()
-            # TODO: make this generic
-            b = roll_cov_yx[y.name][:,:,x.name]/\
-                roll_cov_yx[x.name][:,:,x.name]
+            # TODO: this is now set for
+            b = roll_cov_yx[y.name][:,x.name]/\
+                roll_cov_yx[x.name][:,x.name]
             # add name to `b`
             b.name = y.name
             # calculate alpha
@@ -205,7 +207,7 @@ def get_dynamic_betas(Y, x, method, **kwargs):
     if isinstance(Y, pd.Series):
         Y = Y.to_frame()
 
-    res = Y*np.nan
+    res = pd.DataFrame()
     for c in Y.columns:
         mod = DynamicOLS(method=method, y0=Y[c], x0=x, **kwargs)
         _, b = mod.fit()
