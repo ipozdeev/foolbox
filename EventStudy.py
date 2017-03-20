@@ -45,10 +45,13 @@ class EventStudy():
         if isinstance(events, pd.DataFrame):
             events = events.iloc[:,0]
 
-        # check that events are uniquely labelled (e.g. 0,1,2...)
-        if events.duplicated().sum() > 0:
-            events = \
-                pd.Series(index=events.index,data=np.arange(len(events)))
+        # # check that events are uniquely labelled (e.g. 0,1,2...)
+        # if events.duplicated().sum() > 0:
+        #     events = \
+        #         pd.Series(index=events.index,data=np.arange(len(events)))
+
+        events = \
+            pd.Series(index=events.index,data=np.arange(len(events)))
 
         # shape
         T = len(data)
@@ -333,38 +336,39 @@ class EventStudy():
         # for each column in `data` create one plot with three subplots
         figs = {}
 
-        fig, ax = plt.subplots(3, figsize=(12,12*0.9), sharex=True)
+        fig, ax = plt.subplots(2, figsize=(11,11*0.9), sharex=True)
 
-        # 1st plot: before and after for each event in light gray
-        self.before.plot(ax=ax[0], color=gr_1)
-        self.after.plot(ax=ax[0], color=gr_1)
+        # # 1st plot: before and after for each event in light gray
+        # self.before.plot(ax=ax[0], color=gr_1)
+        # self.after.plot(ax=ax[0], color=gr_1)
+        # # add points at initiation
+        # self.before.iloc[[-1],:].plot(ax=ax[0], color="k",
+        #     linestyle="none", marker=".", markerfacecolor="k")
+        # self.after.iloc[[0],:].plot(ax=ax[0], color="k",
+        #     linestyle="none", marker=".", markerfacecolor="k")
+        # # plot mean in black =)
+        # cs_mu.plot(ax=ax[0], color='k', linewidth=1.5)
+
+        # 2nd plot: cumulative sums
+        ts_mu.loc[:tb,:].plot(ax=ax[0], color=gr_1)
+        ts_mu.loc[tc:,:].plot(ax=ax[0], color=gr_1)
         # add points at initiation
         self.before.iloc[[-1],:].plot(ax=ax[0], color="k",
             linestyle="none", marker=".", markerfacecolor="k")
         self.after.iloc[[0],:].plot(ax=ax[0], color="k",
             linestyle="none", marker=".", markerfacecolor="k")
-        # plot mean in black =)
-        cs_mu.plot(ax=ax[0], color='k', linewidth=1.5)
-
-        # 2nd plot: cumulative sums
-        ts_mu.loc[:tb,:].plot(ax=ax[1], color=gr_1)
-        ts_mu.loc[tc:,:].plot(ax=ax[1], color=gr_1)
-        # add points at initiation
-        self.before.iloc[[-1],:].plot(ax=ax[1], color="k",
-            linestyle="none", marker=".", markerfacecolor="k")
-        self.after.iloc[[0],:].plot(ax=ax[1], color="k",
-            linestyle="none", marker=".", markerfacecolor="k")
         # mean in black
-        cs_ts_mu.plot(ax=ax[1], color='k', linewidth=1.5)
-        ax[1].set_title("cumulative")
+        cs_ts_mu.plot(ax=ax[0], color='k', linewidth=1.5)
+        ax[0].set_title("cumulative, individual")
 
         # 3rd plot: ci around avg cumsum
-        cs_ts_mu.loc[:tb].plot(ax=ax[2], color='k', linewidth=1.5)
-        cs_ts_mu.loc[tc:].plot(ax=ax[2], color='k', linewidth=1.5)
-        ax[2].fill_between(self.stacked_idx,
+        cs_ts_mu.loc[:tb].plot(ax=ax[1], color='k', linewidth=1.5)
+        cs_ts_mu.loc[tc:].plot(ax=ax[1], color='k', linewidth=1.5)
+        ax[1].fill_between(self.stacked_idx,
             self.ci.iloc[:,0].values,
             self.ci.iloc[:,1].values,
             color=gr_1, alpha=0.5, label="conf. interval")
+        ax[1].set_title("cumulative average")
 
         # some parameters common for all ax
         for x in range(len(ax)):
@@ -376,7 +380,6 @@ class EventStudy():
             legend.remove()
 
         ax[x].set_xlabel("periods after event")
-        ax[x].set_ylabel("cumulative average")
 
         # super title
         fig.suptitle(self.data.name, fontsize=14)
@@ -416,6 +419,9 @@ def event_study_wrapper(data, events, reix_w_bday=False,
         isntance of EventStudy with all attributes (cs, ts etc.) calculated
 
     """
+    data = data.loc[events.index[0]:]
+    events = events.loc[data.index[0]:]
+
     # window default
     if window is None:
         window = [-5,-1,0,5]
@@ -436,6 +442,10 @@ def event_study_wrapper(data, events, reix_w_bday=False,
         events = events.where(events.diff() != 0).dropna()
     elif direction == "constants":
         events = events.where(events.diff() == 0).dropna()
+    elif direction == "all":
+        events = events
+    else:
+        raise ValueError("direction not implemented")
 
     # index to start data at: needed to discard stuff way too old
     start_at = min(events.index) - DateOffset(months=2)
@@ -536,33 +546,33 @@ def signal_from_events(data, events, window, func=None):
 
     return pivoted.astype(np.float)
 
-if __name__ == "__main__":
-    # parameters of distribution
-    sigma = 1.5
-    mu = 1.0
-    # number of observations
-    T = 2000
-    # number of events
-    K = 10
-
-    # time index
-    idx = pd.date_range("1990-01-01", periods=T, frequency='D')
-
-    # simulate data
-    data_1d = pd.Series(
-        data=np.random.normal(size=(T,))*sigma+mu,
-        index=idx)
-
-    # simulate events
-    events = sorted(random.sample(idx.tolist()[T//3:T//2], K))
-    events = pd.Series(index=events, data=np.arange(len(events)))
-
-    evt_study = EventStudy(
-        data=data_1d,
-        events=events,
-        window=[-5,-1,0,5])
-
-    # fig = evt_study.plot(ps=0.9)
+# if __name__ == "__main__":
+#     # parameters of distribution
+#     sigma = 1.5
+#     mu = 1.0
+#     # number of observations
+#     T = 2000
+#     # number of events
+#     K = 10
+#
+#     # time index
+#     idx = pd.date_range("1990-01-01", periods=T, frequency='D')
+#
+#     # simulate data
+#     data_1d = pd.Series(
+#         data=np.random.normal(size=(T,))*sigma+mu,
+#         index=idx)
+#
+#     # simulate events
+#     events = sorted(random.sample(idx.tolist()[T//3:T//2], K))
+#     events = pd.Series(index=events, data=np.arange(len(events)))
+#
+#     evt_study = EventStudy(
+#         data=data_1d,
+#         events=events,
+#         window=[-5,-1,0,5])
+#
+#     # fig = evt_study.plot(ps=0.9)
 
 
 # ---------------------------------------------------------------------------
