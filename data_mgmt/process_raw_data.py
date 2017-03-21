@@ -265,7 +265,7 @@ for key in daily_data.keys():
 
 # Add excess returns
 """
-For each month t, from the US investor's perspective:
+For each month t, foreign currency for unit of USD:
 Spot return:      - [s(t) - s(t-1)], minus because currencies are per 1 USD
 Excess return:    f(t-1) - s(t) = - [s(t) - s(t-1)] + [f(t-1) - s(t-1)]
 Forward discount: f(t) - s(t)

@@ -201,85 +201,6 @@ def rank_sort_adv_2(ret, sig, n_portf, hold_per=None, reb_dt=None,
 
 
 def rank_sort(returns, signals, n_portfolios=3):
-    """Sorts a dataframe of returns into portfolios according to dataframe of
-    signals. If in any given cross-section the number of assets is not a
-    multiple of number of portfolios, additional assets are allocated according
-    to the rule specified in 'custom_bins' function.
-
-    Parameters
-    ----------
-    returns: DataFrame
-        of asset returns to be sorted in portfolios
-    signals: DataFrame
-        of signals accroding to which returns are sorted, this dataframe has
-        same shape as returns
-    n_portfolios: int
-        number if portfolios to sort returns into
-
-    Returns
-    -------
-    protfolios: dictionary
-        of dataframes. Keys p1, p2, ..., pN, where N = n_portfolios contain
-        returns on equally weighted portfolios from low to high. Keys
-        portfolio1, portfolio2, ..., portfolioN contain returns of individual
-        asssets in the corresponding portfolio
-
-    """
-    # output is a dictionary
-    portfolios = {}
-
-    # Consider observationas where both signals and returns are available
-    # returns = returns.where(returns * signals).dropna(how="all")
-    # signals = signals.where(returns * signals).dropna(how="all")
-    returns = returns.dropna(how="all")
-    signals = signals.dropna(how="all")
-
-    # align two frames to ensure the index is the same
-    returns, signals = returns.align(signals, axis=0)
-
-    # Get signal ranks row by row
-    signal_ranks = signals.rank(
-        axis = 1,           # get ranks for each row
-        numeric_only=True,  # ignore NaNs
-        pct=True,           # map ranks to [0, 1]
-        method="average")   # equal values' ranks are
-                            #   averaged
-
-    # create panel with number of elements equal n_portfolios;
-    portfolio_pan = pd.Panel(
-        items=returns.columns,
-        major_axis=returns.index,
-        minor_axis=range(n_portfolios))
-
-    # hash bins
-    hash_bins = {}
-
-    # iterate over signals' rows
-    for idx, row in signal_ranks.iterrows():
-
-        # Get number of assets available in the row xs
-        n_assets = row.count()
-
-        # hash bins
-        if n_assets not in hash_bins:
-            # Generate quantile bins, applying rule specified in 'custom_bins'
-            hash_bins[n_assets] = custom_bins(n_assets, n_portfolios)
-
-        #  cut into bins
-        portfolio_pan.loc[:,idx,:] = rank_cut(row, hash_bins[n_assets])
-
-    # write the list's contents into output dictionary
-    for p in range(n_portfolios):
-        this_portf = returns.where(portfolio_pan.loc[:,:,p])
-        # write each portfolios'constituent assets
-        portfolios["portfolio" + str(p+1)] = this_portf
-        # get the equally-weighted return on each portfolio
-        portfolios["p" + str(p+1)] = this_portf.mean(axis=1)
-        portfolios["p" + str(p+1)].name = "p" + str(p+1)
-
-    return portfolios
-
-def rank_sort_2(returns, signals, n_portfolios=3):
     """
     """
     returns = returns.dropna(how="all")
@@ -404,46 +325,6 @@ def assets_in_each(N, K):
 
     # continue with the assigning fewer assets into fewer portfolios
     return assets_in_each(N-quot-1, K-1)[::-1] + init
-
-def rank_cut(signal_ranks, bins):
-    """
-    Cuts a dataframe of returns into dataframes of returns on rank-sorted
-    portfolios, accepting percentile signal ranks and custom bins to cut upon,
-    and returning list of dataframes where each element contains returns on
-    assets whose rank is within corresponding bin.
-
-    Parameters
-    ----------
-    returns: DataFrame
-        (or series) containing a cross-section of returns for given time point
-    signal_ranks: DataFrame
-        (or series) containing ranks on which returns are to be sorted
-    bins: list
-        where each element is a tuple, containing lower and upper quantiles for
-        the corresponding portfolio, number of portfolios equals the number of
-        elements in the list
-
-    Returns
-    -------
-    rank_cuts: list
-        of dataframes with each dataframe containing returns whose pecentile
-        signal rank lies within quantiles in the corresponding element of bins
-
-    """
-    M, N = len(bins), len(signal_ranks)
-    rank_cuts = pd.DataFrame(
-        columns=signal_ranks.index,
-        index=range(M))
-
-    rank_cuts.loc[0,:] = \
-        (signal_ranks >= bins[0][0]) & (signal_ranks <= bins[0][1])
-
-    for p in range(1,M):
-        rank_cuts.loc[p,:] = \
-            (signal_ranks > bins[p][0]) & (signal_ranks <= bins[p][1])
-
-    return rank_cuts
-
 
 def custom_bins(n_assets, n_portfolios):
     """
@@ -1152,7 +1033,7 @@ def get_carry(pickle_name, key_name="spot_ret", transform=None, n_portf=3):
     s = data[key_name]
     f = data["fwd_disc"]
 
-    pfs = rank_sort_2(s, transform(f).shift(1), n_portfolios=n_portf)
+    pfs = rank_sort(s, transform(f).shift(1), n_portfolios=n_portf)
 
     return get_factor_portfolios(pfs, hml=True)
 
@@ -1201,22 +1082,22 @@ def buy_before_events(s_d, fdisc_d, evts, fwd_maturity='W', burnin=1):
     fwd_reixed = fdisc_d.shift(burnin+tau).reindex(
         index=hikes.index, method="bfill")
     # sum of spot return over 5 days
-    s_reixed = s.rolling(tau).sum().shift(burnin).reindex(
+    s_reixed = s_d.rolling(tau).sum().shift(burnin).reindex(
         index=hikes.index, method="bfill")
     # store
     res["before_hikes"] = \
-        (fwd_reixed+s_reixed).where(hikes.notnull())
+        (-fwd_reixed+s_reixed).where(hikes.notnull())
 
     # cuts ----------------------------------------------------------------
     # reindex with events' dates
     fwd_reixed = fdisc_d.shift(burnin+tau).reindex(
         index=cuts.index, method="bfill")
     # sum of spot return over 5 days
-    s_reixed = s.rolling(tau).sum().shift(burnin).reindex(
+    s_reixed = s_d.rolling(tau).sum().shift(burnin).reindex(
         index=cuts.index, method="bfill")
     # store
     res["before_cuts"] = \
-        (fwd_reixed+s_reixed).where(cuts.notnull())
+        (-fwd_reixed+s_reixed).where(cuts.notnull())
 
     # after -----------------------------------------------------------------
     # hikes ---------------------------------------------------------------
@@ -1224,22 +1105,22 @@ def buy_before_events(s_d, fdisc_d, evts, fwd_maturity='W', burnin=1):
     fwd_reixed = fdisc_d.shift(-burnin).reindex(
         index=hikes.index, method="bfill")
     # sum of spot return over 5 days
-    s_reixed = s.rolling(tau).sum().shift(-burnin-tau).reindex(
+    s_reixed = s_d.rolling(tau).sum().shift(-burnin-tau).reindex(
         index=hikes.index, method="bfill")
     # store
     res["after_hikes"] = \
-        (fwd_reixed+s_reixed).where(hikes.notnull())
+        (-fwd_reixed+s_reixed).where(hikes.notnull())
 
     # cuts ----------------------------------------------------------------
     # reindex with events' dates
     fwd_reixed = fdisc_d.shift(-burnin).reindex(
         index=cuts.index, method="bfill")
     # sum of spot return over 5 days
-    s_reixed = s.rolling(tau).sum().shift(-burnin-tau).reindex(
+    s_reixed = s_d.rolling(tau).sum().shift(-burnin-tau).reindex(
         index=cuts.index, method="bfill")
     # store
     res["after_cuts"] = \
-        (fwd_reixed+s_reixed).where(cuts.notnull())
+        (-fwd_reixed+s_reixed).where(cuts.notnull())
 
     # merge
     res = pd.Panel.from_dict(res, orient="minor")
@@ -1252,3 +1133,133 @@ def buy_before_events(s_d, fdisc_d, evts, fwd_maturity='W', burnin=1):
     merged_before.mean(axis=1).dropna().cumsum().plot(color='g', label="bef")
     merged_after.mean(axis=1).dropna().cumsum().plot(color='r', label="aft")
     plt.gca().legend(loc="upper left")
+
+    return merged_before, merged_after
+
+
+# ---------------------------------------------------------------------------
+# limb
+# ---------------------------------------------------------------------------
+
+# Dmitry's original rank sort, with hash
+
+# def rank_sort(returns, signals, n_portfolios=3):
+#     """Sorts a dataframe of returns into portfolios according to dataframe of
+#     signals. If in any given cross-section the number of assets is not a
+#     multiple of number of portfolios, additional assets are allocated according
+#     to the rule specified in 'custom_bins' function.
+#
+#     Parameters
+#     ----------
+#     returns: DataFrame
+#         of asset returns to be sorted in portfolios
+#     signals: DataFrame
+#         of signals accroding to which returns are sorted, this dataframe has
+#         same shape as returns
+#     n_portfolios: int
+#         number if portfolios to sort returns into
+#
+#     Returns
+#     -------
+#     protfolios: dictionary
+#         of dataframes. Keys p1, p2, ..., pN, where N = n_portfolios contain
+#         returns on equally weighted portfolios from low to high. Keys
+#         portfolio1, portfolio2, ..., portfolioN contain returns of individual
+#         asssets in the corresponding portfolio
+#
+#     """
+#     # output is a dictionary
+#     portfolios = {}
+#
+#     # Consider observationas where both signals and returns are available
+#     # returns = returns.where(returns * signals).dropna(how="all")
+#     # signals = signals.where(returns * signals).dropna(how="all")
+#     returns = returns.dropna(how="all")
+#     signals = signals.dropna(how="all")
+#
+#     # align two frames to ensure the index is the same
+#     returns, signals = returns.align(signals, axis=0)
+#
+#     # Get signal ranks row by row
+#     signal_ranks = signals.rank(
+#         axis = 1,           # get ranks for each row
+#         numeric_only=True,  # ignore NaNs
+#         pct=True,           # map ranks to [0, 1]
+#         method="average")   # equal values' ranks are
+#                             #   averaged
+#
+#     # create panel with number of elements equal n_portfolios;
+#     portfolio_pan = pd.Panel(
+#         items=returns.columns,
+#         major_axis=returns.index,
+#         minor_axis=range(n_portfolios))
+#
+#     # hash bins
+#     hash_bins = {}
+#
+#     # iterate over signals' rows
+#     for idx, row in signal_ranks.iterrows():
+#
+#         # Get number of assets available in the row xs
+#         n_assets = row.count()
+#
+#         # hash bins
+#         if n_assets not in hash_bins:
+#             # Generate quantile bins, applying rule specified in 'custom_bins'
+#             hash_bins[n_assets] = custom_bins(n_assets, n_portfolios)
+#
+#         #  cut into bins
+#         portfolio_pan.loc[:,idx,:] = rank_cut(row, hash_bins[n_assets])
+#
+#     # write the list's contents into output dictionary
+#     for p in range(n_portfolios):
+#         this_portf = returns.where(portfolio_pan.loc[:,:,p])
+#         # write each portfolios'constituent assets
+#         portfolios["portfolio" + str(p+1)] = this_portf
+#         # get the equally-weighted return on each portfolio
+#         portfolios["p" + str(p+1)] = this_portf.mean(axis=1)
+#         portfolios["p" + str(p+1)].name = "p" + str(p+1)
+#
+#     return portfolios
+
+# Dmitry's rank_cut function, slightly changed
+
+# def rank_cut(signal_ranks, bins):
+#     """
+#     Cuts a dataframe of returns into dataframes of returns on rank-sorted
+#     portfolios, accepting percentile signal ranks and custom bins to cut upon,
+#     and returning list of dataframes where each element contains returns on
+#     assets whose rank is within corresponding bin.
+#
+#     Parameters
+#     ----------
+#     returns: DataFrame
+#         (or series) containing a cross-section of returns for given time point
+#     signal_ranks: DataFrame
+#         (or series) containing ranks on which returns are to be sorted
+#     bins: list
+#         where each element is a tuple, containing lower and upper quantiles for
+#         the corresponding portfolio, number of portfolios equals the number of
+#         elements in the list
+#
+#     Returns
+#     -------
+#     rank_cuts: list
+#         of dataframes with each dataframe containing returns whose pecentile
+#         signal rank lies within quantiles in the corresponding element of bins
+#
+#     """
+#     M, N = len(bins), len(signal_ranks)
+#     rank_cuts = pd.DataFrame(
+#         columns=signal_ranks.index,
+#         index=range(M))
+#
+#     rank_cuts.loc[0,:] = \
+#         (signal_ranks >= bins[0][0]) & (signal_ranks <= bins[0][1])
+#
+#     for p in range(1,M):
+#         rank_cuts.loc[p,:] = \
+#             (signal_ranks > bins[p][0]) & (signal_ranks <= bins[p][1])
+#
+#     return rank_cuts
+#
