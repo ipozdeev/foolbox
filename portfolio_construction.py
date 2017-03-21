@@ -1149,9 +1149,106 @@ def get_carry(pickle_name, key_name="spot_ret", transform=None, n_portf=3):
     with open(data_path + pickle_name + ".p", mode='rb') as fname:
         data = pickle.load(fname)
 
-    s = data["spot_ret"]
+    s = data[key_name]
     f = data["fwd_disc"]
 
     pfs = rank_sort_2(s, transform(f).shift(1), n_portfolios=n_portf)
 
     return get_factor_portfolios(pfs, hml=True)
+
+def buy_before_events(s_d, fdisc_d, evts, fwd_maturity='W', burnin=1):
+    """
+    Parameters
+    ----------
+    s_d : pandas.DataFrame
+        of spot returns; >0 means appreciation of foreign cur
+    fdisc_d : pandas.DataFrame
+        of forward discounts; >0 means higher US rf than foreign rate
+    evts : pandas.DataFrame
+        of events with diff in rates for values
+    fwd_maturity : str
+        'W','M'
+    burnin : int
+        how many periods to skip before/after events
+    """
+    # align -----------------------------------------------------------------
+    common_cols = s_d.columns.intersection(
+        fdisc_d.columns.intersection(evts.columns))
+    start_dt = fwd.index[0]
+
+    s_d = s_d.loc[start_dt:,common_cols]
+    fdisc_d = fdisc_d.loc[start_dt:,common_cols]
+    evts = evts.loc[start_dt:,common_cols]
+
+    # maturity --------------------------------------------------------------
+    if fwd_maturity == 'W':
+        tau = 5
+    elif fwd_maturity == 'M':
+        tau = 22
+    else:
+        ValueError("maturity not implemented!")
+
+    # hikes and cuts --------------------------------------------------------
+    hikes = evts.where(evts > 0)
+    cuts = evts.where(evts < 0)
+
+    # init space
+    res = dict()
+
+    # before ----------------------------------------------------------------
+    # hikes ---------------------------------------------------------------
+    # reindex with events' dates
+    fwd_reixed = fdisc_d.shift(burnin+tau).reindex(
+        index=hikes.index, method="bfill")
+    # sum of spot return over 5 days
+    s_reixed = s.rolling(tau).sum().shift(burnin).reindex(
+        index=hikes.index, method="bfill")
+    # store
+    res["before_hikes"] = \
+        (fwd_reixed+s_reixed).where(hikes.notnull())
+
+    # cuts ----------------------------------------------------------------
+    # reindex with events' dates
+    fwd_reixed = fdisc_d.shift(burnin+tau).reindex(
+        index=cuts.index, method="bfill")
+    # sum of spot return over 5 days
+    s_reixed = s.rolling(tau).sum().shift(burnin).reindex(
+        index=cuts.index, method="bfill")
+    # store
+    res["before_cuts"] = \
+        (fwd_reixed+s_reixed).where(cuts.notnull())
+
+    # after -----------------------------------------------------------------
+    # hikes ---------------------------------------------------------------
+    # reindex with events' dates
+    fwd_reixed = fdisc_d.shift(-burnin).reindex(
+        index=hikes.index, method="bfill")
+    # sum of spot return over 5 days
+    s_reixed = s.rolling(tau).sum().shift(-burnin-tau).reindex(
+        index=hikes.index, method="bfill")
+    # store
+    res["after_hikes"] = \
+        (fwd_reixed+s_reixed).where(hikes.notnull())
+
+    # cuts ----------------------------------------------------------------
+    # reindex with events' dates
+    fwd_reixed = fdisc_d.shift(-burnin).reindex(
+        index=cuts.index, method="bfill")
+    # sum of spot return over 5 days
+    s_reixed = s.rolling(tau).sum().shift(-burnin-tau).reindex(
+        index=cuts.index, method="bfill")
+    # store
+    res["after_cuts"] = \
+        (fwd_reixed+s_reixed).where(cuts.notnull())
+
+    # merge
+    res = pd.Panel.from_dict(res, orient="minor")
+    merged_before = res.loc[:,:,"before_hikes"].fillna(
+        -1*res.loc[:,:,"before_cuts"])
+    merged_after = res.loc[:,:,"after_hikes"].fillna(
+        -1*res.loc[:,:,"after_cuts"])
+
+    # plot
+    merged_before.mean(axis=1).dropna().cumsum().plot(color='g', label="bef")
+    merged_after.mean(axis=1).dropna().cumsum().plot(color='r', label="aft")
+    plt.gca().legend(loc="upper left")
