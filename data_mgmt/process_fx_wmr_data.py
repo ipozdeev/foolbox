@@ -92,11 +92,21 @@ daily_data["fwd_mid"] = raw_data["FX_forward_mid"]
 daily_data["fwd_bid"] = raw_data["FX_forward_bid"]
 daily_data["fwd_ask"] = raw_data["FX_forward_ask"]
 
+# FX weekly forwards
+daily_data["fwd_mid_w"] = raw_data["FX_forward_mid_w"]
+daily_data["fwd_bid_w"] = raw_data["FX_forward_bid_w"]
+daily_data["fwd_ask_w"] = raw_data["FX_forward_ask_w"]
+
+
 # Spot returns and forward discounts, mind the minus for spot rets
 daily_data["fwd_disc"] =\
     np.log(daily_data["fwd_mid"]/daily_data["spot_mid"])
 daily_data["spot_ret"] =\
     -np.log(daily_data["spot_mid"]/daily_data["spot_mid"].shift(1))
+
+# Stubbornness corner rolling 5-day rx
+daily_data["rx_5d"] =\
+    np.log(daily_data["fwd_mid_w"].shift(5)/daily_data["spot_mid"])
 
 
 """

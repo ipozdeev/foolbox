@@ -1137,8 +1137,80 @@ def buy_before_events(s_d, fdisc_d, evts, fwd_maturity='W', burnin=1):
     return merged_before, merged_after
 
 
+def multiple_timing(returns, signals, xs_avg=True):
+    """Wrapper around the 'timed_strat()' function allowing application to
+    multiple assets
+
+    Parameters
+    ----------
+    returns: pandas.DataFrame
+        of returns to individual assets to which timing is to be applied
+    signals: pandas.DataFrame
+        of the corresponding signals. The dataframe should consist of asset-
+        specific signals, concatenated over the time-series index with outer
+        join
+    xs_avg: bool
+        specifying whether fuction should return returns of individual assets
+        if False or cross-sectional average of these returns if True. Default
+        is True
+
+    Returns
+    -------
+    timed_strats: pandas.DataFrame
+        with individually timed returns if xs-avg is False, or cross-sectional
+        average of these returns merged by index if True
+
+    """
+    # Apply the 'timed_strat()' function to each column
+    tmp_list = list()
+    for col in returns.columns:
+        tmp_list.append(timed_strat(returns[col], signals[col]))
+    # Concatendate the timed returns using outer join
+    timed_strats = pd.concat(tmp_list, join="outer", axis=1)
+
+    # Average the output if required
+    if xs_avg:
+        timed_strats = timed_strats.mean(axis=1).to_frame()
+        timed_strats.columns = ["avg"]
+
+    return timed_strats
+
+
+def timed_strat(returns, signals):
+    """Times the returns given signals, such that long position is taken for
+    positive signals' values and short position is taken for the negative ones.
+
+    Parameters
+    ----------
+    returns: pandas.Series or pandas.DataFrame
+        of returns to an asset or portfolio to be timed according to signals
+    signals: pandas.Series or pandas.DataFrame
+        of signals to time returns. Signals' index should be a subset of that
+        of returns
+
+    Returns
+    -------
+    timed_returns: pandas.Series
+        of returns timed according to signals
+
+    """
+    # Transform dataframe inputs into series
+    if isinstance(returns, pd.DataFrame):
+        returns = returns.iloc[:, 0]
+    if isinstance(signals, pd.DataFrame):
+        signals = signals.iloc[:, 0]
+
+    # Get the returns corresponding to signals's dates
+    timed_returns = returns.reindex(signals.index)
+
+    # Time the returns according to signals' signs
+    timed_returns = timed_returns * np.sign(signals)
+
+    return timed_returns
+
+
 # ---------------------------------------------------------------------------
-# limb
+# limbo
 # ---------------------------------------------------------------------------
 
 # Dmitry's original rank sort, with hash
