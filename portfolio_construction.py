@@ -1161,17 +1161,26 @@ def multiple_timing(returns, signals, xs_avg=True):
         average of these returns merged by index if True
 
     """
-    # Apply the 'timed_strat()' function to each column
-    tmp_list = list()
-    for col in returns.columns:
-        tmp_list.append(timed_strat(returns[col], signals[col]))
-    # Concatendate the timed returns using outer join
-    timed_strats = pd.concat(tmp_list, join="outer", axis=1)
+    # If input is series, simply invoke behavior of 'timed_strat'
+    if isinstance(returns, pd.Series) and isinstance(signals, pd.Series):
+        timed_strats = timed_strat(returns, signals)
 
-    # Average the output if required
-    if xs_avg:
-        timed_strats = timed_strats.mean(axis=1).to_frame()
-        timed_strats.columns = ["avg"]
+    elif isinstance(returns, pd.DataFrame) and isinstance(signals,
+                                                          pd.DataFrame):
+        # Apply the 'timed_strat()' function to each column
+        tmp_list = list()
+        for col in returns.columns:
+            tmp_list.append(timed_strat(returns[col], signals[col]))
+        # Concatendate the timed returns using outer join
+        timed_strats = pd.concat(tmp_list, join="outer", axis=1)
+
+        # Average the output if required
+        if xs_avg:
+            timed_strats = timed_strats.mean(axis=1).to_frame()
+            timed_strats.columns = ["avg"]
+    else:
+        raise TypeError("Both returns and signals should be either pd.Series"
+                        "or pd.DataFrame objects")
 
     return timed_strats
 
