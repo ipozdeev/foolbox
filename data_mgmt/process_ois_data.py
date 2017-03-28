@@ -16,6 +16,9 @@ ois_data["tr_3m"] = raw_data["ois_3m_tr"]
 ois_data["icap_1m"] = raw_data["ois_1m_icap"]
 ois_data["icap_3m"] = raw_data["ois_3m_icap"]
 
+for key in ois_data.keys():
+    ois_data[key].columns = [col.lower() for col in ois_data[key].columns]
+
 # Pickle the bastard
 with open(data_path + name_ois, mode="wb") as fname:
     pickle.dump(ois_data, fname)
