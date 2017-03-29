@@ -2,8 +2,14 @@ import pandas as pd
 import numpy as np
 from pandas.tseries.offsets import DateOffset, MonthBegin, MonthEnd, \
     relativedelta
+import matplotlib.pyplot as plt
 
-def expect_policy(instrument, meetings, tau, rate=None):
+my_red = "#ce3300"
+my_blue = "#2f649e"
+
+plt.rc("font", family="serif", size=12)
+
+def expect_policy(instrument, meetings, tau, rate=None, plot=None):
     """
     Parameters
     ----------
@@ -19,13 +25,16 @@ def expect_policy(instrument, meetings, tau, rate=None):
     # if no rate provided, meetings must contain a rate
     if rate is None:
         rate = meetings.reindex(index=instrument.index, method="ffill")
+    else:
+        rate = rate.reindex(index=instrument.index, method="ffill")
 
     # allocate space for forward rates
     fwd_rate = instrument.copy()*np.nan
 
     # loop over dates in instrument
     for t in fwd_rate.index:
-        # t = fwd_rate.index[2808]
+        # t = fwd_rate.index[2822]
+        # t = pd.to_datetime("2016-02-08")
 
         # break if overshoot
         if t > meetings.last_valid_index():
@@ -42,15 +51,15 @@ def expect_policy(instrument, meetings, tau, rate=None):
         # maturity date of ois: t + 1 month (actual/360 convention)
         setl_date = t + DateOffset(months=tau)
 
+        # if next meeting is earlier than maturity, skip
+        if setl_date <=  nx_meet:
+            continue
+
         # number of days between them
         ndays = (setl_date - t).days
 
         # number of days until next meeting
         ndays_until = (nx_meet - t).days
-
-        # if next meeting is earlier than maturity, skip
-        if setl_date <=  nx_meet:
-            continue
 
         # previously set rate, to be effective until next meeting
         prev_rate = meetings.loc[prev_meet]
@@ -69,4 +78,54 @@ def expect_policy(instrument, meetings, tau, rate=None):
         # store
         fwd_rate.loc[t] = impl_rate
 
-    return fwd_rate
+    # plot --------------------------------------------------------------
+    if plot is not None:
+        assert isinstance(plot, int)
+
+        to_plot = fwd_rate.shift(plot).loc[meetings.index]
+
+        # rename a bit
+        to_plot.name = "fwd_rate"
+        meetings.name = "policy_rate"
+
+        f, ax = plt.subplots(2, figsize=(11,8))
+
+        # plot forward rate
+        (to_plot*100).plot(
+            ax=ax[0],
+            linestyle='none',
+            marker='o',
+            color=my_blue,
+            mec="none",
+            label="implied rate")
+
+        # plot meetings-set rate
+        (meetings*100).plot(
+            ax=ax[0],
+            marker='.',
+            color=my_red,
+            label="policy rate")
+
+        # set artist properties
+        ax[0].set_xlim(
+            max([meetings.first_valid_index(),
+                instrument.first_valid_index()])-\
+            DateOffset(months=6), ax[0].get_xlim()[1])
+        ax[0].legend(fontsize=12)
+
+        # predictive power
+        pd.concat((to_plot*100, meetings*100), axis=1).\
+            plot.scatter(
+                ax=ax[1],
+                x="fwd_rate",
+                y="policy_rate",
+                alpha=0.66,
+                s=33,
+                color=my_blue,
+                edgecolor='none')
+        lim_x = ax[1].get_xlim()
+        ax[1].plot(lim_x, lim_x, color='r', linestyle='--')
+
+        f.show()
+
+    return fwd_rate, ax
