@@ -10,12 +10,21 @@ my_blue = "#2f649e"
 plt.rc("font", family="serif", size=12)
 
 def expect_policy(instrument, meetings, tau, rate=None, plot=None):
-    """
+    """ Calculate expectation of the next policy meeting.
+
+    Uses forward rates implied in `instrument` as proxy for the rate set at
+    the next policy meeting. Looping over index of `instrument`, assumes that
+    before the next meeting the rate, which the instrument is derivative of,
+    stays at the level of the previous meeting (`rate`=None) or at the level
+    specified in `rate`.
+    
     Parameters
     ----------
     tau : int
         maturity, in months
     """
+    ax = None
+
     assert isinstance(instrument, pd.Series)
     assert isinstance(meetings, pd.Series)
 
