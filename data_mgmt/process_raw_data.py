@@ -304,7 +304,7 @@ for key in daily_data.keys():
 """
 opec = pd.read_csv(path+"opec_meetings_1984_2016.txt", sep=',',
     index_col=0, parse_dates=True, header=0)
-fomc = pd.read_csv(path+"fomc_meetings_1994_2016.txt", sep=',',
+fomc = pd.read_csv(path+"fomc_meetings_1994_2017.txt", sep=',',
     index_col=0, parse_dates=True, header=0)
 boe = pd.read_csv(path+"boe_meetings_1997_2017.txt", sep=',',
     index_col=0, parse_dates=True, header=0)
@@ -330,13 +330,21 @@ us_cpi = pd.read_csv(path+"cpi_releases_1994_2017.txt", sep=',',
 
 joint_events = pd.concat([rba.rate.diff(), boc.rate.diff(),
                           snb.ix[snb.scheduled].mid.diff(),
-                          ecb.refinancing.diff(), boe.rate.diff()*100,
+                          ecb.deposit.diff(), boe.rate.diff()*100,
                           boj.rate.diff(), norges.rate.diff(),
                           rbnz.rate.diff(), riks.rate.diff(),
                           fomc.rate.diff()*100],
                          join="outer", axis=1)
 joint_events.columns = ["aud", "cad", "chf", "eur", "gbp", "jpy", "nok", "nzd",
                         "sek", "usd"]
+
+joint_events_lvl = pd.concat(
+    [rba.rate, boc.rate, snb.ix[snb.scheduled].mid, ecb.deposit,
+     boe.rate, boj.rate, norges.rate, rbnz.rate, riks.rate, fomc.rate*100],
+    join="outer", axis=1).fillna(method="ffill")
+
+joint_events_lvl.columns = ["aud", "cad", "chf", "eur", "gbp", "jpy", "nok",
+                            "nzd", "sek", "usd"]
 
 events = {
     "opec": opec,
@@ -351,6 +359,7 @@ events = {
     "snb": snb,
     "boj": boj,
     "joint_cbs": joint_events,
+    "joint_cbs_lvl": joint_events_lvl,
     "us_cpi": us_cpi}
 
 """
