@@ -341,7 +341,7 @@ joint_events.columns = ["aud", "cad", "chf", "eur", "gbp", "jpy", "nok", "nzd",
 joint_events_lvl = pd.concat(
     [rba.rate, boc.rate, snb.ix[snb.scheduled].mid, ecb.deposit,
      boe.rate, boj.rate, norges.rate, rbnz.rate, riks.rate, fomc.rate*100],
-    join="outer", axis=1).fillna(method="ffill")
+    join="outer", axis=1)
 
 joint_events_lvl.columns = ["aud", "cad", "chf", "eur", "gbp", "jpy", "nok",
                             "nzd", "sek", "usd"]
