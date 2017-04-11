@@ -15,6 +15,7 @@ name_dev_m = path + "data_dev_m.p"  # developed sample, monthly data
 name_all_d = path + "data_all_d.p"  # all sample, daily data
 name_all_m = path + "data_all_m.p"  # all sample, monthly data
 name_all_evt = path + "events.p"  # events
+name_all_on = path + "overnight_rates.p"
 
 # Definitions and settings
 eur_nan_date = "1999-01-04"           # First consistent EUR data begins on 5th
@@ -305,9 +306,9 @@ for key in daily_data.keys():
 opec = pd.read_csv(path+"opec_meetings_1984_2016.txt", sep=',',
     index_col=0, parse_dates=True, header=0)
 fomc = pd.read_csv(path+"fomc_meetings_1994_2017.txt", sep=',',
-    index_col=0, parse_dates=True, header=0)
+    index_col=0, parse_dates=True, header=0)*100
 boe = pd.read_csv(path+"boe_meetings_1997_2017.txt", sep=',',
-    index_col=0, parse_dates=True, header=0)
+    index_col=0, parse_dates=True, header=0)*100
 ecb = pd.read_csv(path+"ecb_meetings_1999_2017.txt", sep=',',
     index_col=0, parse_dates=True, header=0)
 norges = pd.read_csv(path+"norges_bank_meetings_1993_2017.txt", sep=",",
@@ -324,23 +325,22 @@ snb = pd.read_csv(path+"snb_meetings_2000_2017.txt", sep=",",
                   index_col=0, parse_dates=True, header=0)
 boj = pd.read_csv(path+"boj_meetings_1998_2017.txt", sep=",",
                   index_col=0, parse_dates=True, header=0)
-
 us_cpi = pd.read_csv(path+"cpi_releases_1994_2017.txt", sep=',',
                      index_col=0, parse_dates=True, header=0)
 
 joint_events = pd.concat([rba.rate.diff(), boc.rate.diff(),
                           snb.ix[snb.scheduled].mid.diff(),
-                          ecb.deposit.diff(), boe.rate.diff()*100,
+                          ecb.deposit.diff(), boe.rate.diff(),
                           boj.rate.diff(), norges.rate.diff(),
                           rbnz.rate.diff(), riks.rate.diff(),
-                          fomc.rate.diff()*100],
+                          fomc.rate.diff()],
                          join="outer", axis=1)
 joint_events.columns = ["aud", "cad", "chf", "eur", "gbp", "jpy", "nok", "nzd",
                         "sek", "usd"]
 
 joint_events_lvl = pd.concat(
     [rba.rate, boc.rate, snb.ix[snb.scheduled].mid, ecb.deposit,
-     boe.rate, boj.rate, norges.rate, rbnz.rate, riks.rate, fomc.rate*100],
+     boe.rate, boj.rate, norges.rate, rbnz.rate, riks.rate, fomc.rate],
     join="outer", axis=1)
 
 joint_events_lvl.columns = ["aud", "cad", "chf", "eur", "gbp", "jpy", "nok",
@@ -361,6 +361,30 @@ events = {
     "joint_cbs": joint_events,
     "joint_cbs_lvl": joint_events_lvl,
     "us_cpi": us_cpi}
+
+
+"""
+===============================================================================
+=== PART VI: OVERNIGHT EFFECTIVE RATES                                      ===
+===============================================================================
+"""
+# read in names from tab "iso"
+on_names = pd.read_excel(path+"overnight_ref_rates_1994_2017_d.xlsx",
+    sheetname="iso")
+# read in bloomberg output
+raw = pd.read_excel(path+"overnight_ref_rates_1994_2017_d.xlsx",
+    sheetname="hardcopy", skiprows=1)
+# disassemble into separate dataframes
+raw_by_cur = [
+    raw.ix[:,(p*3):(p*3+2)].dropna() for p in range(on_names.shape[1])]
+# break each piece into index and data, concatenate all
+on = pd.concat(
+    [pd.Series(index=p.iloc[:,0].values, data=p.iloc[:,1].values) \
+        for p in raw_by_cur],
+    axis=1)
+# add back columns, sort
+on.columns = on_names.columns
+on = on[sorted(on.columns)]
 
 """
 ===============================================================================
@@ -401,3 +425,5 @@ with open(name_dev_m, "wb") as fname:
     pickle.dump(monthly_data_developed, fname)
 with open(name_all_evt, "wb") as fname:
     pickle.dump(events, fname)
+with open(name_all_on, "wb") as fname:
+    pickle.dump(on, fname)
