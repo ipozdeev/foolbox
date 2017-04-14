@@ -355,6 +355,23 @@ class PolicyExpectation():
         return res_1, res_2
 
 
+def into_currency(data, new_cur):
+    """
+    Parameters
+    ----------
+    data :
+        expressed in USD per unit
+    """
+    # re-express everything in units of new_cur
+    new_data = data.drop([new_cur], axis=1).subtract(
+        data[new_cur], axis="index")
+
+    # reinstall
+    new_data["usd"] = -1*data[new_cur]
+
+    return new_data
+
+
 if __name__  == "__main__":
 
     from foolbox.api import *
@@ -363,7 +380,7 @@ if __name__  == "__main__":
     data_path = set_credentials.gdrive_path("research_data/fx_and_events/")
 
     with open(data_path + "ois.p", mode='rb') as fname:
-        ois_data = pickle.load(fname)
+        oidataata = pickle.load(fname)
     with open(data_path + "overnight_rates.p", mode='rb') as fname:
         overnight_rates = pickle.load(fname)
     with open(data_path + "events.p", mode='rb') as fname:
@@ -373,11 +390,11 @@ if __name__  == "__main__":
     # loop over providers (icap, tr etc.) -----------------------------------
     # init storage
     policy_expectation = pd.Panel.from_dict(
-        data={k: v*np.nan for k,v in ois_data.items()},
+        data={k: v*np.nan for k,v in oidataata.items()},
         orient="minor")
 
-    for provider, many_instr in ois_data.items():
-        # provider, many_instr = list(ois_data.items())[1]
+    for provider, many_instr in oidataata.items():
+        # provider, many_instr = list(oidataata.items())[1]
         tau = int(provider[-2:-1])
 
         # loop over columns = currencies ------------------------------------
