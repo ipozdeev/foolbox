@@ -4,10 +4,13 @@ from pandas.tseries.offsets import DateOffset, MonthBegin, MonthEnd, \
     relativedelta
 import matplotlib.pyplot as plt
 
+# import ipdb
+
 my_red = "#ce3300"
 my_blue = "#2f649e"
 
 plt.rc("font", family="serif", size=12)
+
 
 class PolicyExpectation():
     """
@@ -18,6 +21,7 @@ class PolicyExpectation():
         self.meetings = meetings
         self.instrument = instrument
         self.benchmark = benchmark
+
 
     @classmethod
     def from_funds_futures(cls, meetings, funds_futures):
@@ -105,6 +109,7 @@ class PolicyExpectation():
 
         return pe
 
+
     @classmethod
     def from_money_market(cls, meetings, instrument, tau, benchmark=None):
         """ Extract policy expectations from money market instruments.
@@ -139,10 +144,29 @@ class PolicyExpectation():
         assert isinstance(meetings, pd.Series)
         assert isinstance(instrument, pd.Series)
 
-        # do not let instrument be too full of nans
-        min_start = max((meetings.index[0], instrument.index[0]))
-        instrument = instrument.loc[min_start:]
-        meetings = meetings.loc[min_start:]
+        if instrument.name is None:
+            raise AttributeError("instrument must be called with ISO of "+
+                "respective currency")
+
+        # day count convention
+        day_count = {
+            "gbp": 365,
+            "cad": 365,
+            "usd": 360,
+            "eur": 360,
+            "chf": 360,
+            "jpy": 365,
+            "nzd": 365,
+            "aud": 365,
+            "sek": 360}
+
+        # days in year for this currency:
+        days_in_year = day_count[instrument.name]
+
+        # # do not let instrument be too full of nans
+        # min_start = max((meetings.index[0], instrument.index[0]))
+        # instrument = instrument.loc[min_start:]
+        # meetings = meetings.loc[min_start:]
 
         # if no rate provided, meetings must contain a rate; in this case
         #   benchmark be the rate set at meetings projected onto the dates of
@@ -166,10 +190,10 @@ class PolicyExpectation():
 
         # loop over dates in instrument
         for t in rate_exp.index:
-            # t = fwd_rate.index[0]
+            # t = rate_exp.index[3000]
             # t = pd.to_datetime("2016-02-08")
 
-            # break if overshoots
+            # break if out of range
             if t > meetings.last_valid_index():
                 break
 
@@ -188,12 +212,12 @@ class PolicyExpectation():
             nx_meet = \
                 meetings.index[meetings.index.get_loc(t, method="bfill")]
 
-            # maturity date of instrument: t + tau months
-            #   (actual/360 convention)
+            # maturity date of instrument: contract starts tomorrow; final
+            #   date is then today tau month forward
             setl_date = t + DateOffset(months=tau)
 
             # if next meeting is earlier than maturity, skip
-            if setl_date <=  nx_meet:
+            if setl_date <= nx_meet:
                 continue
 
             # number of days between them
@@ -203,16 +227,24 @@ class PolicyExpectation():
             ndays_until = (nx_meet - t).days
 
             # previously set rate, to be effective until next meeting
-            prev_rate = benchmark.loc[prev_meet]
+            # TODO: not prev_meet, but prev_meet + 1
+            idx = benchmark.index[benchmark.index.get_loc(
+                prev_meet + DateOffset(days=1), "bfill")]
+            bench_reixed = benchmark.loc[idx:t].reindex(
+                index=pd.date_range(idx,t,freq='D'),
+                method="ffill")
+            prev_rate = (
+                (1+bench_reixed/days_in_year).product()**\
+                (1/bench_reixed.count())-1)*days_in_year
 
             # implied rate
-            r_isntr = instrument.loc[t]
+            r_instr = instrument.loc[t]
 
             impl_rate = (
                 (
-                    (r_isntr/360 + 1)**ndays/
-                    (1+prev_rate/360)**(ndays_until)
-                )**(1/(ndays-ndays_until))-1)*360
+                    (r_instr/days_in_year + 1)**ndays/
+                    (1+prev_rate/days_in_year)**(ndays_until)
+                )**(1/(ndays-ndays_until))-1)*days_in_year
 
             # store
             rate_exp.loc[t] = impl_rate
@@ -228,6 +260,7 @@ class PolicyExpectation():
 
         return pe
 
+
     def plot(self, lag):
         """ Plot predicted vs. realized and the error plot.
         """
@@ -237,13 +270,14 @@ class PolicyExpectation():
         meetings_c = self.meetings.copy()
 
         # policy expectation to plot
-        to_plot = self.policy_exp.shift(lag).loc[meetings_c.index]
+        to_plot = self.policy_exp.shift(lag).reindex(
+            index=meetings_c.index, method="ffill")
 
         # rename a bit
         to_plot.name = "policy_exp"
         meetings_c.name = "policy_rate"
 
-        f, ax = plt.subplots(2, figsize=(11,8))
+        f, ax = plt.subplots(2, figsize=(11.7,8.3))
 
         # plot forward rate
         (to_plot*100).plot(
@@ -264,7 +298,7 @@ class PolicyExpectation():
         # set artist properties
         ax[0].set_xlim(
             max([meetings_c.first_valid_index(),
-                self.instrument.first_valid_index()])-\
+                self.policy_exp.first_valid_index()])-\
             DateOffset(months=6), ax[0].get_xlim()[1])
         ax[0].legend(fontsize=12)
 
@@ -285,136 +319,59 @@ class PolicyExpectation():
         return f, ax
 
 
-# def expect_policy(instrument, meetings, tau, rate=None, plot=None):
-#     """ Calculate expectation of the next policy meeting.
-#
-#     Uses forward rates implied in `instrument` as proxy for the rate set at
-#     the next policy meeting. Looping over index of `instrument`, assumes that
-#     before the next meeting the rate, which the instrument is derivative of,
-#     stays at the level of the previous meeting (`rate`=None) or at the level
-#     specified in `rate`.
-#
-#     Parameters
-#     ----------
-#     tau : int
-#         maturity, in months
-#     """
-#     ax = None
-#
-#     assert isinstance(instrument, pd.Series)
-#     assert isinstance(meetings, pd.Series)
-#
-#     # do not let
-#     instrument = instrument.loc[meetings.index[0]:]
-#
-#     # if no rate provided, meetings must contain a rate
-#     if rate is None:
-#         rate = meetings.reindex(index=instrument.index, method="ffill")
-#     else:
-#         rate = rate.reindex(index=instrument.index, method="ffill")
-#
-#     # allocate space for forward rates
-#     fwd_rate = instrument.copy()*np.nan
-#
-#     # loop over dates in instrument
-#     for t in fwd_rate.index:
-#         # t = fwd_rate.index[2822]
-#         # t = pd.to_datetime("2016-02-08")
-#
-#         # break if overshoot
-#         if t > meetings.last_valid_index():
-#             break
-#
-#         # find two meeting dates: the previous, whose rate will serve as
-#         #   reference rate, and the next, which will possibly set a new rate
-#         # previous
-#         prev_meet = meetings.index[meetings.index.get_loc(t, method="ffill")]
-#
-#         # next closest meeting date
-#         nx_meet = meetings.index[meetings.index.get_loc(t, method="bfill")]
-#
-#         # maturity date of ois: t + 1 month (actual/360 convention)
-#         setl_date = t + DateOffset(months=tau)
-#
-#         # if next meeting is earlier than maturity, skip
-#         if setl_date <=  nx_meet:
-#             continue
-#
-#         # number of days between them
-#         ndays = (setl_date - t).days
-#
-#         # number of days until next meeting
-#         ndays_until = (nx_meet - t).days
-#
-#         # previously set rate, to be effective until next meeting
-#         prev_rate = meetings.loc[prev_meet]
-#         # prev_rate = sonia.loc[t]
-#
-#         # implied rate
-#         r_ois = instrument.loc[t]
-#         # impl_rate = ((1+/360)**ndays /
-#         #     (1+prev_rate/360)**ndays_until - 1)*(360/(ndays-ndays_until))
-#         impl_rate = (
-#             (
-#                 (r_ois/360 + 1)**ndays/
-#                 (1+prev_rate/360)**(ndays_until)
-#             )**(1/(ndays-ndays_until))-1)*360
-#
-#         # store
-#         fwd_rate.loc[t] = impl_rate
-#
-#     # plot --------------------------------------------------------------
-#     if plot is not None:
-#         assert isinstance(plot, int)
-#
-#         to_plot = fwd_rate.shift(plot).loc[meetings.index]
-#
-#         # rename a bit
-#         to_plot.name = "fwd_rate"
-#         meetings.name = "policy_rate"
-#
-#         f, ax = plt.subplots(2, figsize=(11,8))
-#
-#         # plot forward rate
-#         (to_plot*100).plot(
-#             ax=ax[0],
-#             linestyle='none',
-#             marker='o',
-#             color=my_blue,
-#             mec="none",
-#             label="implied rate")
-#
-#         # plot meetings-set rate
-#         (meetings*100).plot(
-#             ax=ax[0],
-#             marker='.',
-#             color=my_red,
-#             label="policy rate")
-#
-#         # set artist properties
-#         ax[0].set_xlim(
-#             max([meetings.first_valid_index(),
-#                 instrument.first_valid_index()])-\
-#             DateOffset(months=6), ax[0].get_xlim()[1])
-#         ax[0].legend(fontsize=12)
-#
-#         # predictive power
-#         pd.concat((to_plot*100, meetings*100), axis=1).\
-#             plot.scatter(
-#                 ax=ax[1],
-#                 x="fwd_rate",
-#                 y="policy_rate",
-#                 alpha=0.66,
-#                 s=33,
-#                 color=my_blue,
-#                 edgecolor='none')
-#         lim_x = ax[1].get_xlim()
-#         ax[1].plot(lim_x, lim_x, color='r', linestyle='--')
-#
-#         f.show()
-#
-#     return fwd_rate, ax
-#
+    def assess_forecast_quality(self, lag, threshold, benchmark_lag=None):
+        """
+        """
+        # ipdb.set_trace()
+        # forecast `lag` periods before
+        fcast = self.policy_exp.shift(lag).reindex(
+            index=self.meetings.index, method="bfill")
+
+        # average benchmark value `lag` periods before
+        if benchmark_lag is not None:
+            avg_bench = self.benchmark.fillna(method="ffill", limit=2).\
+                rolling(benchmark_lag).mean().shift(lag).reindex(
+                    index=self.meetings.index, method="bfill")
+        else:
+            avg_bench = self.meetings.shift(1)
+
+        # difference thereof
+        fcast_less_instr = (fcast-avg_bench).dropna()
+
+        # policy change
+        policy_diff = self.meetings.diff()
+
+        # signs
+        policy_fcast = np.sign(fcast_less_instr).where(
+            abs(fcast_less_instr) > threshold).fillna(0.0)
+        policy_actual = np.sign(policy_diff)
+
+        both = pd.concat((policy_fcast, policy_actual), axis=1)
+
+        # correlation
+        res_1 = both.corr().iloc[0,1]
+        res_2 = both.dropna(how="any").index[0]
+
+        return res_1, res_2
+
+
+def into_currency(data, new_cur):
+    """
+    Parameters
+    ----------
+    data :
+        expressed in USD per unit
+    """
+    # re-express everything in units of new_cur
+    new_data = data.drop([new_cur], axis=1).subtract(
+        data[new_cur], axis="index")
+
+    # reinstall
+    new_data["usd"] = -1*data[new_cur]
+
+    return new_data
+
+
 if __name__  == "__main__":
 
     from foolbox.api import *
@@ -423,7 +380,9 @@ if __name__  == "__main__":
     data_path = set_credentials.gdrive_path("research_data/fx_and_events/")
 
     with open(data_path + "ois.p", mode='rb') as fname:
-        ois_data = pickle.load(fname)
+        oidataata = pickle.load(fname)
+    with open(data_path + "overnight_rates.p", mode='rb') as fname:
+        overnight_rates = pickle.load(fname)
     with open(data_path + "events.p", mode='rb') as fname:
         events = pickle.load(fname)
     many_meetings = events["joint_cbs_lvl"]
@@ -431,21 +390,83 @@ if __name__  == "__main__":
     # loop over providers (icap, tr etc.) -----------------------------------
     # init storage
     policy_expectation = pd.Panel.from_dict(
-        data={k: v*np.nan for k,v in ois_data.items()},
+        data={k: v*np.nan for k,v in oidataata.items()},
         orient="minor")
 
-    for provider, many_instr in ois_data.items():
-
+    for provider, many_instr in oidataata.items():
+        # provider, many_instr = list(oidataata.items())[1]
         tau = int(provider[-2:-1])
 
         # loop over columns = currencies ------------------------------------
         for cur in many_instr.columns:
-
+            if cur not in overnight_rates.columns:
+                continue
+            # cur = many_instr.columns[0]
             instrument = many_instr[cur]
+            benchmark = overnight_rates.loc[:,cur]
             meetings = many_meetings[cur].dropna()
 
             pe = PolicyExpectation.from_money_market(
-                meetings=meetings, instrument=instrument, tau=tau)
+                meetings=meetings/100,
+                instrument=instrument/100,
+                benchmark=benchmark/100,
+                tau=tau)
 
-            pe.plot(5)
             policy_expectation.loc[cur,:,provider] = pe.policy_exp*100
+
+    # # %matplotlib
+    # lol, wut = pe.plot(5)
+    # policy_expectation.loc[cur,:,provider] = pe.policy_exp*100
+    # events["snb"].loc[:,["lower","upper"]].plot(ax=wut[0], color='k')
+    # benchmark.rolling(5).mean().shift(5).dropna().plot(
+    #     ax=wut[0], color='g', linewidth=1.5)
+    #
+    # one = pe.policy_exp.shift(5).reindex(
+    #     index=meetings.index, method="ffill")
+    # two = benchmark.rolling(5).mean().shift(5).reindex(
+    #     index=meetings.index, method="ffill")
+    # both = (one*100-two).dropna()
+    # policy_diff = meetings.diff()
+    #
+    # f, ax = plt.subplots()
+    # policy_diff.plot(ax=ax, color='r', linestyle="none", marker='.')
+    # ax.set_ylim([-2.5, 1.0])
+    # both.plot(ax=ax, color='k', linestyle="none", marker='o',
+    #     alpha=0.33)
+    #
+    #
+    # meetings.loc["2016-07":]
+    # pe.policy_exp.loc["2016-07":]
+    # instrument.loc["2016-06-15":]
+    # benchmark.loc["2016-07":]
+    #
+    # with open(data_path + "implied_rates.p", "wb") as fname:
+    #     pickle.dump(policy_expectation, fname)
+
+    # %matplotlib
+    # lol,wut = pe.plot(5)
+    #
+    # with open(data_path + "implied_rates.p", "rb") as fname:
+    #     policy_expectation = pickle.load(fname)
+    #
+    # gbp_impl = policy_expectation.loc["gbp",:,"icap_1m"]
+    # gbp_meet = many_meetings["gbp"].dropna()
+    # gbp_rate = overnight_rates.loc[:,"gbp"]
+    #
+    # # %matplotlib
+    # gbp_rate.rolling(5).mean().plot(color='r')
+    #
+    # one = gbp_impl.shift(5).reindex(
+    #     index=gbp_meet.index, method="ffill")
+    # two = gbp_rate.fillna(method="ffill", limit=2).\
+    #     rolling(5).mean().shift(5).reindex(
+    #         index=gbp_meet.index, method="ffill")
+    # both = (one*100-two).dropna()
+    # policy_diff = gbp_meet.diff()
+    #
+    # gbp_rate.loc["2016-05"]
+    #
+    # policy_fcast = np.sign(both).where(abs(both) > 0.24).fillna(0.0)
+    # policy_actual = np.sign(policy_diff)
+    #
+    # pd.concat((policy_fcast, policy_actual), axis=1).corr()

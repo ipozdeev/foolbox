@@ -67,7 +67,7 @@ class EventStudy():
         events = events.ix[good_evt_idx]
 
         # pivot
-        before, after, grp_var, grp_mu = self.pivot_for_event_study(
+        before, after, grp_var, tot_mu, tot_var = self.pivot_for_event_study(
             data, events, window)
 
         self.data = data
@@ -79,7 +79,8 @@ class EventStudy():
         self.after_idx = after.index
         self.stacked_idx = np.hstack((before.index, after.index))
         self.grp_var = grp_var
-        self.grp_mu = grp_mu
+        self.tot_mu = tot_mu
+        self.tot_var = tot_var
 
     @staticmethod
     def pivot_for_event_study(data, events, window):
@@ -106,11 +107,11 @@ class EventStudy():
         data_to_pivot.loc[belongs_idx > 1] *= np.nan
 
         # introduce columns for pivoting
-        data_to_pivot["event_window"] = np.nan
+        data_to_pivot.loc[:,"event_window"] = np.nan
         # introduce columns for pivoting
-        data_to_pivot["event_no"] = np.nan
+        data_to_pivot.loc[:,"event_no"] = np.nan
         # introduce columns for standard deviations
-        data_to_pivot["which_evt"] = 0
+        data_to_pivot.loc[:,"which_evt"] = 0
 
         # loop over events, save snapshot of returns around each
         for t, evt in events.iteritems():
@@ -147,6 +148,9 @@ class EventStudy():
         grouped_var = for_var[data.name].groupby(for_var["which_evt"]).var()
         grouped_var.index = grouped_var.index.map(int)
 
+        # variance without grouping by
+        total_var = for_var[data.name].var()
+
         # calculate means
         grouped_mu = for_var[data.name].groupby(for_var["which_evt"]).mean()\
             .mean()
@@ -157,7 +161,7 @@ class EventStudy():
         # after
         after = pivoted.loc[tc:,:]
 
-        return before, after, grouped_var, grouped_mu
+        return before, after, grouped_var, grouped_mu, total_var
 
     @staticmethod
     def get_ts_cumsum(before, after):
@@ -228,6 +232,7 @@ class EventStudy():
         ta, tb, tc, td = self.window
 
         sigma = np.sqrt(self.grp_var.sum())/self.grp_var.count()
+        self.sigma = sigma
 
         # mu = boot_from.mean()
 
@@ -248,8 +253,8 @@ class EventStudy():
         # ci_hi = norm.ppf(ps[1])*q*sd_across.values[np.newaxis,:] + \
         #     boot_from.mean().values[np.newaxis,:]*q**2
         # multiply with broadcast, add mean
-        ci_lo = norm.ppf(ps[0])*q*sigma + self.grp_mu*(q**2)
-        ci_hi = norm.ppf(ps[1])*q*sigma + self.grp_mu*(q**2)
+        ci_lo = norm.ppf(ps[0])*q*sigma + self.tot_mu*(q**2)
+        ci_hi = norm.ppf(ps[1])*q*sigma + self.tot_mu*(q**2)
 
         # concatenate: items keeps columns of Y
         ci = pd.DataFrame(
@@ -321,8 +326,7 @@ class EventStudy():
 
         Returns
         -------
-        figs : list
-             of figures
+        fig :
         """
         ta, tb, tc, td = self.window
 
@@ -333,10 +337,7 @@ class EventStudy():
         if not hasattr(self, "ci"):
             ci = self.get_ci(**kwargs)
 
-        # for each column in `data` create one plot with three subplots
-        figs = {}
-
-        fig, ax = plt.subplots(2, figsize=(11,11*0.9), sharex=True)
+        fig, ax = plt.subplots(2, figsize=(8.4,11.7/2), sharex=True)
 
         # # 1st plot: before and after for each event in light gray
         # self.before.plot(ax=ax[0], color=gr_1)
@@ -387,7 +388,8 @@ class EventStudy():
         return fig
 
 def event_study_wrapper(data, events, reix_w_bday=False,
-    direction="all", crisis="both", window=None, ps=0.9, ci_method="simple"):
+    direction="all", crisis="both", window=None, ps=0.9, ci_method="simple",
+    plot=False):
     """ Convenience fun to run studies of many series on the same `events`.
 
     Parameters
@@ -463,7 +465,8 @@ def event_study_wrapper(data, events, reix_w_bday=False,
     # init EventStudy
     es = EventStudy(data=this_data, events=events, window=window)
     # plot
-    es.plot(ps=ps, method=ci_method)
+    if plot:
+        es.plot(ps=ps, method=ci_method)
 
     return es
 
