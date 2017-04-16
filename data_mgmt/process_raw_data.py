@@ -312,8 +312,17 @@ ecb = pd.read_csv(path+"ecb_meetings_1999_2017.txt", sep=',',
     index_col=0, parse_dates=True, header=0)
 norges = pd.read_csv(path+"norges_bank_meetings_1993_2017.txt", sep=",",
                     index_col=0, parse_dates=True, header=0)
+
+# Riksbank is sort of a weirdo, implementing policy a week after announcements
 riks = pd.read_csv(path+"riksbank_meetings_1994_2017.txt", sep=",",
                    index_col=0, parse_dates=True, header=0)
+# Make the announcement date the index
+riks = riks.where(pd.notnull(riks["announcement date"])).dropna()
+riks["effective date"] = riks.index
+riks.index = riks["announcement date"]
+riks.index = riks.index.to_datetime()
+riks.drop(["announcement date"], axis=1)
+
 rba = pd.read_csv(path+"rba_meetings_1990_2017.txt", sep=",",
                   index_col=0, parse_dates=True, header=0)
 rbnz = pd.read_csv(path+"rbnz_meetings_1999_2017.txt", sep=",",
