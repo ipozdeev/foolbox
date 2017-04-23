@@ -303,73 +303,137 @@ for key in daily_data.keys():
 === PART V: EVENTS DATA                                                     ===
 ===============================================================================
 """
+# The current parsing is implementing for reading a single aggregated file
+# Currency - central bank dictionary for renaming of joint events
+fx_cb_dict = {"fomc": "usd", "boe": "gbp", "boc": "cad", "rba": "aud",
+              "rbnz": "nzd", "ecb": "eur", "riks": "sek", "norges": "nok",
+              "snb": "chf"}
+
+# Set the sample
+cb_sample_start = "2000-12-01"  # start of the CB sample. Oh Caanadaaa...
+cb_sample_end = "2017-03-31"
+
+# Set the CHF-EUR peg period, to drop SNB
+chf_eur_peg_start = "2011-09-01"
+chf_eur_peg_end = "2015-01-31"
+
+# Parse the summary data on CBs meetings
+file_to_parse = path + "central_bank_rates_raw_data/" \
+                       "summary_all_central_banks.xlsx"
+cb_data = pd.read_excel(file_to_parse, sheetname=None, index_col=0)
+
+# Outputs are separate events, and joint events in changes
+events = dict()
+joint_events = list()
+# Loop over the data, dropping comment columns, and unscheduled meetings
+for cb, data in cb_data.items():
+    data = data.drop(["comments"], axis=1)      # drop comments
+    data = data.where(data.scheduled).dropna()  # drop unscheduled meetings
+    data = data.drop(["scheduled"], axis=1)     # drop the redundant variable
+    data = data[cb_sample_start:cb_sample_end]  # set the sample
+
+    # Handle SNB as a special case
+    if cb == "snb":
+        data = data.drop(data[chf_eur_peg_start:chf_eur_peg_end].index, axis=0)
+
+    # Save changes separately for joint events
+    change = data.change
+    change.name = cb
+
+    # Append the outputs
+    events[cb] = data
+    joint_events.append(change)
+
+# Plug joint events into the final output, using fx names
+joint_events = pd.concat(joint_events, join="outer", axis=1)
+joint_events = joint_events.rename(columns=fx_cb_dict)
+joint_events = joint_events[sorted(joint_events.columns)]
+events["joint_cbs"] = joint_events
+
+# Finally add the opec and inflation announcements, це пiд помiдори!
 opec = pd.read_csv(path+"opec_meetings_1984_2016.txt", sep=',',
-    index_col=0, parse_dates=True, header=0)
-fomc = pd.read_csv(path+"fomc_meetings_1994_2017.txt", sep=',',
-    index_col=0, parse_dates=True, header=0)*100
-boe = pd.read_csv(path+"boe_meetings_1997_2017.txt", sep=',',
-    index_col=0, parse_dates=True, header=0)*100
-ecb = pd.read_csv(path+"ecb_meetings_1999_2017.txt", sep=',',
-    index_col=0, parse_dates=True, header=0)
-norges = pd.read_csv(path+"norges_bank_meetings_1993_2017.txt", sep=",",
-                    index_col=0, parse_dates=True, header=0)
-
-# Riksbank is sort of a weirdo, implementing policy a week after announcements
-riks = pd.read_csv(path+"riksbank_meetings_1994_2017.txt", sep=",",
                    index_col=0, parse_dates=True, header=0)
-# Make the announcement date the index
-riks = riks.where(pd.notnull(riks["announcement date"])).dropna()
-riks["effective date"] = riks.index
-riks.index = riks["announcement date"]
-riks.index = riks.index.to_datetime()
-riks.drop(["announcement date"], axis=1)
-
-rba = pd.read_csv(path+"rba_meetings_1990_2017.txt", sep=",",
-                  index_col=0, parse_dates=True, header=0)
-rbnz = pd.read_csv(path+"rbnz_meetings_1999_2017.txt", sep=",",
-                   index_col=0, parse_dates=True, header=0)
-boc = pd.read_csv(path+"boc_meetings_2001_2017.txt", sep=",",
-                  index_col=0, parse_dates=True, header=0)
-snb = pd.read_csv(path+"snb_meetings_2000_2017.txt", sep=",",
-                  index_col=0, parse_dates=True, header=0)
-boj = pd.read_csv(path+"boj_meetings_1998_2017.txt", sep=",",
-                  index_col=0, parse_dates=True, header=0)
 us_cpi = pd.read_csv(path+"cpi_releases_1994_2017.txt", sep=',',
                      index_col=0, parse_dates=True, header=0)
 
-joint_events = pd.concat([rba.rate.diff(), boc.rate.diff(),
-                          snb.ix[snb.scheduled].mid.diff(),
-                          ecb.deposit.diff(), boe.rate.diff(),
-                          boj.rate.diff(), norges.rate.diff(),
-                          rbnz.rate.diff(), riks.rate.diff(),
-                          fomc.rate.diff()],
-                         join="outer", axis=1)
-joint_events.columns = ["aud", "cad", "chf", "eur", "gbp", "jpy", "nok", "nzd",
-                        "sek", "usd"]
+events["opec"] = opec
+events["us_cpi"] = us_cpi
 
-joint_events_lvl = pd.concat(
-    [rba.rate, boc.rate, snb.ix[snb.scheduled].mid, ecb.deposit,
-     boe.rate, boj.rate, norges.rate, rbnz.rate, riks.rate, fomc.rate],
-    join="outer", axis=1)
 
-joint_events_lvl.columns = ["aud", "cad", "chf", "eur", "gbp", "jpy", "nok",
-                            "nzd", "sek", "usd"]
-
-events = {
-    "opec": opec,
-    "fomc": fomc,
-    "boe": boe,
-    "ecb": ecb,
-    "norges": norges,
-    "riks": riks,
-    "rba": rba,
-    "rbnz": rbnz,
-    "boc": boc,
-    "snb": snb,
-    "boj": boj,
-    "joint_cbs": joint_events,
-    "joint_cbs_lvl": joint_events_lvl,
-    "us_cpi": us_cpi}
+# # The legacy parser is commented. For now.
+# opec = pd.read_csv(path+"opec_meetings_1984_2016.txt", sep=',',
+#     index_col=0, parse_dates=True, header=0)
+# fomc = pd.read_csv(path+"fomc_meetings_1994_2017.txt", sep=',',
+#     index_col=0, parse_dates=True, header=0)*100
+# boe = pd.read_csv(path+"boe_meetings_1997_2017.txt", sep=',',
+#     index_col=0, parse_dates=True, header=0)*100
+#
+# ecb = pd.read_csv(path+"ecb_meetings_1999_2017.txt", sep=',',
+#     index_col=0, parse_dates=True, header=0)
+# ecb["rate"] = ecb.deposit
+#
+# norges = pd.read_csv(path+"norges_bank_meetings_1993_2017.txt", sep=",",
+#                     index_col=0, parse_dates=True, header=0)
+#
+# # Riksbank is sort of a weirdo, implementing policy a week after announcements
+# riks = pd.read_csv(path+"riksbank_meetings_1994_2017.txt", sep=",",
+#                    index_col=0, parse_dates=True, header=0)
+# # Make the announcement date the index
+# riks = riks.where(pd.notnull(riks["announcement date"])).dropna()
+# riks["effective date"] = riks.index
+# riks.index = riks["announcement date"]
+# riks.index = riks.index.to_datetime()
+# riks.drop(["announcement date"], axis=1)
+#
+# rba = pd.read_csv(path+"rba_meetings_1990_2017.txt", sep=",",
+#                   index_col=0, parse_dates=True, header=0)
+# rbnz = pd.read_csv(path+"rbnz_meetings_1999_2017.txt", sep=",",
+#                    index_col=0, parse_dates=True, header=0)
+# boc = pd.read_csv(path+"boc_meetings_2001_2017.txt", sep=",",
+#                   index_col=0, parse_dates=True, header=0)
+#
+# snb = pd.read_csv(path+"snb_meetings_2000_2017.txt", sep=",",
+#                   index_col=0, parse_dates=True, header=0)
+# snb["rate"] = snb.ix[snb.scheduled].mid
+#
+# boj = pd.read_csv(path+"boj_meetings_1998_2017.txt", sep=",",
+#                   index_col=0, parse_dates=True, header=0)
+# us_cpi = pd.read_csv(path+"cpi_releases_1994_2017.txt", sep=',',
+#                      index_col=0, parse_dates=True, header=0)
+#
+# joint_events = pd.concat([rba.rate.diff(), boc.rate.diff(),
+#                           snb.ix[snb.scheduled].mid.diff(),
+#                           ecb.deposit.diff(), boe.rate.diff(),
+#                           boj.rate.diff(), norges.rate.diff(),
+#                           rbnz.rate.diff(), riks.rate.diff(),
+#                           fomc.rate.diff()],
+#                          join="outer", axis=1)
+# joint_events.columns = ["aud", "cad", "chf", "eur", "gbp", "jpy", "nok", "nzd",
+#                         "sek", "usd"]
+#
+# joint_events_lvl = pd.concat(
+#     [rba.rate, boc.rate, snb.ix[snb.scheduled].mid, ecb.deposit,
+#      boe.rate, boj.rate, norges.rate, rbnz.rate, riks.rate, fomc.rate],
+#     join="outer", axis=1)
+#
+# joint_events_lvl.columns = ["aud", "cad", "chf", "eur", "gbp", "jpy", "nok",
+#                             "nzd", "sek", "usd"]
+#
+# events = {
+#     "opec": opec,
+#     "fomc": fomc,
+#     "boe": boe,
+#     "ecb": ecb,
+#     "norges": norges,
+#     "riks": riks,
+#     "rba": rba,
+#     "rbnz": rbnz,
+#     "boc": boc,
+#     "snb": snb,
+#     "boj": boj,
+#     "joint_cbs": joint_events,
+#     "joint_cbs_lvl": joint_events_lvl,
+#     "us_cpi": us_cpi}
 
 
 """
