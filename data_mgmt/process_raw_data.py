@@ -310,7 +310,7 @@ fx_cb_dict = {"fomc": "usd", "boe": "gbp", "boc": "cad", "rba": "aud",
               "snb": "chf"}
 
 # Set the sample
-cb_sample_start = "2000-12-01"  # start of the CB sample. Oh Caanadaaa...
+cb_sample_start = "2000-11-01"  # start of the CB sample. Oh Caanadaaa...
 cb_sample_end = "2017-03-31"
 
 # Set the CHF-EUR peg period, to drop SNB
