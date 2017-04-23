@@ -328,7 +328,7 @@ joint_events = list()
 # Loop over the data, dropping comment columns, and unscheduled meetings
 for cb, data in cb_data.items():
     data = data.drop(["comments"], axis=1)      # drop comments
-    data = data.where(data.scheduled).dropna()  # drop unscheduled meetings
+    data = data[data.scheduled]                 # drop unscheduled meetings
     data = data.drop(["scheduled"], axis=1)     # drop the redundant variable
     data = data[cb_sample_start:cb_sample_end]  # set the sample
 
