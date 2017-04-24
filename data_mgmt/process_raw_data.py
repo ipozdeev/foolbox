@@ -325,6 +325,7 @@ cb_data = pd.read_excel(file_to_parse, sheetname=None, index_col=0)
 # Outputs are separate events, and joint events in changes
 events = dict()
 joint_events = list()
+joint_events_lvl = list()
 # Loop over the data, dropping comment columns, and unscheduled meetings
 for cb, data in cb_data.items():
     data = data.drop(["comments"], axis=1)      # drop comments
@@ -339,16 +340,24 @@ for cb, data in cb_data.items():
     # Save changes separately for joint events
     change = data.change
     change.name = cb
+    rate = data.rate
+    rate.name = cb
 
     # Append the outputs
     events[cb] = data
     joint_events.append(change)
+    joint_events_lvl.append(rate)
 
 # Plug joint events into the final output, using fx names
 joint_events = pd.concat(joint_events, join="outer", axis=1)
 joint_events = joint_events.rename(columns=fx_cb_dict)
 joint_events = joint_events[sorted(joint_events.columns)]
 events["joint_cbs"] = joint_events
+
+joint_events_lvl = pd.concat(joint_events_lvl, join="outer", axis=1)
+joint_events_lvl = joint_events_lvl.rename(columns=fx_cb_dict)
+joint_events_lvl = joint_events_lvl[sorted(joint_events_lvl.columns)]
+events["joint_cbs_lvl"] = joint_events_lvl
 
 # Finally add the opec and inflation announcements, це пiд помiдори!
 opec = pd.read_csv(path+"opec_meetings_1984_2016.txt", sep=',',
