@@ -1,5 +1,5 @@
 # imports a lot of stuff at once
-from foolbox.EventStudy import *
+from foolbox.EventStudy_new import *
 import foolbox.portfolio_construction as poco
 import foolbox.tables_and_figures as taf
 from foolbox.finance import *

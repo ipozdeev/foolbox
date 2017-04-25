@@ -88,7 +88,7 @@ class PolicyExpectation():
                 # Scenario 2
                 # previos month
                 nx_fomc_mbefore = nx_fomc_mstart - relativedelta(days=1)
-                M = nx_fomc.day-1
+                M = nx_fomc.day
 
                 # implied rate
                 impl_rate = 100 - funds_futures.loc[t,nx_fomc_mend]
@@ -242,7 +242,7 @@ class PolicyExpectation():
 
             impl_rate = (
                 (
-                    (r_instr/days_in_year + 1)**ndays/
+                    (1+r_instr/days_in_year*ndays)/
                     (1+prev_rate/days_in_year)**(ndays_until)
                 )**(1/(ndays-ndays_until))-1)*days_in_year
 
@@ -267,7 +267,9 @@ class PolicyExpectation():
         if not hasattr(self, "policy_exp"):
             raise ValueError("Estimate first!")
 
-        meetings_c = self.meetings.copy()
+        # meetings_c = self.meetings.copy()
+        meetings_c = self.benchmark.rolling(lag).mean().shift(-lag).reindex(
+            index=self.meetings.index, method="bfill")
 
         # policy expectation to plot
         to_plot = self.policy_exp.shift(lag).reindex(
@@ -339,7 +341,8 @@ class PolicyExpectation():
         fcast_less_instr = (fcast-avg_bench).dropna()
 
         # policy change
-        policy_diff = self.meetings.diff()
+        # policy_diff = self.meetings.diff()
+        policy_diff = self.meetings
 
         # signs
         policy_fcast = np.sign(fcast_less_instr).where(
@@ -349,7 +352,7 @@ class PolicyExpectation():
         both = pd.concat((policy_fcast, policy_actual), axis=1)
 
         # correlation
-        res_1 = both.corr().iloc[0,1]
+        res_1 = (both.ix[:,0] == both.ix[:,1]).mean()
         res_2 = both.dropna(how="any").index[0]
 
         return res_1, res_2

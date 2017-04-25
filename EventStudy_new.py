@@ -36,10 +36,6 @@ class EventStudy():
         """
         # events = events["boc"].loc[:,"change"]
         # data = s_d.loc[:,"cad"]
-        if not isinstance(data, pd.Series):
-            ax = self.__init_from_df(data, events, window, impose_mu)
-            return ax
-
         # give a name
         if data.name is None:
             data.name = "response"
@@ -107,114 +103,6 @@ class EventStudy():
         self.tot_mu = total_mu
         self.grp_mu = grouped_mu
         self.tot_var = total_var
-
-    def __init_from_df(self, data, events, window, impose_mu=None):
-        """
-        """
-        # unpack window into individual items
-        ta, tb, tc, td = window
-
-        # space for output
-        avg_vars = pd.Series(index=events.columns)*np.nan
-        means = pd.Series(index=events.columns)*np.nan
-        cumsums = pd.DataFrame(
-            columns=events.columns,
-            index=np.concatenate(
-                (np.arange(wa,wb+1), np.arange(wc,wd+1))))*np.nan
-        n_events = pd.Series(index=events.columns)*np.nan
-
-        for cur in events.columns:
-            # cur = "jpy"
-            # these datasets
-
-            # # TODO: this is temp
-            # evt = events["fomc"].loc[s_dt:e_dt]
-
-            evt = events.loc[:,cur].dropna()
-            ret = data[cur]
-
-            # # number of events, for weighting
-            # n_events.loc[cur] = evt.where(
-            #     (evt.diff() < 0) if direction == "downs" else (evt.diff() > 0)).\
-            #     dropna().count()
-
-            n_events = evt.count()
-
-            # run event study
-            evt_study = EventStudy(ret, evt,
-                window=[wa,wb,wc,wd], impose_mu=impose_mu)
-
-            cumsums.loc[:,cur] = evt_study.get_cs_ts(
-                evt_study.before, evt_study.after)
-            avg_vars.loc[cur] = \
-                evt_study.grp_var.sum()/evt_study.grp_var.count()**2
-            means.loc[cur] = evt_study.tot_mu
-
-        # weight according to the number of events
-        # wght = pd.Series(1.0, index=cumsums.columns)/len(cumsums.columns)
-        wght = n_events/n_events.sum()
-
-        # confidence interval -----------------------------------------------
-        # avg_avg_std = np.sqrt(avg_vars.sum()/avg_vars.count()**2)
-
-        # or weighted
-        avg_avg_std = np.sqrt(avg_vars.dot(wght**2))
-        # mu = means.mean()
-
-        # confidence interval
-        q = np.sqrt(np.hstack(
-            (np.arange(-(wa)+(wb)+1,0,-1), np.arange(1,(wd)-(wc)+2))))
-
-        ci_lo = norm.ppf(0.05)*q*avg_avg_std
-        ci_hi = norm.ppf(0.95)*q*avg_avg_std
-
-        ci = pd.DataFrame(
-            index=cumsums.dropna().index,
-            columns=[0.05,0.95])
-
-        ci.loc[:,0.05] = ci_lo
-        ci.loc[:,0.95] = ci_hi
-
-        # reindex a bit
-        cumsums = cumsums.reindex(index=np.arange(wa,wd+1))
-
-        # plot!
-        fig, ax = plt.subplots(2, figsize=(8.4,11.7/2), sharex=True)
-
-        cumsums.plot(ax=ax[0], color=gr_1)
-        # cumsums[drop_what].plot(ax=ax[0], color=gr_1, linestyle='--')
-
-        cumsums.loc[[-1],:].plot(ax=ax[0], color="k",
-            linestyle="none", marker=".", markerfacecolor="k")
-        cumsums.loc[[1],:].plot(ax=ax[0], color="k",
-            linestyle="none", marker=".", markerfacecolor="k")
-        ax[0].legend_.remove()
-
-        cumsums.dot(wght).plot(
-            ax=ax[1], color='k', linestyle="-", linewidth=1.5)
-        # cumsums.drop(drop_what, axis=1).mean(axis=1).plot(
-        #     ax=ax[1], color='k', linewidth=1.5)
-
-        ax[1].fill_between(cumsums.dropna().index,
-            ci.iloc[:,0].values,
-            ci.iloc[:,1].values,
-            color=gr_1, alpha=0.5, label="conf. interval")
-
-        minorLocator = MultipleLocator(1)
-        majorLocator = MultipleLocator(5)
-
-        for x in range(len(ax)):
-            # ax[x].legend_.remove()
-            ax[x].xaxis.set_ticks(cumsums.dropna().index)
-            ax[x].axhline(y=0, color='r', linewidth=1.0, alpha=0.5)
-            ax[x].xaxis.set_major_locator(majorLocator)
-            ax[x].xaxis.set_minor_locator(minorLocator)
-            ax[x].grid(which="both", alpha=0.33, linestyle=":")
-
-        ax[x].set_xlabel("days after event", fontsize=12)
-
-        return ax
-
 
     @staticmethod
     def pivot_for_event_study(data, events, window):
@@ -567,13 +455,13 @@ def event_study_wrapper(data, events, reix_w_bday=False,
 
     # subsample events: ups, downs, constants, ups and down or all
     if direction == "ups":
-        events = events.where(events.diff() > 0).dropna()
+        events = events.where(events > 0).dropna()
     elif direction == "downs":
-        events = events.where(events.diff() < 0).dropna()
+        events = events.where(events < 0).dropna()
     elif direction == "changes":
-        events = events.where(events.diff() != 0).dropna()
+        events = events.where(events != 0).dropna()
     elif direction == "constants":
-        events = events.where(events.diff() == 0).dropna()
+        events = events.where(events == 0).dropna()
     elif direction == "all":
         events = events
     else:
