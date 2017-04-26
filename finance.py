@@ -2,6 +2,7 @@ import pandas as pd
 import numpy as np
 from pandas.tseries.offsets import DateOffset, MonthBegin, MonthEnd, \
     relativedelta
+from sklearn.metrics import confusion_matrix
 import matplotlib.pyplot as plt
 
 # import ipdb
@@ -321,51 +322,71 @@ class PolicyExpectation():
         return f, ax
 
 
-    def predict_policy(lag, threshold, benchmark_lag=None):
-        """
+    def forecast_policy_change(self, lag, threshold, bench_lag=None):
+        """ Predicts +1, -1 or 0 for every meeting date.
         """
         # take implied rate `lag` periods before
-        fcast = self.policy_exp.shift(lag).reindex(
+        impl_rate = self.policy_exp.shift(lag).reindex(
             index=self.meetings.index, method="bfill")
 
-        # 
+        # will need to compare it to either some rolling average of the
+        #   benchmark rate (bench_lag is not None), or the previously set
+        #   policy rate (bench_lag is None)
+        if bench_lag is not None:
+            # fill some NAs
+            avg_bench = self.benchmark.fillna(method="ffill", limit=2)
+            avg_bench = avg_bench.rolling(bench_lag).mean().\
+                shift(lag).\
+                reindex(index=self.meetings.index, method="bfill")
+        else:
+            avg_bench = self.meetings.shift(1)
+
+        # difference between rate implied some periods earlier and the
+        #   benchmark rate
+        impl_less_bench = (impl_rate-avg_bench).dropna()
+
+        # forecast is the sign of the difference if it is large enough
+        #   (as measured by `threshold`)
+        policy_fcast = np.sign(impl_less_bench).where(
+            abs(impl_less_bench) > threshold).fillna(0.0)
+
+        return policy_fcast
 
 
-    def assess_forecast_quality(self, lag, threshold, benchmark_lag=None):
+    def assess_forecast_quality(self, lag, threshold, bench_lag=None):
         """
         """
         # ipdb.set_trace()
         # forecast `lag` periods before
-        fcast = self.policy_exp.shift(lag).reindex(
-            index=self.meetings.index, method="bfill")
+        policy_fcast = self.forecast_policy_change(lag, threshold, bench_lag)
+        policy_fcast.name = "fcast"
 
-        # average benchmark value `lag` periods before
-        if benchmark_lag is not None:
-            avg_bench = self.benchmark.fillna(method="ffill", limit=2).\
-                rolling(benchmark_lag).mean().shift(lag).reindex(
-                    index=self.meetings.index, method="bfill")
-        else:
-            avg_bench = self.meetings.shift(1)
-
-        # difference thereof
-        fcast_less_instr = (fcast-avg_bench).dropna()
-
-        # policy change
-        # policy_diff = self.meetings.diff()
+        # policy change: should already be expressed as difference
+        #   (see __init__)
         policy_diff = self.meetings
-
-        # signs
-        policy_fcast = np.sign(fcast_less_instr).where(
-            abs(fcast_less_instr) > threshold).fillna(0.0)
         policy_actual = np.sign(policy_diff)
+        policy_actual.name = "actual"
 
-        both = pd.concat((policy_fcast, policy_actual), axis=1)
+        # concat to be able to drop NAs
+        both = pd.concat((policy_actual, policy_fcast), axis=1).\
+            dropna(how="any")
 
-        # correlation
-        res_1 = (both.dropna().ix[:,0] == both.dropna().ix[:,1]).mean()
-        res_2 = both.dropna(how="any").index[0]
+        # percentage of correct guesses
+        rho = (both.loc[:,"fcast"] == both.loc[:,"actual"]).mean()
+        cmx = confusion_matrix(both.loc[:,"fcast"], both.loc[:,"actual"])
 
-        return res_1, res_2
+        idx = sorted(list(set(
+            list(pd.unique(both.loc[:,"fcast"])) + \
+            list(pd.unique(both.loc[:,"actual"])))))
+
+        cmx = pd.DataFrame(cmx,
+            index=idx,
+            columns=idx)
+
+        cmx = cmx.reindex(index=[-1, 0, 1], columns=[-1, 0, 1]).fillna(0)
+        cmx = cmx.astype(np.int16)
+
+        return rho, cmx
 
 
 def into_currency(data, new_cur):
