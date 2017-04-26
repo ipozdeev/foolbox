@@ -321,6 +321,16 @@ class PolicyExpectation():
         return f, ax
 
 
+    def predict_policy(lag, threshold, benchmark_lag=None):
+        """
+        """
+        # take implied rate `lag` periods before
+        fcast = self.policy_exp.shift(lag).reindex(
+            index=self.meetings.index, method="bfill")
+
+        # 
+
+
     def assess_forecast_quality(self, lag, threshold, benchmark_lag=None):
         """
         """
@@ -352,7 +362,7 @@ class PolicyExpectation():
         both = pd.concat((policy_fcast, policy_actual), axis=1)
 
         # correlation
-        res_1 = (both.ix[:,0] == both.ix[:,1]).mean()
+        res_1 = (both.dropna().ix[:,0] == both.dropna().ix[:,1]).mean()
         res_2 = both.dropna(how="any").index[0]
 
         return res_1, res_2
