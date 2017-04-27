@@ -4,7 +4,8 @@ from pandas.tseries.offsets import DateOffset, MonthBegin, MonthEnd, \
     relativedelta
 from sklearn.metrics import confusion_matrix
 import matplotlib.pyplot as plt
-
+import foolbox.data_mgmt.set_credentials as set_credentials
+import pickle
 # import ipdb
 
 my_red = "#ce3300"
@@ -321,9 +322,38 @@ class PolicyExpectation():
 
         return f, ax
 
-
     def forecast_policy_change(self, lag, threshold, bench_lag=None):
-        """ Predicts +1, -1 or 0 for every meeting date.
+        """ Predict +1, -1 or 0 for every meeting date.
+
+        Based on the implied rate `lag` periods before each meeting (as
+        specified in self.meetings), the average reference rate over
+        `bench_lag` periods before that, and the `threshold`, predicts if the
+        next set rate will be higher, lower, or about the same.
+
+        Parameters
+        ----------
+        lag : int
+            such that the forecast is made at t-`lag` with t being the meeting
+            date
+        threshold : float
+            the maximum absolute difference between the implied rate and the
+            average reference rate such that no policy change is predicted;
+            values above that would signal a hike, below - cut
+        bench_lag : int
+            the number of periods to average the reference rate over
+
+        Returns
+        -------
+        policy_fcast : pd.Series
+            of forecasts: -1 for cut, +1 for hike, 0 for no change; indexed
+            with the index of self.meetings
+
+        Example
+        -------
+        data_path = set_credentials.gdrive_path("research_data/fx_and_events/")
+        pe = PolicyExpectation.from_pickles(data_path, "gbp")
+        fcast = pe.forecast_policy_change(10, 0.1250, 10)
+
         """
         # take implied rate `lag` periods before
         impl_rate = self.policy_exp.shift(lag).reindex(
@@ -387,6 +417,31 @@ class PolicyExpectation():
         cmx = cmx.astype(np.int16)
 
         return rho, cmx
+
+    @classmethod
+    def from_pickles(cls, data_path, currency):
+        """
+        """
+        # events
+        with open(data_path + "events_new.p", mode='rb') as hangar:
+            events = pickle.load(hangar)
+        evts = events["joint_cbs"].loc[:,currency].dropna()
+
+        # reference rates
+        with open(data_path + "overnight_rates.p", mode='rb') as hangar:
+            overnight_rates = pickle.load(hangar)
+
+        # implied rates
+        with open(data_path + "implied_rates.p", mode='rb') as hangar:
+            implied_rates = pickle.load(hangar)
+
+        # init class, manually insert policy expectation
+        pe = PolicyExpectation(
+            meetings=evts,
+            benchmark=overnight_rates[currency])
+        pe.policy_exp = implied_rates[currency]
+
+        return pe
 
 
 def into_currency(data, new_cur):
