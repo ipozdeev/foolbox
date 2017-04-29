@@ -128,14 +128,14 @@ class PolicyExpectation():
         Parameters
         ----------
         meetings : pd.Series
-            of meeting dates and respective policy rate decisions
+            of meeting dates and respective policy rate decisions, in frac of 1
         instrument : pd.Series
-            of instrument (e.g. OIS) values
+            of instrument (e.g. OIS) values, in frac of 1
         tau : int
             maturity of `instrument`, in months
         benchmark : pd.Series, optional
             of the rate which the `instrument` is derivative of (if differs
-            from the rate in `meetings`)
+            from the rate in `meetings`), in frac of 1
 
         Returns
         -------
@@ -322,13 +322,15 @@ class PolicyExpectation():
 
         return f, ax
 
-    def forecast_policy_change(self, lag, threshold, bench_lag=None):
+    def forecast_policy_change(self, lag, threshold, avg_impl_over=1,
+        avg_refrce_over=None):
         """ Predict +1, -1 or 0 for every meeting date.
 
-        Based on the implied rate `lag` periods before each meeting (as
-        specified in self.meetings), the average reference rate over
-        `bench_lag` periods before that, and the `threshold`, predicts if the
-        next set rate will be higher, lower, or about the same.
+        Some periods before each event (`lag`) we take the implied rate
+        smoothed over the previous `avg_impl_over` periods and compare it to
+        the reference rate smoothed over the previous `avg_refrce_over`
+        periods. Should the difference between the two exceed the `threshold`,
+        we predict the next set rate be higher and so on.
 
         Parameters
         ----------
@@ -337,10 +339,14 @@ class PolicyExpectation():
             date
         threshold : float
             the maximum absolute difference between the implied rate and the
-            average reference rate such that no policy change is predicted;
-            values above that would signal a hike, below - cut
-        bench_lag : int
-            the number of periods to average the reference rate over
+            reference rate such that no policy change is predicted; values
+            above that would signal a hike, below - cut
+        avg_impl_over : int
+            such that the implied rate that is compared to the reference rate
+            is first smoothed over this number of periods
+        avg_refrce_over : int
+            the number of periods to average the reference rate over before
+            comparing it to the implied rate
 
         Returns
         -------
@@ -356,24 +362,51 @@ class PolicyExpectation():
 
         """
         # take implied rate `lag` periods before
-        impl_rate = self.policy_exp.shift(lag).reindex(
-            index=self.meetings.index, method="bfill")
+        impl_rate = self.policy_exp
 
         # will need to compare it to either some rolling average of the
-        #   benchmark rate (bench_lag is not None), or the previously set
-        #   policy rate (bench_lag is None)
-        if bench_lag is not None:
+        #   reference rate or the previously set policy rate (avg_refrce_over
+        #   is None)
+        if isinstance(avg_refrce_over, int):
             # fill some NAs
-            avg_bench = self.benchmark.fillna(method="ffill", limit=2)
-            avg_bench = avg_bench.rolling(bench_lag).mean().\
-                shift(lag).\
-                reindex(index=self.meetings.index, method="bfill")
+            avg_refrce = self.benchmark.fillna(method="ffill", limit=2)
+            # +1 is needed because e.g. in the USA the rate is published on
+            #   the next day
+            avg_refrce = avg_refrce.rolling(avg_refrce_over).mean().\
+                shift(lag+1).\
+                reindex(index=self.meetings.index, method="ffill")
+
+        elif isinstance(avg_refrce_over, str):
+            # collect everything between events
+            refrce_aligned, meets_aligned = self.benchmark.align(
+                self.meetings, join="outer", axis=0)
+            refrce_aligned = refrce_aligned.to_frame()
+            refrce_aligned.loc[:,"dates"] = meets_aligned.index
+            refrce_aligned.loc[:,"dates"].fillna(method="bfill")
+
+            for dt in range(1,len(self.meetings.index)):
+                this_dt = self.meetings.index[dt]
+                prev_dt = self.meetings.index[dt-1] + DateOffset(days=2)
+                this_piece = refrce_aligned.ix[
+                    refrce_aligned.loc[:,"dates"]==this_dt,0]
+                refrce_aligned.ix[
+                    refrce_aligned.loc[:,"dates"]==this_dt,0].loc[prev_dt:] = \
+                        this_piece.loc[prev_dt:].expanding().mean()
+
+                avg_refrce = refrce_aligned.shift(lag+1).\
+                    reindex(index=self.meetings.index, method="ffill")
+
         else:
-            avg_bench = self.meetings.shift(1)
+            # else, if None, take the last meetings decision
+            avg_refrce = self.meetings.shift(1)
+
+        # smooth implied rate
+        avg_impl = impl_rate.rolling(avg_impl_over).mean().shift(lag).\
+            reindex(index=self.meetings.index, method="ffill")
 
         # difference between rate implied some periods earlier and the
         #   benchmark rate
-        impl_less_bench = (impl_rate-avg_bench).dropna()
+        impl_less_bench = (avg_impl-avg_refrce).dropna()
 
         # forecast is the sign of the difference if it is large enough
         #   (as measured by `threshold`)
@@ -382,13 +415,14 @@ class PolicyExpectation():
 
         return policy_fcast
 
-
-    def assess_forecast_quality(self, lag, threshold, bench_lag=None):
+    def assess_forecast_quality(self, lag, threshold, avg_impl_over=1,
+        avg_refrce_over=None):
         """
         """
         # ipdb.set_trace()
         # forecast `lag` periods before
-        policy_fcast = self.forecast_policy_change(lag, threshold, bench_lag)
+        policy_fcast = self.forecast_policy_change(
+            lag, threshold, avg_impl_over, avg_refrce_over)
         policy_fcast.name = "fcast"
 
         # policy change: should already be expressed as difference
@@ -419,7 +453,7 @@ class PolicyExpectation():
         return rho, cmx
 
     @classmethod
-    def from_pickles(cls, data_path, currency):
+    def from_pickles(cls, data_path, currency, s_dt="1990"):
         """
         """
         # events
@@ -437,12 +471,11 @@ class PolicyExpectation():
 
         # init class, manually insert policy expectation
         pe = PolicyExpectation(
-            meetings=evts,
+            meetings=evts.loc[s_dt:],
             benchmark=overnight_rates[currency])
         pe.policy_exp = implied_rates[currency]
 
         return pe
-
 
 def into_currency(data, new_cur):
     """
@@ -462,46 +495,53 @@ def into_currency(data, new_cur):
 
 
 if __name__  == "__main__":
+    pass
+    # from foolbox.data_mgmt import set_credentials
+    #
+    # # data ------------------------------------------------------------------
+    # path = "c:/Users/Igor/Google Drive/Personal/opec_meetings/calc/"
+    # data_path = set_credentials.gdrive_path("research_data/fx_and_events/")
+    #
+    # pe = PolicyExpectation.from_pickles(data_path, "eur")
+    # ipdb.set_trace()
+    # pe.forecast_policy_change(5, 0.1250, 5, 5)
 
-    from foolbox.api import *
 
-    # data ------------------------------------------------------------------
-    data_path = set_credentials.gdrive_path("research_data/fx_and_events/")
-
-    with open(data_path + "ois.p", mode='rb') as fname:
-        oidataata = pickle.load(fname)
-    with open(data_path + "overnight_rates.p", mode='rb') as fname:
-        overnight_rates = pickle.load(fname)
-    with open(data_path + "events.p", mode='rb') as fname:
-        events = pickle.load(fname)
-    many_meetings = events["joint_cbs_lvl"]
-
-    # loop over providers (icap, tr etc.) -----------------------------------
-    # init storage
-    policy_expectation = pd.Panel.from_dict(
-        data={k: v*np.nan for k,v in oidataata.items()},
-        orient="minor")
-
-    for provider, many_instr in oidataata.items():
-        # provider, many_instr = list(oidataata.items())[1]
-        tau = int(provider[-2:-1])
-
-        # loop over columns = currencies ------------------------------------
-        for cur in many_instr.columns:
-            if cur not in overnight_rates.columns:
-                continue
-            # cur = many_instr.columns[0]
-            instrument = many_instr[cur]
-            benchmark = overnight_rates.loc[:,cur]
-            meetings = many_meetings[cur].dropna()
-
-            pe = PolicyExpectation.from_money_market(
-                meetings=meetings/100,
-                instrument=instrument/100,
-                benchmark=benchmark/100,
-                tau=tau)
-
-            policy_expectation.loc[cur,:,provider] = pe.policy_exp*100
+    #
+    # with open(data_path + "ois.p", mode='rb') as fname:
+    #     oidataata = pickle.load(fname)
+    # with open(data_path + "overnight_rates.p", mode='rb') as fname:
+    #     overnight_rates = pickle.load(fname)
+    # with open(data_path + "events.p", mode='rb') as fname:
+    #     events = pickle.load(fname)
+    # many_meetings = events["joint_cbs_lvl"]
+    #
+    # # loop over providers (icap, tr etc.) -----------------------------------
+    # # init storage
+    # policy_expectation = pd.Panel.from_dict(
+    #     data={k: v*np.nan for k,v in oidataata.items()},
+    #     orient="minor")
+    #
+    # for provider, many_instr in oidataata.items():
+    #     # provider, many_instr = list(oidataata.items())[1]
+    #     tau = int(provider[-2:-1])
+    #
+    #     # loop over columns = currencies ------------------------------------
+    #     for cur in many_instr.columns:
+    #         if cur not in overnight_rates.columns:
+    #             continue
+    #         # cur = many_instr.columns[0]
+    #         instrument = many_instr[cur]
+    #         benchmark = overnight_rates.loc[:,cur]
+    #         meetings = many_meetings[cur].dropna()
+    #
+    #         pe = PolicyExpectation.from_money_market(
+    #             meetings=meetings/100,
+    #             instrument=instrument/100,
+    #             benchmark=benchmark/100,
+    #             tau=tau)
+    #
+    #         policy_expectation.loc[cur,:,provider] = pe.policy_exp*100
 
     # # %matplotlib
     # lol, wut = pe.plot(5)
