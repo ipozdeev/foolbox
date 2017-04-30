@@ -1,11 +1,13 @@
 import pandas as pd
 import numpy as np
+import itertools as itools
 from pandas.tseries.offsets import DateOffset, MonthBegin, MonthEnd, \
     relativedelta
 from sklearn.metrics import confusion_matrix
 import matplotlib.pyplot as plt
 import foolbox.data_mgmt.set_credentials as set_credentials
 import pickle
+from foolbox.portfolio_construction import multiple_timing
 # import ipdb
 
 my_red = "#ce3300"
@@ -492,6 +494,116 @@ def into_currency(data, new_cur):
     new_data["usd"] = -1*data[new_cur]
 
     return new_data
+
+
+def pe_backtest(returns, holding_range, threshold_range,
+                data_path, avg_impl_over=2, avg_refrce_over=2):
+    """
+
+    Parameters
+    ----------
+    returns: pd.DataFrame
+        of returns to assets, for which implied rates are available via the
+        'PolicyExpectation' class data api
+    holding_range: np.arange
+        specifying the range of holding periods
+    threshold_range: np.arange
+        specifying threshold levels in basis points
+    data_path: str
+        to the data for the 'PolicyExpectation.from_pickles()'
+    avg_impl_over : int
+        such that the implied rate that is compared to the reference rate
+        is first smoothed over this number of periods
+    avg_refrce_over : int
+        the number of periods to average the reference rate over before
+        comparing it to the implied rate
+
+    Returns
+    -------
+    results: dict
+        with key 'aggr' containing a MultiIndex dataframe with the first level
+        corresponding to holding period and second level corresponding to the
+        threshold levels, and columns containing average return on the expected
+        policy rate strategy across assets in returns. The second key 'disaggr'
+        is a dict of dicts with first level corresponding to holding strategy
+        and second level corresponding to the threshold levels with dataframes
+        of returns to individual currencies as items. For example
+
+        results = {
+            "aggr": MultiIndex of average returns,
+            "disaggr": {
+                "10":
+                   {"5": DataFrame,
+                    "10": DataFrame}
+                "11":
+                    {"5": DataFrame,
+                     "10": DataFrame}
+                    },
+            }
+
+    """
+    # Get he pandas slicer for convenient MultiIndex reference
+    ix = pd.IndexSlice
+
+    # Set up the output structure
+    results = dict()
+    results["disaggr"] = dict()
+
+    # The aggregated outpu is a multiindex
+    combos = list(itools.product(holding_range, threshold_range))
+    cols = pd.MultiIndex.from_tuples(combos, names=["holding", "threshold"])
+    aggr = pd.DataFrame(index=returns.index, columns=cols)
+
+    # Transform holding periods into a range of lag_expect arguments for the
+    # 'forecast_policy_change()' method of the 'PolicyExpectation' class
+    # lag
+
+    # Start backtesting looping over holding periods and thresholds
+    for holding_period in holding_range:
+
+        # Transform holding period into lag_expect argument for the
+        # 'forecast_policy_change()' method of the 'PolicyExpectation' class
+        lag_expect = holding_period + 1  # forecast rate before trading FX
+
+        # Create an entry for the disaggregated output
+        results["disaggr"][str(holding_period)] = dict()
+
+        # A soup of several loops
+        for threshold in threshold_range:
+
+            # For the (predoinant) case of multiple currenices pool the signals
+            pooled_signals = list()
+
+            # Get the policy forecast for each currency
+            for curr in returns.columns:
+                tmp_pe = PolicyExpectation.from_pickles(data_path, curr)
+                tmp_fcast =\
+                    tmp_pe.forecast_policy_change(lag=lag_expect,
+                                                  threshold=threshold/100,
+                                                  avg_impl_over=avg_impl_over,
+                                                  avg_refrce_over=avg_refrce_over)
+                # Append the signals
+                pooled_signals.append(tmp_fcast)
+
+            # Aggregate the signals, construct strategies, append the output
+            pooled_signals = pd.concat(pooled_signals, join="outer", axis=1)
+
+            # Replace 0 with nan to consider only expected hikes and cuts
+            strat = multiple_timing(returns.rolling(holding_period).sum(),
+                                    pooled_signals.replace(0, np.nan),
+                                    xs_avg=False)
+
+            # Append the disaggregated and aggregated outputs
+            aggr.loc[:, ix[holding_period, threshold]] = strat.mean(axis=1)
+            results["disaggr"][str(holding_period)][str(threshold)] = strat
+
+            print("Policy expectation backtest\n",
+                  "Holding period:", holding_period,
+                  "Threshold level:", threshold, "\n")
+
+    results["aggr"] = aggr
+
+    return results
 
 
 if __name__  == "__main__":
