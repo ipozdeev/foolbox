@@ -556,10 +556,6 @@ def pe_backtest(returns, holding_range, threshold_range,
     cols = pd.MultiIndex.from_tuples(combos, names=["holding", "threshold"])
     aggr = pd.DataFrame(index=returns.index, columns=cols)
 
-    # Transform holding periods into a range of lag_expect arguments for the
-    # 'forecast_policy_change()' method of the 'PolicyExpectation' class
-    # lag
-
     # Start backtesting looping over holding periods and thresholds
     for holding_period in holding_range:
 
@@ -573,7 +569,7 @@ def pe_backtest(returns, holding_range, threshold_range,
         # A soup of several loops
         for threshold in threshold_range:
 
-            # For the (predoinant) case of multiple currenices pool the signals
+            # For the predominant case of multiple currencies pool the signals
             pooled_signals = list()
 
             # Get the policy forecast for each currency
@@ -602,6 +598,90 @@ def pe_backtest(returns, holding_range, threshold_range,
             print("Policy expectation backtest\n",
                   "Holding period:", holding_period,
                   "Threshold level:", threshold, "\n")
+
+    results["aggr"] = aggr
+
+    return results
+
+
+def pe_perfect_foresight_strat(returns, holding_range, data_path,
+                               forecast_consistent=False):
+    """Generate a backetst of perfect foresight strategies, with optional
+    forecast availability consistency.
+
+    Parameters
+    ----------
+    returns: pd.DataFrame
+        of returns to assets, for which implied rates are available via the
+        'PolicyExpectation' class data api
+    holding_range: np.arange
+        specifying the range of holding periods
+    data_path: str
+        to the data for the 'PolicyExpectation.from_pickles()'
+    forecast_consistent: bool
+        controlling whether perfect foresight strategy should be consistent
+        with implied rates in terms of data availability. If True the output is
+        contngent on the forecast availability. If False the whole sample of
+        events is taken. Default is False.
+
+    Returns
+    -------
+    results: dict
+        with key 'aggr' containing a dataframe with columns indexed by holding
+        periods, with each column containing returns of aggregate strategy, and
+        key 'disaggr' containing a dictionary with keys corresponding to
+        holding periods and items containing dataframes with returns asset-by-
+        asset for the corresponding holding period. For example:
+
+        results = {
+            "aggr": pd.DataFrame of average returns,
+            "disaggr": {
+                "10": pd.DataFrame,
+                "11": pd.DataFrame
+                }
+
+    """
+    # Set up the output
+    results = dict()
+    results["disaggr"] = dict()
+
+    aggr = pd.DataFrame(index=returns.index, columns=holding_range)
+
+    # Start backtesting looping over holding periods and thresholds
+    for holding_period in holding_range:
+        # Transform holding period into lag_expect argument for the
+        # 'forecast_policy_change()' method of the 'PolicyExpectation' class
+        lag_expect = holding_period + 1  # forecast rate before trading FX
+
+        # For the (predominant) case of multiple currenices pool the signals
+        pooled_signals = list()
+
+        # Get the policy forecast for each currency
+        for curr in returns.columns:
+            tmp_pe = PolicyExpectation.from_pickles(data_path, curr)
+            # For forecast availability consistent perfect foresight strats
+            # align the meetings accordingly
+            if forecast_consistent:
+                # Get the first forecast date available
+                first_date = tmp_pe.policy_exp.dropna().iloc[[0]].index[0]
+                pooled_signals.append(tmp_pe.meetings[first_date:])
+            else:
+                pooled_signals.append(tmp_pe.meetings)
+
+        # Aggregate the signals, construct strategies, append the output
+        pooled_signals = pd.concat(pooled_signals, join="outer", axis=1)
+
+        # Replace 0 with nan to consider only realized hikes and cuts
+        strat = multiple_timing(returns.rolling(holding_period).sum(),
+                                pooled_signals.replace(0, np.nan),
+                                xs_avg=False)
+
+        # Append the disaggregated and aggregated outputs
+        aggr.loc[:, holding_period] = strat.mean(axis=1)
+        results["disaggr"][str(holding_period)] = strat
+
+        print("Perfect foresight backtest\n",
+              "Holding period:", holding_period, "\n")
 
     results["aggr"] = aggr
 

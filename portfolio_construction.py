@@ -1213,7 +1213,9 @@ def timed_strat(returns, signals):
     timed_returns = returns.reindex(signals.index)
 
     # Time the returns according to signals' signs
-    timed_returns = timed_returns * np.sign(signals)
+    # Drop zeros from signals inference purposses -- zeros should be omitted
+    # from sample statistics -- no position is etablished
+    timed_returns = timed_returns * (np.sign(signals).replace(0, np.nan))
 
     return timed_returns
 
