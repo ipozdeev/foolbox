@@ -1,5 +1,6 @@
 import pandas as pd
 import numpy as np
+import itertools as itools
 from pandas.tseries.offsets import DateOffset, MonthBegin, MonthEnd, \
     relativedelta
 from sklearn.metrics import confusion_matrix
@@ -12,12 +13,15 @@ sns.set_style({
     "ytick.major.size": 12})
 import itertools
 from matplotlib.ticker import MultipleLocator
+import matplotlib.lines as mlines
 import foolbox.data_mgmt.set_credentials as set_credentials
 import pickle
+from foolbox.portfolio_construction import multiple_timing
 # import ipdb
 
 my_red = "#ce3300"
 my_blue = "#2f649e"
+my_gray = "#8c8c8c"
 
 plt.rc("font", family="serif", size=12)
 
@@ -596,6 +600,261 @@ def into_currency(data, new_cur):
     new_data["usd"] = -1*data[new_cur]
 
     return new_data
+
+
+def pe_backtest(returns, holding_range, threshold_range,
+                data_path, avg_impl_over=2, avg_refrce_over=2):
+    """
+
+    Parameters
+    ----------
+    returns: pd.DataFrame
+        of returns to assets, for which implied rates are available via the
+        'PolicyExpectation' class data api
+    holding_range: np.arange
+        specifying the range of holding periods
+    threshold_range: np.arange
+        specifying threshold levels in basis points
+    data_path: str
+        to the data for the 'PolicyExpectation.from_pickles()'
+    avg_impl_over : int
+        such that the implied rate that is compared to the reference rate
+        is first smoothed over this number of periods
+    avg_refrce_over : int
+        the number of periods to average the reference rate over before
+        comparing it to the implied rate
+
+    Returns
+    -------
+    results: dict
+        with key 'aggr' containing a MultiIndex dataframe with the first level
+        corresponding to holding period and second level corresponding to the
+        threshold levels, and columns containing average return on the expected
+        policy rate strategy across assets in returns. The second key 'disaggr'
+        is a dict of dicts with first level corresponding to holding strategy
+        and second level corresponding to the threshold levels with dataframes
+        of returns to individual currencies as items. For example
+
+        results = {
+            "aggr": MultiIndex of average returns,
+            "disaggr": {
+                "10":
+                   {"5": DataFrame,
+                    "10": DataFrame}
+                "11":
+                    {"5": DataFrame,
+                     "10": DataFrame}
+                    },
+            }
+
+    """
+    # Get he pandas slicer for convenient MultiIndex reference
+    ix = pd.IndexSlice
+
+    # Set up the output structure
+    results = dict()
+    results["disaggr"] = dict()
+
+    # The aggregated outpu is a multiindex
+    combos = list(itools.product(holding_range, threshold_range))
+    cols = pd.MultiIndex.from_tuples(combos, names=["holding", "threshold"])
+    aggr = pd.DataFrame(index=returns.index, columns=cols)
+
+    # Start backtesting looping over holding periods and thresholds
+    for holding_period in holding_range:
+
+        # Transform holding period into lag_expect argument for the
+        # 'forecast_policy_change()' method of the 'PolicyExpectation' class
+        lag_expect = holding_period + 1  # forecast rate before trading FX
+
+        # Create an entry for the disaggregated output
+        results["disaggr"][str(holding_period)] = dict()
+
+        # A soup of several loops
+        for threshold in threshold_range:
+
+            # For the predominant case of multiple currencies pool the signals
+            pooled_signals = list()
+
+            # Get the policy forecast for each currency
+            for curr in returns.columns:
+                tmp_pe = PolicyExpectation.from_pickles(data_path, curr)
+                tmp_fcast =\
+                    tmp_pe.forecast_policy_change(lag=lag_expect,
+                                                  threshold=threshold/100,
+                                                  avg_impl_over=avg_impl_over,
+                                                  avg_refrce_over=avg_refrce_over)
+                # Append the signals
+                pooled_signals.append(tmp_fcast)
+
+            # Aggregate the signals, construct strategies, append the output
+            pooled_signals = pd.concat(pooled_signals, join="outer", axis=1)
+
+            # Replace 0 with nan to consider only expected hikes and cuts
+            strat = multiple_timing(returns.rolling(holding_period).sum(),
+                                    pooled_signals.replace(0, np.nan),
+                                    xs_avg=False)
+
+            # Append the disaggregated and aggregated outputs
+            aggr.loc[:, ix[holding_period, threshold]] = strat.mean(axis=1)
+            results["disaggr"][str(holding_period)][str(threshold)] = strat
+
+            print("Policy expectation backtest\n",
+                  "Holding period:", holding_period,
+                  "Threshold level:", threshold, "\n")
+
+    results["aggr"] = aggr
+
+    return results
+
+
+def pe_perfect_foresight_strat(returns, holding_range, data_path,
+                               forecast_consistent=False,
+                               smooth_burn=5):
+    """Generate a backetst of perfect foresight strategies, with optional
+    forecast availability consistency.
+
+    Parameters
+    ----------
+    returns: pd.DataFrame
+        of returns to assets, for which implied rates are available via the
+        'PolicyExpectation' class data api
+    holding_range: np.arange
+        specifying the range of holding periods
+    data_path: str
+        to the data for the 'PolicyExpectation.from_pickles()'
+    forecast_consistent: bool
+        controlling whether perfect foresight strategy should be consistent
+        with implied rates in terms of data availability. If True the output is
+        contngent on the forecast availability. If False the whole sample of
+        events is taken. Default is False.
+    smooth_burn: int
+        additional number of days to burn in order to account for forecast
+        smoothing, as in the real backtest. Corresponds to  avg_XXX_over of
+        policy_forecast. Default is five
+
+    Returns
+    -------
+    results: dict
+        with key 'aggr' containing a dataframe with columns indexed by holding
+        periods, with each column containing returns of aggregate strategy, and
+        key 'disaggr' containing a dictionary with keys corresponding to
+        holding periods and items containing dataframes with returns asset-by-
+        asset for the corresponding holding period. For example:
+
+        results = {
+            "aggr": pd.DataFrame of average returns,
+            "disaggr": {
+                "10": pd.DataFrame,
+                "11": pd.DataFrame
+                }
+
+    """
+    # Set up the output
+    results = dict()
+    results["disaggr"] = dict()
+
+    aggr = pd.DataFrame(index=returns.index, columns=holding_range)
+
+    # Start backtesting looping over holding periods and thresholds
+    for holding_period in holding_range:
+        # Transform holding period into lag_expect argument for the
+        # 'forecast_policy_change()' method of the 'PolicyExpectation' class
+        lag_expect = holding_period + 1  # forecast rate before trading FX
+
+        # For the (predominant) case of multiple currenices pool the signals
+        pooled_signals = list()
+
+        # Get the policy forecast for each currency
+        for curr in returns.columns:
+            tmp_pe = PolicyExpectation.from_pickles(data_path, curr)
+            # For forecast availability consistent perfect foresight strats
+            # align the meetings accordingly
+            if forecast_consistent:
+                # Get the first forecast date available, leave enought data
+                # to make a forecast, control for averaging
+                first_date = tmp_pe.policy_exp.dropna()\
+                    .iloc[[lag_expect+smooth_burn-1]].index[0]
+                pooled_signals.append(tmp_pe.meetings[first_date:])
+            else:
+                pooled_signals.append(tmp_pe.meetings)
+
+        # Aggregate the signals, construct strategies, append the output
+        pooled_signals = pd.concat(pooled_signals, join="outer", axis=1)
+
+        # Replace 0 with nan to consider only realized hikes and cuts
+        strat = multiple_timing(returns.rolling(holding_period).sum(),
+                                pooled_signals.replace(0, np.nan),
+                                xs_avg=False)
+
+        # Append the disaggregated and aggregated outputs
+        aggr.loc[:, holding_period] = strat.mean(axis=1)
+        results["disaggr"][str(holding_period)] = strat
+
+        print("Perfect foresight backtest\n",
+              "Holding period:", holding_period, "\n")
+
+    results["aggr"] = aggr
+
+    return results
+
+
+def broomstick_plot(data, ci=(0.1, 0.9)):
+    """Given an input array of data, produces a broomstick plot, with all
+    series in gray, the mean of the series in black (along with confidence
+    interval). The data are intended to be cumulative returns on a set of
+    trading strategies
+
+    Parameters
+    ----------
+    data: pd.DataFrame
+        of the cumulative returns to plot
+    ci: tuple
+        of floats specifying lower and upper quantiles for empirical confidence
+        interval. Default is (0.1, 0.9)
+
+    Returns
+    -------
+    figure: matplotlib.pyplot.plot
+        with plotted data
+
+
+    """
+    # Check the input data
+    if not isinstance(data, pd.DataFrame):
+        raise TypeError("Nope, the input should be a DataFrame")
+
+    # Drop absent observations if any
+    data = data.dropna()
+
+    # Get the mean and confidence bounds
+    cb_u = data.quantile(ci[1], axis=1)
+    cb_l = data.quantile(ci[0], axis=1)
+    avg = data.mean(axis=1)
+    stats = pd.concat([avg, cb_u, cb_l], axis=1)
+    stats.columns = ["mean", "cb_u", "cb_l"]
+
+    # Start plotting
+    fig, ax = plt.subplots(figsize=(8.4, 11.7/3))
+    plt.setp(ax.get_xticklabels(), rotation=0, ha="center")
+    # Grid
+    ax.grid(which="both", alpha=0.33, linestyle=":")
+    ax.plot(data, color=my_gray, lw=0.75, alpha=0.25)
+
+    ax.plot(stats["mean"], color="k", lw=2)
+    ax.plot(stats[["cb_l", "cb_u"]], color="k", lw=2, linestyle="--")
+
+    # Construct lines for the custom legend
+    solid_line = mlines.Line2D([], [], color='black', linestyle="-",
+                               lw=2, label="Mean")
+
+    ci_label = "{}th and {}th percentiles"\
+        .format(int(ci[0]*100), int(ci[1]*100))
+    dashed_line = mlines.Line2D([], [], color='black', linestyle="--",
+                                lw=2, label=ci_label)
+    ax.legend(handles=[solid_line, dashed_line], loc="upper left")
+
+    return fig
 
 
 if __name__  == "__main__":
