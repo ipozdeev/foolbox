@@ -605,7 +605,8 @@ def pe_backtest(returns, holding_range, threshold_range,
 
 
 def pe_perfect_foresight_strat(returns, holding_range, data_path,
-                               forecast_consistent=False):
+                               forecast_consistent=False,
+                               smooth_burn=5):
     """Generate a backetst of perfect foresight strategies, with optional
     forecast availability consistency.
 
@@ -623,6 +624,10 @@ def pe_perfect_foresight_strat(returns, holding_range, data_path,
         with implied rates in terms of data availability. If True the output is
         contngent on the forecast availability. If False the whole sample of
         events is taken. Default is False.
+    smooth_burn: int
+        additional number of days to burn in order to account for forecast
+        smoothing, as in the real backtest. Corresponds to  avg_XXX_over of
+        policy_forecast. Default is five
 
     Returns
     -------
@@ -662,8 +667,10 @@ def pe_perfect_foresight_strat(returns, holding_range, data_path,
             # For forecast availability consistent perfect foresight strats
             # align the meetings accordingly
             if forecast_consistent:
-                # Get the first forecast date available
-                first_date = tmp_pe.policy_exp.dropna().iloc[[0]].index[0]
+                # Get the first forecast date available, leave enought data
+                # to make a forecast, control for averaging
+                first_date = tmp_pe.policy_exp.dropna()\
+                    .iloc[[lag_expect+smooth_burn-1]].index[0]
                 pooled_signals.append(tmp_pe.meetings[first_date:])
             else:
                 pooled_signals.append(tmp_pe.meetings)
