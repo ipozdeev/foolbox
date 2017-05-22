@@ -1037,6 +1037,14 @@ def get_carry(pickle_name, key_name="spot_ret", transform=None, n_portf=3):
 
     return get_factor_portfolios(pfs, hml=True)
 
+def get_hml(returns, signals, n_portf=3):
+    """
+    """
+    pf = rank_sort(returns, signals, n_portf)
+    hml = get_factor_portfolios(pf, hml=True).loc[:,"hml"]
+
+    return hml
+
 def buy_before_events(s_d, fdisc_d, evts, fwd_maturity='W', burnin=1):
     """
     Parameters
@@ -1217,6 +1225,37 @@ def timed_strat(returns, signals):
 
     return timed_returns
 
+def many_monthly_rx(s_d, fdisc_d):
+    """ Get 22 overlapping monthly excess returns.
+    Parameters
+    ----------
+    fdisc_d : pd.DataFrame
+        forward discounts (30-day forwards) from perspective of US investor
+    """
+    s_d, fdisc_d = s_d.align(fdisc_d, axis=0)
+
+    s = s_d.rolling(22).sum()
+    f = fdisc_d.shift(22)
+
+    all_m = dict()
+    for p in range(22):
+        all_m[p] = s_d.iloc[p::22,:] + f.iloc[p::22,:]
+
+    return all_m
+
+def many_monthly_s(s_d):
+    """ Get 22 overlapping monthly spot returns.
+    Parameters
+    ----------
+    """
+
+    s = s_d.rolling(22).sum()
+
+    all_m = dict()
+    for p in range(22):
+        all_m[p] = s_d.iloc[p::22,:]
+
+    return all_m
 
 # ---------------------------------------------------------------------------
 # limbo

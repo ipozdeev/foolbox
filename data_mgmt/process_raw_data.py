@@ -16,6 +16,7 @@ name_all_d = path + "data_all_d.p"  # all sample, daily data
 name_all_m = path + "data_all_m.p"  # all sample, monthly data
 name_all_evt = path + "events.p"  # events
 name_all_on = path + "overnight_rates.p"
+name_tz_data = path + "fx_by_tz_d.p"
 
 # Definitions and settings
 eur_nan_date = "1999-01-04"           # First consistent EUR data begins on 5th
@@ -470,6 +471,80 @@ on = on[sorted(on.columns)]
 
 """
 ===============================================================================
+=== PART VII: DIFFERENT TIME ZONES FX DATA                                  ===
+===============================================================================
+"""
+fname_spot = "fx_spot_diff_tz_1994_2017_d.xlsx"
+fname_fwd = "fx_fwd_diff_tz_1994_2017_d.xlsx"
+
+currencies = pd.read_excel(path+fname,
+    sheetname="iso",
+    header=0)
+currencies = currencies.columns
+
+N = len(currencies)
+converters = {}
+for p in range(N):
+    converters[p*3] = lambda x: pd.to_datetime(x)
+
+# sheets
+sheetnames = ["NYC","LON","TOK"]
+
+spot_fwd_by_tz = dict()
+
+# read in
+for f in [fname_spot, fname_fwd]:
+    # f = fname_fwd
+    this_data = dict()
+
+    for s in sheetnames:
+        # s = "NYC"
+        data = pd.read_excel(
+            io=path+f,
+            sheetname=s,
+            skiprows=2,
+            header=None,
+            converters=converters)
+
+        data = [data.ix[:,(p*3):(p*3+1)].dropna() for p in range(N)]
+
+        for p in range(N):
+            data[p].index = data[p].pop(p*3)
+
+        data = pd.concat(data, axis=1, ignore_index=False)
+
+        data.columns = currencies
+
+        this_data[s] = data
+
+    spot_fwd_by_tz[f.split('_')[1]] = pd.Panel.from_dict(
+        this_data, orient="minor")
+
+# organize
+cur_by_tz = dict(zip(
+    currencies,
+    ["TOK","NYC","LON","LON","LON","LON","TOK","LON","TOK","LON"]))
+
+# split
+spot = pd.concat([
+    spot_fwd_by_tz["spot"].loc[p,:,cur_by_tz[p]] for p in currencies],
+    axis=1)
+spot.columns = currencies
+fwd = pd.concat([
+    spot_fwd_by_tz["fwd"].loc[p,:,cur_by_tz[p]] for p in currencies],
+    axis=1)
+fwd.columns = currencies
+fwd = fwd/10000 + spot
+
+# collect everything
+data_by_tz = dict()
+data_by_tz["spot"] = spot
+data_by_tz["fwd_disc"] = np.log(fwd/spot)
+data_by_tz["spot_ret"] = np.log(spot).diff()
+
+
+"""
+===============================================================================
 === , PICKLE IT FOR THE GREAT JUSTICE                                       ===
 ===============================================================================
 """
@@ -509,3 +584,5 @@ with open(name_all_evt, "wb") as fname:
     pickle.dump(events, fname)
 with open(name_all_on, "wb") as fname:
     pickle.dump(on, fname)
+with open(name_tz_data, "wb") as fname:
+    pickle.dump(data_by_tz, fname)
