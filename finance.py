@@ -5,6 +5,14 @@ from pandas.tseries.offsets import DateOffset, MonthBegin, MonthEnd, \
     relativedelta
 from sklearn.metrics import confusion_matrix
 import matplotlib.pyplot as plt
+import seaborn as sns
+sns.set_style({
+    'figure.facecolor': 'white',
+    'font.family': [u'serif'],
+    "xtick.major.size": 12,
+    "ytick.major.size": 12})
+import itertools
+from matplotlib.ticker import MultipleLocator
 import matplotlib.lines as mlines
 import foolbox.data_mgmt.set_credentials as set_credentials
 import pickle
@@ -456,6 +464,102 @@ class PolicyExpectation():
 
         return rho, cmx
 
+    def roc_curve(self, lag=None, avg_impl_over=1, avg_refrce_over=1):
+        """ Construct ROC curve.
+        """
+        thresholds = np.linspace(-0.50, 0.50, 101)
+
+        if lag is None:
+            lag = [2, 6, 11, 16]
+        else:
+            lag = [lag,]
+
+        # plot
+        fig, ax = plt.subplots(figsize=(8.4,11.7/3))
+
+        # loop over lags
+        for q in lag:
+            # q = 2
+            # allocate space
+            fcast_accy = pd.Panel(
+                major_axis=thresholds,
+                minor_axis=["true_pos","false_pos"],
+                items=["hike","cut"])
+
+            # loop over thresholds
+            for p in thresholds:
+                # p = 0.125
+                _, cmx = pe.assess_forecast_quality(
+                    lag=q,
+                    threshold=p,
+                    avg_impl_over=avg_impl_over,
+                    avg_refrce_over=avg_refrce_over)
+
+                fcast_accy.loc["hike",p,"true_pos"] = \
+                    cmx.loc[1,1]/cmx.loc[:,1].sum()
+                fcast_accy.loc["hike",p,"false_pos"] = \
+                    cmx.loc[1,-1:0].sum()/cmx.loc[-1:0,-1:0].sum().sum()
+                fcast_accy.loc["cut",p,"true_pos"] = \
+                    cmx.loc[-1,-1]/cmx.loc[:,-1].sum()
+                fcast_accy.loc["cut",p,"false_pos"] = \
+                    cmx.loc[-1,0:1].sum()/cmx.loc[-1:0,-1:0].sum().sum()
+
+                # add back extreme values
+                fcast_accy.loc["hike",1,:] = [1.0, 1]
+                fcast_accy.loc["hike",-1,:] = [0.0, 0]
+                fcast_accy.loc["cut",1,:] = [0.0, 0]
+                fcast_accy.loc["cut",-1,:] = [1.0, 1]
+
+            for h in range(2):
+                this_ax = plt.subplot(121+h)
+                plot_roc(fcast_accy.iloc[h,:,:], ax=this_ax, linewidth=1.5,
+                    label=q)
+                this_ax.set_title(fcast_accy.items[h]+'s')
+
+            this_ax.set_ylabel('', visible=False)
+            this_ax.legend(loc="lower right", prop={'size':12},
+                bbox_to_anchor=((1+0.01)/1.1, (0.05+0.01)/1.1))
+
+        fig.suptitle("roc curves by lag", fontsize=12)
+
+        if out_path is not None:
+            fig.savefig(out_path+"roc_lags_"+'_'.join([str(l) for l in lag])+\
+                ".png", dpi=300, bbox_inches="tight")
+
+    @staticmethod
+    def plot_roc(data, ax=None, **kwargs):
+        """
+        """
+        if ax is None:
+            fig, ax = plt.subplots(figsize=(8.4,8.4))
+
+        data.sort_values(["false_pos","true_pos"]).plot(
+            ax=ax,
+            x="false_pos",
+            y="true_pos",
+            drawstyle="steps",
+            alpha=1.0,
+            # marker='o',
+            # markersize=3,
+            # color='k',
+            # markerfacecolor='k',
+            **kwargs)
+
+        ax.set_xlim((-0.05, 1.05))
+        ax.set_ylim((-0.05, 1.05))
+        ax.xaxis.set_major_locator(MultipleLocator(1))
+        ax.xaxis.set_minor_locator(MultipleLocator(0.1))
+        ax.yaxis.set_major_locator(MultipleLocator(1))
+        ax.yaxis.set_minor_locator(MultipleLocator(0.1))
+        ax.grid(which="major", alpha=0.85, linestyle="--")
+        ax.grid(which="minor", alpha=0.33, linestyle=":")
+        ax.set_xlabel("false positive")
+        ax.set_ylabel("true positive")
+        ax.legend_.remove()
+
+        return
+
+
     @classmethod
     def from_pickles(cls, data_path, currency, s_dt="1990"):
         """
@@ -556,10 +660,6 @@ def pe_backtest(returns, holding_range, threshold_range,
     cols = pd.MultiIndex.from_tuples(combos, names=["holding", "threshold"])
     aggr = pd.DataFrame(index=returns.index, columns=cols)
 
-    # Transform holding periods into a range of lag_expect arguments for the
-    # 'forecast_policy_change()' method of the 'PolicyExpectation' class
-    # lag
-
     # Start backtesting looping over holding periods and thresholds
     for holding_period in holding_range:
 
@@ -573,7 +673,7 @@ def pe_backtest(returns, holding_range, threshold_range,
         # A soup of several loops
         for threshold in threshold_range:
 
-            # For the (predoinant) case of multiple currenices pool the signals
+            # For the predominant case of multiple currencies pool the signals
             pooled_signals = list()
 
             # Get the policy forecast for each currency
@@ -602,6 +702,97 @@ def pe_backtest(returns, holding_range, threshold_range,
             print("Policy expectation backtest\n",
                   "Holding period:", holding_period,
                   "Threshold level:", threshold, "\n")
+
+    results["aggr"] = aggr
+
+    return results
+
+
+def pe_perfect_foresight_strat(returns, holding_range, data_path,
+                               forecast_consistent=False,
+                               smooth_burn=5):
+    """Generate a backetst of perfect foresight strategies, with optional
+    forecast availability consistency.
+
+    Parameters
+    ----------
+    returns: pd.DataFrame
+        of returns to assets, for which implied rates are available via the
+        'PolicyExpectation' class data api
+    holding_range: np.arange
+        specifying the range of holding periods
+    data_path: str
+        to the data for the 'PolicyExpectation.from_pickles()'
+    forecast_consistent: bool
+        controlling whether perfect foresight strategy should be consistent
+        with implied rates in terms of data availability. If True the output is
+        contngent on the forecast availability. If False the whole sample of
+        events is taken. Default is False.
+    smooth_burn: int
+        additional number of days to burn in order to account for forecast
+        smoothing, as in the real backtest. Corresponds to  avg_XXX_over of
+        policy_forecast. Default is five
+
+    Returns
+    -------
+    results: dict
+        with key 'aggr' containing a dataframe with columns indexed by holding
+        periods, with each column containing returns of aggregate strategy, and
+        key 'disaggr' containing a dictionary with keys corresponding to
+        holding periods and items containing dataframes with returns asset-by-
+        asset for the corresponding holding period. For example:
+
+        results = {
+            "aggr": pd.DataFrame of average returns,
+            "disaggr": {
+                "10": pd.DataFrame,
+                "11": pd.DataFrame
+                }
+
+    """
+    # Set up the output
+    results = dict()
+    results["disaggr"] = dict()
+
+    aggr = pd.DataFrame(index=returns.index, columns=holding_range)
+
+    # Start backtesting looping over holding periods and thresholds
+    for holding_period in holding_range:
+        # Transform holding period into lag_expect argument for the
+        # 'forecast_policy_change()' method of the 'PolicyExpectation' class
+        lag_expect = holding_period + 1  # forecast rate before trading FX
+
+        # For the (predominant) case of multiple currenices pool the signals
+        pooled_signals = list()
+
+        # Get the policy forecast for each currency
+        for curr in returns.columns:
+            tmp_pe = PolicyExpectation.from_pickles(data_path, curr)
+            # For forecast availability consistent perfect foresight strats
+            # align the meetings accordingly
+            if forecast_consistent:
+                # Get the first forecast date available, leave enought data
+                # to make a forecast, control for averaging
+                first_date = tmp_pe.policy_exp.dropna()\
+                    .iloc[[lag_expect+smooth_burn-1]].index[0]
+                pooled_signals.append(tmp_pe.meetings[first_date:])
+            else:
+                pooled_signals.append(tmp_pe.meetings)
+
+        # Aggregate the signals, construct strategies, append the output
+        pooled_signals = pd.concat(pooled_signals, join="outer", axis=1)
+
+        # Replace 0 with nan to consider only realized hikes and cuts
+        strat = multiple_timing(returns.rolling(holding_period).sum(),
+                                pooled_signals.replace(0, np.nan),
+                                xs_avg=False)
+
+        # Append the disaggregated and aggregated outputs
+        aggr.loc[:, holding_period] = strat.mean(axis=1)
+        results["disaggr"][str(holding_period)] = strat
+
+        print("Perfect foresight backtest\n",
+              "Holding period:", holding_period, "\n")
 
     results["aggr"] = aggr
 
