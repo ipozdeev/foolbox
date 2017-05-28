@@ -29,12 +29,12 @@ plt.rc("font", family="serif", size=12)
 class PolicyExpectation():
     """
     """
-    def __init__(self, meetings, instrument=None, benchmark=None):
+    def __init__(self, meetings, instrument=None, reference_rate=None):
         """
         """
         self.meetings = meetings
         self.instrument = instrument
-        self.benchmark = benchmark
+        self.reference_rate = reference_rate
 
 
     @classmethod
@@ -47,18 +47,24 @@ class PolicyExpectation():
         previously settled futures until the next meeting when it changes;
         expectation hypothesis holds.
 
+        Both rate levels and changes are needed in `meetings` since some
+        events might be skipped as non-scheduled: in this case, if there was a
+        rate change in an unscheduled event, the actual change on the closest
+        scheduled one will be biased.
+
         Parameters
         ----------
-        meetings : pd.Series
-            of meeting dates and respective policy rate decisions
+        meetings : pd.DataFrame
+            indexed with meeting dates, containing respective policy rates
+            (column "rate_level") and rate changes (column "rate_change")
         funds_futures : pd.DataFrame
             with dates on the index and expiry dates on the columns axis
 
         Returns
         -------
         pe : PolicyExpectation instance
-            with attribute `policy_exp` for expectation of the next set rate
-
+            with attribute `rate_expectation` for expectation of the next set
+            rate
         """
         # fill na forward (today's na equals yesterday's value)
         funds_futures = funds_futures.fillna(method="ffill", limit=30)
@@ -116,46 +122,48 @@ class PolicyExpectation():
         # create a new PolicyExpectation instance to return
         pe = PolicyExpectation(
             meetings=meetings,
-            benchmark=meetings)
+            reference_rate=meetings.loc["rate_level"])
 
         # supply it with policy expectation
-        pe.policy_exp = rate_exp
+        pe.rate_expectation = rate_exp
 
         return pe
 
 
     @classmethod
-    def from_money_market(cls, meetings, instrument, tau, benchmark=None):
+    def from_money_market(cls, meetings, instrument, tau, reference_rate=None):
         """ Extract policy expectations from money market instruments.
 
         For each date when an instrument observation is available, it is
         possible to extract the expectation of the rate to be set at the next
         policy meeting. Assumptions: the regulator targets the rate which
         `instrument` is derivative of; the rate stays constant at the
-        previosuly set policy level (`benchmark` is None) or at the most
-        recent level of `benchmark` (`benchmark` is not None) until the next
+        previosuly set policy level (`reference_rate` is None) or at the most
+        recent level of `reference_rate` (`reference_rate` is not None) until the next
         meeting; at the expiry of the `instrument` the buyer receives the
         accumulated short rate; expectation hypothesis holds.
 
         Parameters
         ----------
-        meetings : pd.Series
-            of meeting dates and respective policy rate decisions, in frac of 1
+        meetings : pd.DataFrame
+            indexed with meeting dates, containing respective policy rates
+            (column "rate_level") and rate changes (column "rate_change"),
+            both in percentage points
         instrument : pd.Series
-            of instrument (e.g. OIS) values, in frac of 1
+            of instrument (e.g. OIS) values, in percentage points
         tau : int
             maturity of `instrument`, in months
-        benchmark : pd.Series, optional
+        reference_rate : pd.Series, optional
             of the rate which the `instrument` is derivative of (if differs
-            from the rate in `meetings`), in frac of 1
+            from the rate in `meetings`), in percentage points
 
         Returns
         -------
         pe : PolicyExpectation instance
-            with attribute `policy_exp` for expectation of the next set rate
+            with attribute `rate_expectation` for expectation of the next set rate
 
         """
-        assert isinstance(meetings, pd.Series)
+        assert isinstance(meetings, pd.DataFrame)
         assert isinstance(instrument, pd.Series)
 
         if instrument.name is None:
@@ -183,20 +191,25 @@ class PolicyExpectation():
         # meetings = meetings.loc[min_start:]
 
         # if no rate provided, meetings must contain a rate; in this case
-        #   benchmark be the rate set at meetings projected onto the dates of
+        #   reference_rate be the rate set at meetings projected onto the dates of
         #   instrument.
-        if benchmark is None:
-            benchmark = meetings.reindex(
+        if reference_rate is None:
+            reference_rate = meetings.reindex(
                 index=instrument.index, method="ffill")
         else:
             # project onto the dates too
-            benchmark = benchmark.reindex(
+            reference_rate = reference_rate.reindex(
                 index=instrument.index, method="ffill")
 
         # make sure meeting dates have corresponding dates in instrument
-        benchmark = benchmark.reindex(
-            index=benchmark.index.union(meetings.index),
+        reference_rate = reference_rate.reindex(
+            index=reference_rate.index.union(meetings.index),
             method="ffill")
+
+        # from percentage points to frac of 1
+        meetings /= 100
+        reference_rate /= 100
+        instrument /= 100
 
         # main loop ---------------------------------------------------------
         # allocate space for forward rates
@@ -242,9 +255,9 @@ class PolicyExpectation():
 
             # previously set rate, to be effective until next meeting
             # TODO: not prev_meet, but prev_meet + 1
-            idx = benchmark.index[benchmark.index.get_loc(
+            idx = reference_rate.index[reference_rate.index.get_loc(
                 prev_meet + DateOffset(days=1), "bfill")]
-            bench_reixed = benchmark.loc[idx:t].reindex(
+            bench_reixed = reference_rate.loc[idx:t].reindex(
                 index=pd.date_range(idx,t,freq='D'),
                 method="ffill")
             prev_rate = (
@@ -267,10 +280,10 @@ class PolicyExpectation():
         pe = PolicyExpectation(
             meetings=meetings,
             instrument=instrument,
-            benchmark=benchmark)
+            reference_rate=reference_rate)
 
         # supply it with policy expectation
-        pe.policy_exp = rate_exp
+        pe.rate_expectation = rate_exp
 
         return pe
 
@@ -278,7 +291,7 @@ class PolicyExpectation():
     def plot(self, lag):
         """ Plot predicted vs. realized and the error plot.
         """
-        if not hasattr(self, "policy_exp"):
+        if not hasattr(self, "rate_expectation"):
             raise ValueError("Estimate first!")
 
         # meetings_c = self.meetings.copy()
@@ -286,11 +299,11 @@ class PolicyExpectation():
             index=self.meetings.index, method="bfill")
 
         # policy expectation to plot
-        to_plot = self.policy_exp.shift(lag).reindex(
+        to_plot = self.rate_expectation.shift(lag).reindex(
             index=meetings_c.index, method="ffill")
 
         # rename a bit
-        to_plot.name = "policy_exp"
+        to_plot.name = "rate_expectation"
         meetings_c.name = "policy_rate"
 
         f, ax = plt.subplots(2, figsize=(11.7,8.3))
@@ -314,7 +327,7 @@ class PolicyExpectation():
         # set artist properties
         ax[0].set_xlim(
             max([meetings_c.first_valid_index(),
-                self.policy_exp.first_valid_index()])-\
+                self.rate_expectation.first_valid_index()])-\
             DateOffset(months=6), ax[0].get_xlim()[1])
         ax[0].legend(fontsize=12)
 
@@ -322,7 +335,7 @@ class PolicyExpectation():
         pd.concat((to_plot*100, meetings_c*100), axis=1).\
             plot.scatter(
                 ax=ax[1],
-                x="policy_exp",
+                x="rate_expectation",
                 y="policy_rate",
                 alpha=0.66,
                 s=33,
@@ -374,7 +387,7 @@ class PolicyExpectation():
 
         """
         # take implied rate `lag` periods before
-        impl_rate = self.policy_exp
+        impl_rate = self.rate_expectation
 
         # will need to compare it to either some rolling average of the
         #   reference rate or the previously set policy rate (avg_refrce_over
@@ -464,10 +477,11 @@ class PolicyExpectation():
 
         return rho, cmx
 
-    def roc_curve(self, lag=None, avg_impl_over=1, avg_refrce_over=1):
+    def roc_curve(self, lag=None, avg_impl_over=1, avg_refrce_over=1,
+        out_path=None):
         """ Construct ROC curve.
         """
-        thresholds = np.linspace(-0.50, 0.50, 101)
+        thresholds = np.linspace(-0.50, 0.50, 101)/100
 
         if lag is None:
             lag = [2, 6, 11, 16]
@@ -479,7 +493,7 @@ class PolicyExpectation():
 
         # loop over lags
         for q in lag:
-            # q = 2
+            # q = 3
             # allocate space
             fcast_accy = pd.Panel(
                 major_axis=thresholds,
@@ -489,7 +503,7 @@ class PolicyExpectation():
             # loop over thresholds
             for p in thresholds:
                 # p = 0.125
-                _, cmx = pe.assess_forecast_quality(
+                _, cmx = self.assess_forecast_quality(
                     lag=q,
                     threshold=p,
                     avg_impl_over=avg_impl_over,
@@ -512,7 +526,7 @@ class PolicyExpectation():
 
             for h in range(2):
                 this_ax = plt.subplot(121+h)
-                plot_roc(fcast_accy.iloc[h,:,:], ax=this_ax, linewidth=1.5,
+                self.plot_roc(fcast_accy.iloc[h,:,:], ax=this_ax, linewidth=1.5,
                     label=q)
                 this_ax.set_title(fcast_accy.items[h]+'s')
 
@@ -565,9 +579,9 @@ class PolicyExpectation():
         """
         """
         # events
-        with open(data_path + "events_new.p", mode='rb') as hangar:
+        with open(data_path + "events.p", mode='rb') as hangar:
             events = pickle.load(hangar)
-        evts = events["joint_cbs"].loc[:,currency].dropna()
+        evts = events["joint_cbs_lvl"].loc[:,currency].dropna()
 
         # reference rates
         with open(data_path + "overnight_rates.p", mode='rb') as hangar:
@@ -581,7 +595,7 @@ class PolicyExpectation():
         pe = PolicyExpectation(
             meetings=evts.loc[s_dt:],
             benchmark=overnight_rates[currency])
-        pe.policy_exp = implied_rates[currency]
+        pe.rate_expectation = implied_rates[currency]
 
         return pe
 
@@ -662,7 +676,7 @@ def pe_backtest(returns, holding_range, threshold_range,
 
     # Start backtesting looping over holding periods and thresholds
     for holding_period in holding_range:
-
+        # holding_period = 2
         # Transform holding period into lag_expect argument for the
         # 'forecast_policy_change()' method of the 'PolicyExpectation' class
         lag_expect = holding_period + 1  # forecast rate before trading FX
@@ -672,12 +686,13 @@ def pe_backtest(returns, holding_range, threshold_range,
 
         # A soup of several loops
         for threshold in threshold_range:
-
+            # threshold = 12.5
             # For the predominant case of multiple currencies pool the signals
             pooled_signals = list()
 
             # Get the policy forecast for each currency
             for curr in returns.columns:
+                # curr = "usd"
                 tmp_pe = PolicyExpectation.from_pickles(data_path, curr)
                 tmp_fcast =\
                     tmp_pe.forecast_policy_change(lag=lag_expect,
@@ -773,7 +788,7 @@ def pe_perfect_foresight_strat(returns, holding_range, data_path,
             if forecast_consistent:
                 # Get the first forecast date available, leave enought data
                 # to make a forecast, control for averaging
-                first_date = tmp_pe.policy_exp.dropna()\
+                first_date = tmp_pe.rate_expectation.dropna()\
                     .iloc[[lag_expect+smooth_burn-1]].index[0]
                 pooled_signals.append(tmp_pe.meetings[first_date:])
             else:
@@ -904,16 +919,16 @@ if __name__  == "__main__":
     #             benchmark=benchmark/100,
     #             tau=tau)
     #
-    #         policy_expectation.loc[cur,:,provider] = pe.policy_exp*100
+    #         policy_expectation.loc[cur,:,provider] = pe.rate_expectation*100
 
     # # %matplotlib
     # lol, wut = pe.plot(5)
-    # policy_expectation.loc[cur,:,provider] = pe.policy_exp*100
+    # policy_expectation.loc[cur,:,provider] = pe.rate_expectation*100
     # events["snb"].loc[:,["lower","upper"]].plot(ax=wut[0], color='k')
     # benchmark.rolling(5).mean().shift(5).dropna().plot(
     #     ax=wut[0], color='g', linewidth=1.5)
     #
-    # one = pe.policy_exp.shift(5).reindex(
+    # one = pe.rate_expectation.shift(5).reindex(
     #     index=meetings.index, method="ffill")
     # two = benchmark.rolling(5).mean().shift(5).reindex(
     #     index=meetings.index, method="ffill")
@@ -928,7 +943,7 @@ if __name__  == "__main__":
     #
     #
     # meetings.loc["2016-07":]
-    # pe.policy_exp.loc["2016-07":]
+    # pe.rate_expectation.loc["2016-07":]
     # instrument.loc["2016-06-15":]
     # benchmark.loc["2016-07":]
     #
