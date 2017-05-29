@@ -5,12 +5,7 @@ from pandas.tseries.offsets import DateOffset, MonthBegin, MonthEnd, \
     relativedelta
 from sklearn.metrics import confusion_matrix
 import matplotlib.pyplot as plt
-import seaborn as sns
-sns.set_style({
-    'figure.facecolor': 'white',
-    'font.family': [u'serif'],
-    "xtick.major.size": 12,
-    "ytick.major.size": 12})
+#import seaborn.apionly as sns
 import itertools
 from matplotlib.ticker import MultipleLocator
 import matplotlib.lines as mlines
@@ -852,7 +847,7 @@ def broomstick_plot(data, ci=(0.1, 0.9)):
         .format(int(ci[0]*100), int(ci[1]*100))
     dashed_line = mlines.Line2D([], [], color='black', linestyle="--",
                                 lw=2, label=ci_label)
-    ax.legend(handles=[solid_line, dashed_line], loc="upper left")
+    ax.legend(handles=[solid_line, dashed_line], loc="upper left", fontsize=10)
 
     return fig
 
