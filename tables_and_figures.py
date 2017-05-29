@@ -110,6 +110,7 @@ def fama_macbeth_second(Y, betas):
 
     return lambdas, alphas
 
+
 def descriptives(data, scale=12):
     """Estimates frequency-adjusted descriptive statistics for each series in
     the input DataFrame, by default assumes monthly inputs and annualized
@@ -149,8 +150,8 @@ def descriptives(data, scale=12):
 
         # Compute autocorrelation with HAC-adjusted standard error, suppress
         # inntercept
-        ac, se_ac, _ = ec.rOls(data[column], data[column].shift(1), const=False,
-                            HAC=True)
+        ac, se_ac, _ = ec.rOls(data[column], data[column].shift(1),
+                               const=False, HAC=True)
         out[column]["ac1"] = ac[0]
         out[column]["se_ac1"] = se_ac[0]
 
