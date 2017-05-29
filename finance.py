@@ -160,7 +160,7 @@ class PolicyExpectation():
         Returns
         -------
         pe : PolicyExpectation instance
-            with attribute `policy_exp` for expectation of the next set rate
+            with attribute `rate_expectation` for expectation of the next set rate
 
         """
         assert isinstance(meetings, pd.DataFrame)
@@ -375,7 +375,7 @@ class PolicyExpectation():
         actual_rate.name = "actual_rate"
         ax.set_xlim(
             max([meetings_c.first_valid_index(),
-                self.policy_exp.first_valid_index()])-\
+                self.rate_expectation.first_valid_index()])-\
             DateOffset(months=6), ax.get_xlim()[1])
         ax.legend(fontsize=12)
 
@@ -440,7 +440,7 @@ class PolicyExpectation():
 
         """
         # take implied rate `lag` periods before
-        impl_rate = self.policy_exp
+        impl_rate = self.rate_expectation
 
         # will need to compare it to either some rolling average of the
         #   reference rate or the previously set policy rate (avg_refrce_over
@@ -476,6 +476,7 @@ class PolicyExpectation():
         else:
             # else, if None, take the last meetings decision
             avg_refrce = self.meetings.loc[:,"rate_level"].shift(1)
+            avg_refrce.name = self.reference_rate.name
 
         # smooth implied rate
         avg_impl = impl_rate.rolling(avg_impl_over, min_periods=1).mean()\
@@ -489,6 +490,9 @@ class PolicyExpectation():
         #   (as measured by `threshold`)
         policy_fcast = np.sign(impl_less_bench).where(
             abs(impl_less_bench) > threshold).fillna(0.0)
+
+        # add name
+        policy_fcast.name = avg_impl.name
 
         return policy_fcast
 
@@ -861,15 +865,21 @@ def pe_perfect_foresight_strat(returns, holding_range, data_path,
             tmp_pe = PolicyExpectation.from_pickles(data_path, curr)
             # For forecast availability consistent perfect foresight strats
             # align the meetings accordingly
+            # igor ---
+            # signal + rename
+            this_signal = tmp_pe.meetings.loc[:,"rate_change"]
+            this_signal.name = curr
+            # --------
             if forecast_consistent:
                 # Get the first forecast date available, leave enought data
                 # to make a forecast, control for averaging
                 first_date = tmp_pe.rate_expectation.dropna()\
                     .iloc[[lag_expect+smooth_burn-1]].index[0]
-                pooled_signals.append(
-                    tmp_pe.meetings.loc[first_date:,"rate_change"])
+                # igor ---
+                pooled_signals.append(this_signal.loc[first_date:])
+                # --------
             else:
-                pooled_signals.append(tmp_pe.meetings.loc[:,"rate_change"])
+                pooled_signals.append(this_signal)
 
         # Aggregate the signals, construct strategies, append the output
         pooled_signals = pd.concat(pooled_signals, join="outer", axis=1)
