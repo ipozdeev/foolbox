@@ -2,6 +2,7 @@ import pandas as pd
 import numpy as np
 from foolbox.data_mgmt import set_credentials as setc
 import pickle
+# import ipdb
 
 def rank_sort_adv(returns, signals, n_portfolios, holding_period=None,
                   rebalance_dates=None):
@@ -1175,6 +1176,7 @@ def multiple_timing(returns, signals, xs_avg=True):
 
     elif isinstance(returns, pd.DataFrame) and isinstance(signals,
                                                           pd.DataFrame):
+        # ipdb.set_trace()
         # Apply the 'timed_strat()' function to each column
         tmp_list = list()
         for col in returns.columns:
