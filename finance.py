@@ -5,12 +5,9 @@ from pandas.tseries.offsets import DateOffset, MonthBegin, MonthEnd, \
     relativedelta
 from sklearn.metrics import confusion_matrix
 import matplotlib.pyplot as plt
-# import seaborn as sns
-# sns.set_style({
-#     'figure.facecolor': 'white',
-#     'font.family': [u'serif'],
-#     "xtick.major.size": 12,
-#     "ytick.major.size": 12})
+
+import itertools
+
 from matplotlib.ticker import MultipleLocator
 import matplotlib.lines as mlines
 import pickle
@@ -58,6 +55,7 @@ class PolicyExpectation():
             indexed with meeting dates, containing respective policy rates
             (column "rate_level") and rate changes (column "rate_change"),
             in percentage points
+
         funds_futures : pd.DataFrame
             with dates on the index and expiry dates on the columns axis,
             priced as usually: 100-(rate in percentage points)
@@ -71,9 +69,9 @@ class PolicyExpectation():
         funds_futures = funds_futures.fillna(method="ffill", limit=30)
 
         # space for stuff
-        rate_exp = pd.Series(index=funds_futures.index)
+        rate_expectation = pd.Series(index=funds_futures.index)
 
-        for t in rate_exp.index:
+        for t in rate_expectation.index:
             # t = rate_exp.index[0]
             # next meeting
             try:
@@ -104,7 +102,8 @@ class PolicyExpectation():
                 nx_nx_fomc_mend = MonthEnd().rollforward(nx_nx_fomc)
 
                 # rate decision
-                rate_exp.loc[t] = 100-funds_futures.loc[t,nx_nx_fomc_mend]
+                rate_expectation.loc[t] = \
+                    100-funds_futures.loc[t,nx_nx_fomc_mend]
             else:
                 # Scenario 2
                 # previos month
@@ -117,7 +116,7 @@ class PolicyExpectation():
                 start_rate = 100 - funds_futures.loc[t,nx_fomc_mbefore]
 
                 # rate decision
-                rate_exp.loc[t] = days_in_m/(days_in_m-M)*(
+                rate_expectation.loc[t] = days_in_m/(days_in_m-M)*(
                     impl_rate - (M/days_in_m)*start_rate)
 
         # create a new PolicyExpectation instance to return
@@ -126,7 +125,7 @@ class PolicyExpectation():
             reference_rate=meetings.loc[:,"rate_level"])
 
         # supply it with policy expectation
-        pe.rate_expectation = rate_exp
+        pe.rate_expectation = rate_expectation
 
         return pe
 
@@ -149,19 +148,19 @@ class PolicyExpectation():
         meetings : pd.DataFrame
             indexed with meeting dates, containing respective policy rates
             (column "rate_level") and rate changes (column "rate_change"),
-            both in percentage points
+            in percentage points
         instrument : pd.Series
-            of instrument (e.g. OIS) values, in percentage points
+            of instrument (e.g. OIS) values, in frac of 1
         tau : int
             maturity of `instrument`, in months
         reference_rate : pd.Series, optional
             of the rate which the `instrument` is derivative of (if differs
-            from the rate in `meetings`), in percentage points
+            from the rate in `meetings`), in frac of 1
 
         Returns
         -------
         pe : PolicyExpectation instance
-            with attribute `rate_expectation` for expectation of the next set rate
+            with attribute `policy_exp` for expectation of the next set rate
 
         """
         assert isinstance(meetings, pd.DataFrame)
@@ -289,6 +288,7 @@ class PolicyExpectation():
 
         return pe
 
+
     def ts_plot(self, lag=None, ax=None):
         """ Plot implied rate before vs. realized after meetings.
 
@@ -373,6 +373,11 @@ class PolicyExpectation():
         # rename a bit
         rate_expectation.name = "rate_expectation"
         actual_rate.name = "actual_rate"
+        ax.set_xlim(
+            max([meetings_c.first_valid_index(),
+                self.policy_exp.first_valid_index()])-\
+            DateOffset(months=6), ax.get_xlim()[1])
+        ax.legend(fontsize=12)
 
         # plot --------------------------------------------------------------
         # predictive power
@@ -435,7 +440,7 @@ class PolicyExpectation():
 
         """
         # take implied rate `lag` periods before
-        impl_rate = self.rate_expectation
+        impl_rate = self.policy_exp
 
         # will need to compare it to either some rolling average of the
         #   reference rate or the previously set policy rate (avg_refrce_over
@@ -748,7 +753,7 @@ def pe_backtest(returns, holding_range, threshold_range,
 
     # Start backtesting looping over holding periods and thresholds
     for holding_period in holding_range:
-        # holding_period = 2
+
         # Transform holding period into lag_expect argument for the
         # 'forecast_policy_change()' method of the 'PolicyExpectation' class
         lag_expect = holding_period + 1  # forecast rate before trading FX
@@ -758,13 +763,12 @@ def pe_backtest(returns, holding_range, threshold_range,
 
         # A soup of several loops
         for threshold in threshold_range:
-            # threshold = 12.5
+
             # For the predominant case of multiple currencies pool the signals
             pooled_signals = list()
 
             # Get the policy forecast for each currency
             for curr in returns.columns:
-                # curr = "usd"
                 tmp_pe = PolicyExpectation.from_pickles(data_path, curr)
                 tmp_fcast =\
                     tmp_pe.forecast_policy_change(lag=lag_expect,
@@ -860,7 +864,7 @@ def pe_perfect_foresight_strat(returns, holding_range, data_path,
             if forecast_consistent:
                 # Get the first forecast date available, leave enought data
                 # to make a forecast, control for averaging
-                first_date = tmp_pe.rate_expectation.dropna()\
+                first_date = tmp_pe.policy_exp.dropna()\
                     .iloc[[lag_expect+smooth_burn-1]].index[0]
                 pooled_signals.append(
                     tmp_pe.meetings.loc[first_date:,"rate_change"])
@@ -927,20 +931,20 @@ def broomstick_plot(data, ci=(0.1, 0.9)):
     plt.setp(ax.get_xticklabels(), rotation=0, ha="center")
     # Grid
     ax.grid(which="both", alpha=0.33, linestyle=":")
-    ax.plot(data, color=my_gray, lw=1.0, alpha=0.25)
+    ax.plot(data, color=my_gray, lw=0.75, alpha=0.25)
 
     ax.plot(stats["mean"], color="k", lw=2)
-    ax.plot(stats[["cb_l", "cb_u"]], color="k", lw=1.5, linestyle="--")
+    ax.plot(stats[["cb_l", "cb_u"]], color="k", lw=2, linestyle="--")
 
     # Construct lines for the custom legend
     solid_line = mlines.Line2D([], [], color='black', linestyle="-",
-                               lw=1.5, label="Mean")
+                               lw=2, label="Mean")
 
     ci_label = "{}th and {}th percentiles"\
         .format(int(ci[0]*100), int(ci[1]*100))
     dashed_line = mlines.Line2D([], [], color='black', linestyle="--",
-                                lw=1.5, label=ci_label)
-    ax.legend(handles=[solid_line, dashed_line], loc="upper left")
+                                lw=2, label=ci_label)
+    ax.legend(handles=[solid_line, dashed_line], loc="upper left", fontsize=10)
 
     return fig
 
@@ -992,16 +996,16 @@ if __name__  == "__main__":
     #             benchmark=benchmark/100,
     #             tau=tau)
     #
-    #         policy_expectation.loc[cur,:,provider] = pe.rate_expectation*100
+    #         policy_expectation.loc[cur,:,provider] = pe.policy_exp*100
 
     # # %matplotlib
     # lol, wut = pe.plot(5)
-    # policy_expectation.loc[cur,:,provider] = pe.rate_expectation*100
+    # policy_expectation.loc[cur,:,provider] = pe.policy_exp*100
     # events["snb"].loc[:,["lower","upper"]].plot(ax=wut[0], color='k')
     # benchmark.rolling(5).mean().shift(5).dropna().plot(
     #     ax=wut[0], color='g', linewidth=1.5)
     #
-    # one = pe.rate_expectation.shift(5).reindex(
+    # one = pe.policy_exp.shift(5).reindex(
     #     index=meetings.index, method="ffill")
     # two = benchmark.rolling(5).mean().shift(5).reindex(
     #     index=meetings.index, method="ffill")
@@ -1016,7 +1020,7 @@ if __name__  == "__main__":
     #
     #
     # meetings.loc["2016-07":]
-    # pe.rate_expectation.loc["2016-07":]
+    # pe.policy_exp.loc["2016-07":]
     # instrument.loc["2016-06-15":]
     # benchmark.loc["2016-07":]
     #

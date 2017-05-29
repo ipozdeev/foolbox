@@ -311,7 +311,8 @@ fx_cb_dict = {"fomc": "usd", "boe": "gbp", "boc": "cad", "rba": "aud",
               "snb": "chf"}
 
 # Set the sample
-cb_sample_start = "2000-11-01"  # start of the CB sample. Oh Caanadaaa...
+#cb_sample_start = "2000-11-01"  # start of the CB sample. Oh Caanadaaa...
+cb_sample_start = "1990-01-01"
 cb_sample_end = "2017-03-31"
 
 # Set the CHF-EUR peg period, to drop SNB
@@ -459,10 +460,10 @@ raw = pd.read_excel(path+"overnight_ref_rates_1994_2017_d.xlsx",
     sheetname="hardcopy", skiprows=1)
 # disassemble into separate dataframes
 raw_by_cur = [
-    raw.ix[:,(p*3):(p*3+2)].dropna() for p in range(on_names.shape[1])]
+    raw.ix[:, (p*3):(p*3+2)].dropna() for p in range(on_names.shape[1])]
 # break each piece into index and data, concatenate all
 on = pd.concat(
-    [pd.Series(index=p.iloc[:,0].values, data=p.iloc[:,1].values) \
+    [pd.Series(index=p.iloc[:,0].values, data=p.iloc[:, 1].values) \
         for p in raw_by_cur],
     axis=1)
 # add back columns, sort
