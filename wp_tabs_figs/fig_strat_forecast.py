@@ -4,8 +4,8 @@ import matplotlib.dates as mdates
 from matplotlib.ticker import MultipleLocator
 from wp_tabs_figs.wp_settings import settings
 
-"""Produces figures with perfect foresight strategy, and predicted strategy
-along with prediction-data-consistent prefect foresight. With spot rates
+"""Plots returns to strategy based on monetary ploicy action forecasts along
+with prediction-data-availability-consistent prefect foresight.
 """
 # Set the output path, input data and sample
 out_path = data_path + settings["fig_folder"]
@@ -38,8 +38,6 @@ with open(data_path+input_dataset, mode="rb") as fname:
 rx = data["spot_ret"][start_date:end_date].drop(["dkk"], axis=1).shift(1)
 rx["usd"] = -1 * rx.mean(axis=1)      # construct the dollar index
 rx = rx.drop(["jpy", "nok"], axis=1)  # no ois data for these gentlemen
-
-rx = rx[["aud"]]
 
 # Reformat lag and threshold to be consistent with backtest functions
 holding_range = np.arange(lag, lag+1, 1)
