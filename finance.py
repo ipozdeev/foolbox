@@ -864,7 +864,7 @@ def pe_perfect_foresight_strat(returns, holding_range, data_path,
             if forecast_consistent:
                 # Get the first forecast date available, leave enought data
                 # to make a forecast, control for averaging
-                first_date = tmp_pe.policy_exp.dropna()\
+                first_date = tmp_pe.rate_expectation.dropna()\
                     .iloc[[lag_expect+smooth_burn-1]].index[0]
                 pooled_signals.append(
                     tmp_pe.meetings.loc[first_date:,"rate_change"])
