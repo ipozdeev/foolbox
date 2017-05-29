@@ -38,7 +38,7 @@ impl_rates = instr*np.nan
 
 # loop over currencies ------------------------------------------------------
 for c in impl_rates.columns:
-    # c = "gbp"
+    # c = "aud"
 
     # concat level and change -----------------------------------------------
     this_evt_lvl = meetings_level.loc[:,c]
@@ -85,9 +85,9 @@ with open(data_path + "implied_rates.p", mode='wb') as fname:
 # pe.rate_expectation.dropna()
 # %matplotlib
 # pe.roc_curve(lag=3, avg_impl_over=1)
-# pe.assess_forecast_quality(lag=3, threshold=0.125)
+# pe.assess_forecast_quality(lag=3, threshold=0.14)
 # pe.meetings
-#
+
 #
 # with open(data_path + "implied_rates.p", mode='rb') as fname:
 #     impl_rates = pickle.load(fname)
@@ -110,3 +110,9 @@ with open(data_path + "implied_rates.p", mode='wb') as fname:
 # pe.ts_plot(lag=5)
 # pe.reference_rate.plot()
 # pe.reference_rate.rolling(lag, min_periods=1).mean().loc["2001-11":]
+#
+# pe = PolicyExpectation.from_pickles(data_path, "sek", s_dt="2001")
+# pe.assess_forecast_quality(lag=3, threshold=0.125, avg_impl_over=2,
+#     avg_refrce_over=5)
+# pe.roc_curve(avg_impl_over=None, avg_refrce_over=5, lag=3)
+# events["joint_cbs"].count(axis=1).hist()
