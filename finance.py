@@ -5,16 +5,14 @@ from pandas.tseries.offsets import DateOffset, MonthBegin, MonthEnd, \
     relativedelta
 from sklearn.metrics import confusion_matrix
 import matplotlib.pyplot as plt
-import seaborn as sns
-sns.set_style({
-    'figure.facecolor': 'white',
-    'font.family': [u'serif'],
-    "xtick.major.size": 12,
-    "ytick.major.size": 12})
-import itertools
+# import seaborn as sns
+# sns.set_style({
+#     'figure.facecolor': 'white',
+#     'font.family': [u'serif'],
+#     "xtick.major.size": 12,
+#     "ytick.major.size": 12})
 from matplotlib.ticker import MultipleLocator
 import matplotlib.lines as mlines
-import foolbox.data_mgmt.set_credentials as set_credentials
 import pickle
 from foolbox.portfolio_construction import multiple_timing
 # import ipdb
@@ -52,19 +50,22 @@ class PolicyExpectation():
         rate change in an unscheduled event, the actual change on the closest
         scheduled one will be biased.
 
+        Only monthly futures are supported.
+
         Parameters
         ----------
         meetings : pd.DataFrame
             indexed with meeting dates, containing respective policy rates
-            (column "rate_level") and rate changes (column "rate_change")
+            (column "rate_level") and rate changes (column "rate_change"),
+            in percentage points
         funds_futures : pd.DataFrame
-            with dates on the index and expiry dates on the columns axis
+            with dates on the index and expiry dates on the columns axis,
+            priced as usually: 100-(rate in percentage points)
 
         Returns
         -------
         pe : PolicyExpectation instance
-            with attribute `rate_expectation` for expectation of the next set
-            rate
+            with attribute `rate_expectation` for expectation of the new rate
         """
         # fill na forward (today's na equals yesterday's value)
         funds_futures = funds_futures.fillna(method="ffill", limit=30)
@@ -122,7 +123,7 @@ class PolicyExpectation():
         # create a new PolicyExpectation instance to return
         pe = PolicyExpectation(
             meetings=meetings,
-            reference_rate=meetings.loc["rate_level"])
+            reference_rate=meetings.loc[:,"rate_level"])
 
         # supply it with policy expectation
         pe.rate_expectation = rate_exp
@@ -131,7 +132,7 @@ class PolicyExpectation():
 
 
     @classmethod
-    def from_money_market(cls, meetings, instrument, tau, reference_rate=None):
+    def from_ois(cls, meetings, instrument, tau, reference_rate=None):
         """ Extract policy expectations from money market instruments.
 
         For each date when an instrument observation is available, it is
@@ -191,10 +192,11 @@ class PolicyExpectation():
         # meetings = meetings.loc[min_start:]
 
         # if no rate provided, meetings must contain a rate; in this case
-        #   reference_rate be the rate set at meetings projected onto the dates of
+        #   reference_rate be the rate set at meetings projected onto the
+        #   dates of
         #   instrument.
         if reference_rate is None:
-            reference_rate = meetings.reindex(
+            reference_rate = meetings.loc[:,"rate_level"].reindex(
                 index=instrument.index, method="ffill")
         else:
             # project onto the dates too
@@ -207,17 +209,17 @@ class PolicyExpectation():
             method="ffill")
 
         # from percentage points to frac of 1
-        meetings /= 100
-        reference_rate /= 100
-        instrument /= 100
+        meetings = meetings.copy()/100
+        reference_rate = reference_rate.copy()/100
+        instrument = instrument.copy()/100
 
         # main loop ---------------------------------------------------------
         # allocate space for forward rates
-        rate_exp = instrument.copy()*np.nan
+        rate_expectation = instrument.copy()*np.nan
 
         # loop over dates in instrument
-        for t in rate_exp.index:
-            # t = rate_exp.index[3000]
+        for t in rate_expectation.index:
+            # t = rate_expectation.index[3000]
             # t = pd.to_datetime("2016-02-08")
 
             # break if out of range
@@ -274,80 +276,126 @@ class PolicyExpectation():
                 )**(1/(ndays-ndays_until))-1)*days_in_year
 
             # store
-            rate_exp.loc[t] = impl_rate
+            rate_expectation.loc[t] = impl_rate
 
         # create a new PolicyExpectation instance to return
         pe = PolicyExpectation(
-            meetings=meetings,
-            instrument=instrument,
-            reference_rate=reference_rate)
+            meetings=meetings*100,
+            instrument=instrument*100,
+            reference_rate=reference_rate*100)
 
         # supply it with policy expectation
-        pe.rate_expectation = rate_exp
+        pe.rate_expectation = rate_expectation*100
 
         return pe
 
+    def ts_plot(self, lag=None, ax=None):
+        """ Plot implied rate before vs. realized after meetings.
 
-    def plot(self, lag):
-        """ Plot predicted vs. realized and the error plot.
+        Implied rate at time -`lag` before each event
         """
         if not hasattr(self, "rate_expectation"):
             raise ValueError("Estimate first!")
 
-        # meetings_c = self.meetings.copy()
-        meetings_c = self.benchmark.rolling(lag).mean().shift(-lag).reindex(
-            index=self.meetings.index, method="bfill")
+        # defaults
+        if lag is None:
+            lag = 1
+        if ax is None:
+            f, ax = plt.subplots(figsize=(8.3,8.3/2))
+        else:
+            f = plt.gcf()
+
+        # smooth + align ----------------------------------------------------
+        actual_rate = \
+            self.reference_rate.rolling(lag, min_periods=1).mean()\
+                .shift(-lag).reindex(
+                    index=self.meetings.index, method="bfill")
 
         # policy expectation to plot
-        to_plot = self.rate_expectation.shift(lag).reindex(
-            index=meetings_c.index, method="ffill")
+        rate_expectation = self.rate_expectation.shift(lag).reindex(
+            index=actual_rate.index, method="ffill")
 
         # rename a bit
-        to_plot.name = "rate_expectation"
-        meetings_c.name = "policy_rate"
+        rate_expectation.name = "rate_expectation"
+        actual_rate.name = "actual_rate"
 
-        f, ax = plt.subplots(2, figsize=(11.7,8.3))
-
-        # plot forward rate
-        (to_plot*100).plot(
-            ax=ax[0],
+        # plot --------------------------------------------------------------
+        # plot expectation
+        (rate_expectation).plot(
+            ax=ax,
             linestyle='none',
             marker='o',
             color=my_blue,
             mec="none",
             label="implied rate")
 
-        # plot meetings-set rate
-        (meetings_c*100).plot(
-            ax=ax[0],
+        # plot the actually set rate
+        (actual_rate).plot(
+            ax=ax,
             marker='.',
             color=my_red,
-            label="policy rate")
+            label="actual rate")
 
         # set artist properties
-        ax[0].set_xlim(
-            max([meetings_c.first_valid_index(),
+        ax.set_xlim(
+            max([actual_rate.first_valid_index(),
                 self.rate_expectation.first_valid_index()])-\
-            DateOffset(months=6), ax[0].get_xlim()[1])
-        ax[0].legend(fontsize=12)
+            DateOffset(months=6), ax.get_xlim()[1])
+        ax.legend(fontsize=12)
 
+        return f, ax
+
+
+    def error_plot(self, lag=None, ax=None):
+        """ Plot predicted vs. realized and the error plot.
+        """
+        if not hasattr(self, "rate_expectation"):
+            raise ValueError("Estimate first!")
+
+        # defaults
+        if lag is None:
+            lag = 1
+        if ax is None:
+            f, ax = plt.subplots(figsize=(8.3,8.3/2))
+        else:
+            f = plt.gcf()
+
+        # smooth + align ----------------------------------------------------
+        actual_rate = \
+            self.reference_rate.rolling(lag, min_periods=1).mean()\
+                .shift(-lag).reindex(
+                    index=self.meetings.index, method="bfill")
+
+        # policy expectation to plot
+        rate_expectation = self.rate_expectation.shift(lag).reindex(
+            index=actual_rate.index, method="ffill")
+
+        # rename a bit
+        rate_expectation.name = "rate_expectation"
+        actual_rate.name = "actual_rate"
+
+        # plot --------------------------------------------------------------
         # predictive power
-        pd.concat((to_plot*100, meetings_c*100), axis=1).\
+        pd.concat((rate_expectation, actual_rate), axis=1).\
             plot.scatter(
-                ax=ax[1],
+                ax=ax,
                 x="rate_expectation",
-                y="policy_rate",
+                y="actual_rate",
                 alpha=0.66,
                 s=33,
                 color=my_blue,
                 edgecolor='none')
 
-        lim_x = ax[1].get_xlim()
-        ax[1].plot(lim_x, lim_x, color='r', linestyle='--')
+        lim_x = ax.get_xlim()
+        ax.plot(lim_x, lim_x, color='r', linestyle='--')
 
         return f, ax
 
-    def forecast_policy_change(self, lag, threshold, avg_impl_over=1,
+
+    def forecast_policy_change(self,
+        lag=1,
+        threshold=0.125,
+        avg_impl_over=1,
         avg_refrce_over=None):
         """ Predict +1, -1 or 0 for every meeting date.
 
@@ -363,9 +411,9 @@ class PolicyExpectation():
             such that the forecast is made at t-`lag` with t being the meeting
             date
         threshold : float
-            the maximum absolute difference between the implied rate and the
-            reference rate such that no policy change is predicted; values
-            above that would signal a hike, below - cut
+            the maximum absolute difference (in %) between the implied rate
+            and the reference rate such that no policy change is predicted;
+            values above that would signal a hike, below - cut
         avg_impl_over : int
             such that the implied rate that is compared to the reference rate
             is first smoothed over this number of periods
@@ -383,7 +431,7 @@ class PolicyExpectation():
         -------
         data_path = set_credentials.gdrive_path("research_data/fx_and_events/")
         pe = PolicyExpectation.from_pickles(data_path, "gbp")
-        fcast = pe.forecast_policy_change(10, 0.1250, 10)
+        fcast = pe.forecast_policy_change(10, 0.1250, 2)
 
         """
         # take implied rate `lag` periods before
@@ -394,16 +442,15 @@ class PolicyExpectation():
         #   is None)
         if isinstance(avg_refrce_over, int):
             # fill some NAs
-            avg_refrce = self.benchmark.fillna(method="ffill", limit=2)
-            # +1 is needed because e.g. in the USA the rate is published on
-            #   the next day
-            avg_refrce = avg_refrce.rolling(avg_refrce_over).mean().\
-                shift(lag+1).\
-                reindex(index=self.meetings.index, method="ffill")
+            avg_refrce = self.reference_rate.fillna(method="ffill", limit=2)
+
+            avg_refrce = avg_refrce.rolling(avg_refrce_over, min_periods=1)\
+                .mean().shift(lag)\
+                .reindex(index=self.meetings.index, method="ffill")
 
         elif isinstance(avg_refrce_over, str):
             # collect everything between events
-            refrce_aligned, meets_aligned = self.benchmark.align(
+            refrce_aligned, meets_aligned = self.reference_rate.align(
                 self.meetings, join="outer", axis=0)
             refrce_aligned = refrce_aligned.to_frame()
             refrce_aligned.loc[:,"dates"] = meets_aligned.index
@@ -423,14 +470,14 @@ class PolicyExpectation():
 
         else:
             # else, if None, take the last meetings decision
-            avg_refrce = self.meetings.shift(1)
+            avg_refrce = self.meetings.loc[:,"rate_level"].shift(1)
 
         # smooth implied rate
-        avg_impl = impl_rate.rolling(avg_impl_over).mean().shift(lag).\
-            reindex(index=self.meetings.index, method="ffill")
+        avg_impl = impl_rate.rolling(avg_impl_over, min_periods=1).mean()\
+            .shift(lag).reindex(index=self.meetings.index, method="ffill")
 
         # difference between rate implied some periods earlier and the
-        #   benchmark rate
+        #   reference_rate rate
         impl_less_bench = (avg_impl-avg_refrce).dropna()
 
         # forecast is the sign of the difference if it is large enough
@@ -440,19 +487,23 @@ class PolicyExpectation():
 
         return policy_fcast
 
-    def assess_forecast_quality(self, lag, threshold, avg_impl_over=1,
-        avg_refrce_over=None):
+
+    def assess_forecast_quality(self, lag=1, threshold=0.125, **kwargs):
         """
+        Parameters
+        ----------
+        kwargs : dict
+            args to `.forecast_policy_change`
         """
         # ipdb.set_trace()
         # forecast `lag` periods before
         policy_fcast = self.forecast_policy_change(
-            lag, threshold, avg_impl_over, avg_refrce_over)
+            lag, threshold, **kwargs)
         policy_fcast.name = "fcast"
 
         # policy change: should already be expressed as difference
         #   (see __init__)
-        policy_diff = self.meetings
+        policy_diff = self.meetings.loc[:,"rate_change"]
         policy_actual = np.sign(policy_diff)
         policy_actual.name = "actual"
 
@@ -461,7 +512,9 @@ class PolicyExpectation():
             dropna(how="any")
 
         # percentage of correct guesses
-        rho = (both.loc[:,"fcast"] == both.loc[:,"actual"]).mean()
+        # rho = (both.loc[:,"fcast"] == both.loc[:,"actual"]).mean()
+
+        # confusion matrix
         cmx = confusion_matrix(both.loc[:,"fcast"], both.loc[:,"actual"])
 
         idx = sorted(list(set(
@@ -475,66 +528,60 @@ class PolicyExpectation():
         cmx = cmx.reindex(index=[-1, 0, 1], columns=[-1, 0, 1]).fillna(0)
         cmx = cmx.astype(np.int16)
 
-        return rho, cmx
+        return cmx
 
-    def roc_curve(self, lag=None, avg_impl_over=1, avg_refrce_over=1,
-        out_path=None):
+    def roc_curve(self, lag=1, out_path=None, **kwargs):
         """ Construct ROC curve.
-        """
-        thresholds = np.linspace(-0.50, 0.50, 101)/100
 
-        if lag is None:
-            lag = [2, 6, 11, 16]
-        else:
-            lag = [lag,]
+        Parameters
+        ----------
+        kwargs : dict
+            args to `.forecast_policy_change`
+        """
+        thresholds = np.linspace(-0.50, 0.50, 101)
 
         # plot
-        fig, ax = plt.subplots(figsize=(8.4,11.7/3))
+        fig, ax = plt.subplots(figsize=(8.4,11.7/2))
 
-        # loop over lags
-        for q in lag:
-            # q = 3
-            # allocate space
-            fcast_accy = pd.Panel(
-                major_axis=thresholds,
-                minor_axis=["true_pos","false_pos"],
-                items=["hike","cut"])
+        # allocate space
+        fcast_accy = pd.Panel(
+            major_axis=thresholds,
+            minor_axis=["true_pos","false_pos"],
+            items=["hike","cut"])
 
-            # loop over thresholds
-            for p in thresholds:
-                # p = 0.125
-                _, cmx = self.assess_forecast_quality(
-                    lag=q,
-                    threshold=p,
-                    avg_impl_over=avg_impl_over,
-                    avg_refrce_over=avg_refrce_over)
+        # loop over thresholds
+        for p in thresholds:
+            # p = 0.085
+            cmx = self.assess_forecast_quality(
+                lag=lag, threshold=p, **kwargs)
 
-                fcast_accy.loc["hike",p,"true_pos"] = \
-                    cmx.loc[1,1]/cmx.loc[:,1].sum()
-                fcast_accy.loc["hike",p,"false_pos"] = \
-                    cmx.loc[1,-1:0].sum()/cmx.loc[-1:0,-1:0].sum().sum()
-                fcast_accy.loc["cut",p,"true_pos"] = \
-                    cmx.loc[-1,-1]/cmx.loc[:,-1].sum()
-                fcast_accy.loc["cut",p,"false_pos"] = \
-                    cmx.loc[-1,0:1].sum()/cmx.loc[-1:0,-1:0].sum().sum()
+            fcast_accy.loc["hike",p,"true_pos"] = \
+                cmx.loc[1,1]/cmx.loc[:,1].sum()
+            fcast_accy.loc["hike",p,"false_pos"] = \
+                cmx.loc[1,-1:0].sum()/cmx.loc[-1:0,-1:0].sum().sum()
+            fcast_accy.loc["cut",p,"true_pos"] = \
+                cmx.loc[-1,-1]/cmx.loc[:,-1].sum()
+            fcast_accy.loc["cut",p,"false_pos"] = \
+                cmx.loc[-1,0:1].sum()/cmx.loc[-1:0,-1:0].sum().sum()
 
-                # add back extreme values
-                fcast_accy.loc["hike",1,:] = [1.0, 1]
-                fcast_accy.loc["hike",-1,:] = [0.0, 0]
-                fcast_accy.loc["cut",1,:] = [0.0, 0]
-                fcast_accy.loc["cut",-1,:] = [1.0, 1]
+            # add back extreme values
+            fcast_accy.loc["hike",1,:] = [1.0, 1]
+            fcast_accy.loc["hike",-1,:] = [0.0, 0]
+            fcast_accy.loc["cut",1,:] = [0.0, 0]
+            fcast_accy.loc["cut",-1,:] = [1.0, 1]
 
-            for h in range(2):
-                this_ax = plt.subplot(121+h)
-                self.plot_roc(fcast_accy.iloc[h,:,:], ax=this_ax, linewidth=1.5,
-                    label=q)
-                this_ax.set_title(fcast_accy.items[h]+'s')
+        for h in range(2):
+            # h = 0
+            this_ax = plt.subplot(121+h)
+            self.plot_roc(fcast_accy.iloc[h,:,:], ax=this_ax,
+                linewidth=1.5)
+            this_ax.set_title(fcast_accy.items[h]+'s')
 
-            this_ax.set_ylabel('', visible=False)
-            this_ax.legend(loc="lower right", prop={'size':12},
-                bbox_to_anchor=((1+0.01)/1.1, (0.05+0.01)/1.1))
+        this_ax.set_ylabel('', visible=False)
+        this_ax.legend(loc="lower right", prop={'size':12},
+            bbox_to_anchor=((1+0.01)/1.1, (0.05+0.01)/1.1))
 
-        fig.suptitle("roc curves by lag", fontsize=12)
+        fig.suptitle("roc curves", fontsize=12)
 
         if out_path is not None:
             fig.savefig(out_path+"roc_lags_"+'_'.join([str(l) for l in lag])+\
@@ -543,6 +590,10 @@ class PolicyExpectation():
     @staticmethod
     def plot_roc(data, ax=None, **kwargs):
         """
+        Parameters
+        ----------
+        kwargs : dict
+            args to `matplotlib.pyplot.plot`
         """
         if ax is None:
             fig, ax = plt.subplots(figsize=(8.4,8.4))
@@ -575,27 +626,48 @@ class PolicyExpectation():
 
 
     @classmethod
-    def from_pickles(cls, data_path, currency, s_dt="1990"):
+    def from_pickles(cls, data_path, currency, s_dt="1990", use_ffut=False):
         """
+        Parameters
+        ----------
+        currency : str
+            lowercase 3-letter, e.g. "gbp"
+        Returns
+        -------
+        pe : PolicyExpectation()
+            with rate expectation set
         """
-        # events
+        # meetings
         with open(data_path + "events.p", mode='rb') as hangar:
             events = pickle.load(hangar)
-        evts = events["joint_cbs_lvl"].loc[:,currency].dropna()
+
+        # concat level and change, trim -------------------------------------
+        meetings = pd.concat((
+            events["joint_cbs_lvl"].loc[:,currency],
+            events["joint_cbs"].loc[:,currency]), axis=1)
+        meetings.columns = ["rate_level", "rate_change"]
+        meetings = meetings.dropna(how="all").loc[s_dt:,:]
 
         # reference rates
         with open(data_path + "overnight_rates.p", mode='rb') as hangar:
             overnight_rates = pickle.load(hangar)
 
+        # for the USA, possible to use fed funds futures
+        if use_ffut:
+            impl_rates_name = "implied_rates_ffut.p"
+        else:
+            impl_rates_name = "implied_rates.p"
+
         # implied rates
-        with open(data_path + "implied_rates.p", mode='rb') as hangar:
+        with open(data_path + impl_rates_name, mode='rb') as hangar:
             implied_rates = pickle.load(hangar)
 
         # init class, manually insert policy expectation
         pe = PolicyExpectation(
-            meetings=evts.loc[s_dt:],
-            benchmark=overnight_rates[currency])
-        pe.rate_expectation = implied_rates[currency]
+            meetings=meetings,
+            reference_rate=overnight_rates.loc[s_dt:,currency])
+
+        pe.rate_expectation = implied_rates.loc[s_dt:,currency]
 
         return pe
 
@@ -790,9 +862,10 @@ def pe_perfect_foresight_strat(returns, holding_range, data_path,
                 # to make a forecast, control for averaging
                 first_date = tmp_pe.rate_expectation.dropna()\
                     .iloc[[lag_expect+smooth_burn-1]].index[0]
-                pooled_signals.append(tmp_pe.meetings[first_date:])
+                pooled_signals.append(
+                    tmp_pe.meetings.loc[first_date:,"rate_change"])
             else:
-                pooled_signals.append(tmp_pe.meetings)
+                pooled_signals.append(tmp_pe.meetings.loc[:,"rate_change"])
 
         # Aggregate the signals, construct strategies, append the output
         pooled_signals = pd.concat(pooled_signals, join="outer", axis=1)
