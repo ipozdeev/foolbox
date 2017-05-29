@@ -190,9 +190,9 @@ class DynamicOLS():
         elif self.method == "grouped_by":
             # ipdb.set_trace()
             roll_cov_yx = yx.groupby(**self.kwargs).cov()
-            # TODO: this is now set for
-            b = roll_cov_yx[y.name][:,x.name]/\
-                roll_cov_yx[x.name][:,x.name]
+            # TODO: [:,x.name] probably?
+            b = roll_cov_yx[y.name][:,:,x.name]/\
+                roll_cov_yx[x.name][:,:,x.name]
             # add name to `b`
             b.name = y.name
             # calculate alpha

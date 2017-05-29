@@ -218,7 +218,7 @@ def ts_ap_tests(y, X, scale=12):
             # Put R-squared in the corresponding column
             if out_col == "adj_r_sq":
                 out[out_col][column] = adj_r_sq
-                out[out_col]["se_"+str(column)] = ""
+                out[out_col]["se_"+str(column)] = np.nan
             # Fill in the regressors' coefficients
             else:
                 out[out_col][column] = coef[i]
