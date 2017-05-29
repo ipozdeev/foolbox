@@ -346,15 +346,15 @@ class PolicyExpectation():
         return f, ax
 
 
-    def error_plot(self, lag=None, ax=None):
+    def error_plot(self, avg_over=None, ax=None):
         """ Plot predicted vs. realized and the error plot.
         """
         if not hasattr(self, "rate_expectation"):
             raise ValueError("Estimate first!")
 
         # defaults
-        if lag is None:
-            lag = 1
+        if avg_over is None:
+            avg_over = 1
         if ax is None:
             f, ax = plt.subplots(figsize=(8.3,8.3/2))
         else:
@@ -362,37 +362,51 @@ class PolicyExpectation():
 
         # smooth + align ----------------------------------------------------
         actual_rate = \
-            self.reference_rate.rolling(lag, min_periods=1).mean()\
-                .shift(-lag).reindex(
+            self.reference_rate.rolling(avg_over, min_periods=1).mean()\
+                .shift(-avg_over).reindex(
                     index=self.meetings.index, method="bfill")
 
         # policy expectation to plot
-        rate_expectation = self.rate_expectation.shift(lag).reindex(
+        rate_expectation = self.rate_expectation.shift(avg_over).reindex(
             index=actual_rate.index, method="ffill")
 
         # rename a bit
         rate_expectation.name = "rate_expectation"
         actual_rate.name = "actual_rate"
-        ax.set_xlim(
-            max([meetings_c.first_valid_index(),
-                self.rate_expectation.first_valid_index()])-\
-            DateOffset(months=6), ax.get_xlim()[1])
-        ax.legend(fontsize=12)
+        # ax.set_xlim(
+        #     max([meetings_c.first_valid_index(),
+        #         self.rate_expectation.first_valid_index()])-\
+        #     DateOffset(months=6), ax.get_xlim()[1])
+        # ax.legend(fontsize=12)
 
         # plot --------------------------------------------------------------
         # predictive power
-        pd.concat((rate_expectation, actual_rate), axis=1).\
-            plot.scatter(
-                ax=ax,
-                x="rate_expectation",
-                y="actual_rate",
-                alpha=0.66,
-                s=33,
-                color=my_blue,
-                edgecolor='none')
+        both = pd.concat((rate_expectation, actual_rate), axis=1).dropna()
+        both.plot.scatter(
+            ax=ax,
+            x="rate_expectation",
+            y="actual_rate",
+            alpha=0.66,
+            s=33,
+            color=my_blue,
+            edgecolor='none')
 
-        lim_x = ax.get_xlim()
+        # limits to produce a nice square picture
+        max_x = both.max().max()+1.0
+        min_x = both.min().min()-1.0
+
+        lim_x = np.array([min_x, max_x])
+
         ax.plot(lim_x, lim_x, color='r', linestyle='--')
+
+        # reset limits
+        ax.set_xlim(lim_x)
+        ax.set_ylim(lim_x)
+
+        # text: absolute error
+        abs_err = np.abs(rate_expectation-actual_rate).mean()
+        ax.annotate(r"$|err|={:3.2f}$".format(abs_err*100),
+            xy=(0.5, 0.05), xycoords='axes fraction')
 
         return f, ax
 
@@ -470,7 +484,7 @@ class PolicyExpectation():
                     refrce_aligned.loc[:,"dates"]==this_dt,0].loc[prev_dt:] = \
                         this_piece.loc[prev_dt:].expanding().mean()
 
-                avg_refrce = refrce_aligned.shift(lag+1).\
+                avg_refrce = refrce_aligned.shift(lag).\
                     reindex(index=self.meetings.index, method="ffill")
 
         else:
