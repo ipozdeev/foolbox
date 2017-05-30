@@ -774,7 +774,7 @@ def pe_backtest(returns, holding_range, threshold_range,
 
         # Transform holding period into lag_expect argument for the
         # 'forecast_policy_change()' method of the 'PolicyExpectation' class
-        lag_expect = holding_period + 1  # forecast rate before trading FX
+        lag_expect = holding_period + 2  # forecast rate before trading FX
 
         # Create an entry for the disaggregated output
         results["disaggr"][str(holding_period)] = dict()
@@ -869,7 +869,7 @@ def pe_perfect_foresight_strat(returns, holding_range, data_path,
     for holding_period in holding_range:
         # Transform holding period into lag_expect argument for the
         # 'forecast_policy_change()' method of the 'PolicyExpectation' class
-        lag_expect = holding_period + 1  # forecast rate before trading FX
+        lag_expect = holding_period + 2  # forecast rate before trading FX
 
         # For the (predominant) case of multiple currenices pool the signals
         pooled_signals = list()

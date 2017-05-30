@@ -22,14 +22,28 @@ threshold_range = np.arange(1, 26, 1)
 avg_impl_over = 5    # smooth implied rate
 avg_refrce_over = 5  # smooth reference rate
 
-# Import the FX data, prepare dollar index
+# Import the FX data
 with open(data_path+input_dataset, mode="rb") as fname:
     data = pickle.load(fname)
 
-# Lag returns to ensure pre-announcements
-rx = data["spot_ret"][start_date:end_date].drop(["dkk"], axis=1).shift(1)
-rx["usd"] = -1 * rx.mean(axis=1)      # construct the dollar index
-rx = rx.drop(["jpy", "nok"], axis=1)  # no ois data for these gentlemen
+# Get the individual currenices
+rx = data["spot_ret"][start_date:end_date].drop(["dkk", "jpy", "nok"],
+                                                axis=1)
+
+# Import the all fixing times for the dollar index
+with open(data_path+"fx_by_tz_all_fixings_d.p", mode="rb") as fname:
+    data_all_fix = pickle.load(fname)
+
+# Construct a pre-set fixing time dollar index
+data_usd = data_all_fix["spot"].loc[:, :, settings["usd_fixing_time"]]\
+    .drop(["dkk"], axis=1)
+rx_usd = -np.log(data_usd/data_usd.shift(1))[start_date:end_date].mean(axis=1)
+
+# Add it to the data
+rx["usd"] = rx_usd
+
+# Lag to ensure trading before the announcements
+rx = rx.shift(1)
 
 # Run the backtests
 btest = pe_backtest(rx, holding_range, threshold_range, data_path,
