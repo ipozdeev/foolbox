@@ -5,7 +5,7 @@ from scipy.stats import norm
 from foolbox.api import *
 
 import matplotlib.pyplot as plt
-from matplotlib.ticker import MultipleLocator, FixedLocator
+from matplotlib.ticker import MultipleLocator, FixedLocator, FormatStrFormatter
 
 minorLocator = MultipleLocator(1)
 majorLocator = MultipleLocator(5)
@@ -122,14 +122,16 @@ def fig_event_study(events, ret, direction,
         color=gr_1, alpha=0.5, label="conf. interval")
 
     # final retouche --------------------------------------------------------
-    furbish_plot(ax_individ)
-    furbish_plot(ax_avg, set_xlabel=True)
+    furbish_plot(ax_individ, set_xlabel=True)
+    furbish_plot(ax_avg)
+    fig_individ.tight_layout()
+    fig_avg.tight_layout()
 
     fig_individ.savefig(
-        out_path+"xxxusd_before_"+direction+"_avg.pdf",
+        out_path+"xxxusd_before_"+direction+"_weighted_indiv.pdf",
         bbox_inches="tight")
     fig_avg.savefig(
-        out_path+"xxxusd_before_"+direction+"_indiv.pdf",
+        out_path+"xxxusd_before_"+direction+"_weighted_avg.pdf",
         bbox_inches="tight")
 
     return fig_individ, fig_avg
@@ -144,6 +146,7 @@ def furbish_plot(ax, set_xlabel=False):
     # ticks -----------------------------------------------------------------
     ax.xaxis.set_major_locator(majorLocator)
     ax.xaxis.set_minor_locator(minorLocator)
+    ax.yaxis.set_major_formatter(FormatStrFormatter('%.1f'))
 
     # grid ------------------------------------------------------------------
     ax.grid(which="both", alpha=0.33, linestyle=":")
@@ -174,7 +177,7 @@ if __name__ == "__main__":
     direction="downs"
 
     # lag to take
-    lag = settings["base_holding_h"]-1
+    lag = settings["base_holding_h"]+1
 
     # data ------------------------------------------------------------------
     data_path = set_credentials.gdrive_path("research_data/fx_and_events/")
@@ -204,7 +207,7 @@ if __name__ == "__main__":
 
     # event study -----------------------------------------------------------
     f_i, f_a = fig_event_study(events_perf, ret,
-        direction="ups",
+        direction=direction,
         wght="by_event",
         ci_width=0.95,
         window=window)

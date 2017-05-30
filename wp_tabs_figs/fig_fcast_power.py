@@ -4,14 +4,16 @@ import time
 import matplotlib.pyplot as plt
 import seaborn.apionly as sns
 from matplotlib.colors import ListedColormap
-my_cmap = ListedColormap(sns.diverging_palette(220, 20, n=7))
 
 from matplotlib.ticker import MultipleLocator, FormatStrFormatter
 majorLocator = MultipleLocator(2)
 minorLocator = MultipleLocator(1)
 formatter = FormatStrFormatter('%d')
 
+# colors
 gr_1 = "#8c8c8c"
+my_greys = plt.get_cmap("Greys")
+my_orng_blue = ListedColormap(sns.diverging_palette(220, 20, n=7))
 
 # %matplotlib
 
@@ -73,13 +75,13 @@ def plot_one(ax, pe, settings):
     # confusion matrix --------------------------------------------------
     # mind the +1: it is needed to forecast one period before
     cmx = pe.assess_forecast_quality(
-        lag=settings["base_holding_h"]+1,
+        lag=settings["base_holding_h"]+2,
         threshold=settings["base_threshold"],
         avg_impl_over=settings["avg_impl_over"],
         avg_refrce_over=settings["avg_refrce_over"])
 
     sns.heatmap(cmx, ax=ax[1], cbar=False,
-        cmap=plt.get_cmap("Greys"),
+        cmap=my_orng_blue,
         annot=True, linewidths=.75, fmt="d",
         vmax=cmx.loc[0,0]*0.75)
 
