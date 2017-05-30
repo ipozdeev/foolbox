@@ -17,6 +17,7 @@ name_all_m = path + "data_all_m.p"  # all sample, monthly data
 name_all_evt = path + "events.p"  # events
 name_all_on = path + "overnight_rates.p"
 name_tz_data = path + "fx_by_tz_d.p"
+name_tz_data_by_fixing = path + "fx_by_tz_all_fixings_d.p"
 
 # Definitions and settings
 eur_nan_date = "1999-01-04"           # First consistent EUR data begins on 5th
@@ -478,7 +479,7 @@ on = on[sorted(on.columns)]
 fname_spot = "fx_spot_diff_tz_1994_2017_d.xlsx"
 fname_fwd = "fx_fwd_diff_tz_1994_2017_d.xlsx"
 
-currencies = pd.read_excel(path+fname,
+currencies = pd.read_excel(path+fname_spot,
     sheetname="iso",
     header=0)
 currencies = currencies.columns
@@ -587,3 +588,5 @@ with open(name_all_on, "wb") as fname:
     pickle.dump(on, fname)
 with open(name_tz_data, "wb") as fname:
     pickle.dump(data_by_tz, fname)
+with open(name_tz_data_by_fixing, "wb") as fname:
+    pickle.dump(spot_fwd_by_tz, fname)
