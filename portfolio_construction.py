@@ -1277,6 +1277,16 @@ def wght_grid(pf):
 
     return wghts
 
+def rescale_weights(weights):
+    """
+    """
+    if isinstance(weights, pd.Series):
+        return weights
+
+    weights_rescaled = weights.divide(
+        np.abs(weights.mean(axis=1)*weights.count(axis=1)), axis=0)
+
+    return weights_rescaled
 
 def weighted_return(ret, w):
     """
@@ -1286,8 +1296,11 @@ def weighted_return(ret, w):
     if isinstance(w, pd.Series):
         w = w.to_frame()
     mask = (ret + w).notnull()
-    w_rescaled = w.where(mask).divide(w.where(mask).sum(axis=1), axis=0)
 
+    w_rescaled = rescale_weights(w.where(mask))
+
+    # this is just weighted product, needed because .sum() gives 0 when the
+    #   row is full of nans
     res = (ret*w_rescaled).mean(axis=1)*(ret*w_rescaled).count(axis=1)
 
     return res
