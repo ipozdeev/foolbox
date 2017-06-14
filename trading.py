@@ -1,6 +1,7 @@
 import pandas as pd
 import numpy as np
 import warnings
+import copy
 import ipdb
 
 
@@ -40,10 +41,6 @@ class EventTradingStrategy(TradingStrategy):
             returns = returns.reindex(
                 index=pd.date_range(s_dt, e_dt, freq='B'))
 
-        # weights are uniform unless otherwise given
-        if weights is None:
-            weights = returns.mask(returns.notnull(), 1.0)
-
         # warning if some date from `signals`.index is not in `returns`.index
         if not signals.index.isin(returns.index).all():
             warnings.warn(
@@ -51,15 +48,36 @@ class EventTradingStrategy(TradingStrategy):
                 "rows in `returns`.")
             returns, _ = returns.align(signals, join="outer", axis=0)
 
+        # weights are uniform unless otherwise given
+        if weights is None:
+            weights = returns.mask(returns.notnull(), 1.0)
+
         self._returns = returns
         self.signals = signals
-        self.prices = prices
-        self.weights = weights
-
         self.settings = settings
+        self.prices = prices
+
+        # position flags
+        self.position_flags = self.get_position_flags()
+
+        # weights
+        self.meta_weights = weights
+        self.weights = weights*position_flags
 
         self.e_dt = e_dt
         self.s_dt = s_dt
+
+
+    def leverage_adjusted(self):
+        """
+        """
+        wght, _ = self.get_historic_weights()
+
+        # copy class instance, replace weights
+        self_copy = copy.deepcopy(self)
+        self_copy.weights = wght
+
+        return self_copy
 
 
     # make returns appear multiplied with 100
@@ -72,7 +90,7 @@ class EventTradingStrategy(TradingStrategy):
         return self._returns.loc[self.s_dt:self.e_dt]*100
 
 
-    def get_signals_by_period(self):
+    def get_position_flags(self):
         """
         """
         signals_reixed, _ = self.signals.align(self._returns, axis=0,
@@ -82,49 +100,68 @@ class EventTradingStrategy(TradingStrategy):
 
         # fill na backward, limit to (b-a) values
         # NB: this covers the case of too few data points at the beginning
-        signals_by_period = to_b.fillna(method="bfill",
+        position_flags = to_b.fillna(method="bfill",
             limit=self.settings["horizon_b"]-self.settings["horizon_a"])
 
-        return signals_by_period
+        return position_flags
 
 
     def bas_adjusted(self):
         """
         """
         # ipdb.set_trace()
-        sigs = self.get_signals_by_period()
-        sigs = sigs.fillna(value=0)
+        wght = self.weights.fillna(value=0)
 
         # difference in weights is an action
-        dsigs = sigs.diff()
+        dwght = wght.diff()
 
         # fill mid with ask and bids accordingly ----------------------------
         new_mid = self.prices["mid"].copy()
 
-        # buying at ask
+        # buy at ask
         new_mid = new_mid.mask(dsigs.shift(-1) > 0, self.prices["ask"])
-        # selling at bid
+        # sell at bid
         new_mid = new_mid.mask(dsigs.shift(-1) < 0, self.prices["bid"])
 
-        new_ts = EventTradingStrategy(
-            prices={"mid": new_mid},
-            returns=None,
-            signals=self.signals,
-            settings=self.settings)
+        self_copy = copy.deepcopy(self)
+        self_copy.returns = np.log(new_mid).diff()
+        self_copy.prices = self.prices.update({"mid": new_mid})
 
-        return new_ts
+        return self_copy
+
+
+    def get_historic_weights(self):
+        """
+        """
+        # ipdb.set_trace()
+        flags = self.position_flags
+
+        w_neg_resc = poco.rescale_weights(
+            flags.where(flags < 0)*self.meta_weights)
+        w_pos_resc = poco.rescale_weights(
+            flags.where(flags > 0)*self.meta_weights)
+        w_nil_resc = poco.rescale_weights(
+            flags.where(flags == 0)*self.meta_weights)
+
+        # ipdb.set_trace()
+        wght = w_neg_resc.fillna(w_pos_resc)
+
+        return wght, (w_neg_resc, w_nil_resc, w_pos_resc)
 
 
     def get_strategy_returns(self):
         """
         """
-        ipdb.set_trace()
-        sigs = self.get_signals_by_period()
-        res = poco.weighted_return(self._returns, self.weights*sigs)
+        # w, _ = self.get_historic_weights()
+        res = poco.weighted_return(self._returns, self.weights)
 
         return res
 
 
+    def plot(self, **kwargs):
+        """
+        """
+        pass
 
 
 if __name__ == "__main__":
@@ -135,6 +172,8 @@ if __name__ == "__main__":
 
     with open(data_path + "mba_by_tz_d.p", mode='rb') as fname:
         fx = pickle.load(fname)
+    fx = fx.drop(["jpy","dkk","nok"], axis="items")
+
     mid = fx.loc[:,:,"mid"]
     ask = fx.loc[:,:,"ask"]
     bid = fx.loc[:,:,"bid"]
@@ -145,13 +184,40 @@ if __name__ == "__main__":
         "horizon_b": -1,
         "bday_reindex": True}
 
-    pe = PolicyExpectation.from_pickles(data_path, "aud")
-    policy_fcast = pe.forecast_policy_change(lag=7, threshold=0.125)
+    policy_fcasts = dict()
+    for c in ['aud', 'cad', 'chf', 'eur', 'gbp', 'nzd', 'sek']:
+        # c = "aud"
+        pe = PolicyExpectation.from_pickles(data_path, c)
+        policy_fcasts[c] = pe.forecast_policy_change(
+            lag=12, threshold=0.10, avg_impl_over=5, avg_refrce_over=5)
+
+    policy_fcasts = pd.DataFrame.from_dict(policy_fcasts)
 
     ts = EventTradingStrategy(
-        signals=policy_fcast,
-        prices={"mid": mid["aud"], "bid": bid["aud"], "ask": ask["aud"]},
+        signals=policy_fcasts,
+        prices={"mid": mid, "bid": bid, "ask": ask},
         settings=settings)
+
+    # Create a Pandas Excel writer using XlsxWriter as the engine.
+    writer = pd.ExcelWriter(
+        data_path + '../../opec_meetings/calc/insights.xlsx',
+        engine='xlsxwriter')
+
+    # Convert the dataframe to an XlsxWriter Excel object.
+    ts.signals.to_excel(writer, sheet_name='signals')
+    ts.get_position_flags().to_excel(writer, sheet_name='position_flags')
+    ts.returns.to_excel(writer, sheet_name='returns')
+    ts.weights.to_excel(writer, sheet_name='weights')
+
+    ts.bas_adjusted()
+    # Close the Pandas Excel writer and output the Excel file.
+    writer.save()
+
+
+
+
+    strat_ret = ts.get_strategy_returns()
+
     ts.get_signals_by_period()
     ts_bas = ts.bas_adjusted()
     ts_bas.get_strategy_returns()
