@@ -1261,6 +1261,37 @@ def many_monthly_s(s_d):
 
     return all_m
 
+
+def wght_grid(pf):
+    """
+    """
+    pf_keys = [p for p in pf.keys() if "portfolio" in p]
+    n_pfs = len(pf_keys)
+
+    wghts = dict()
+    for p in pf_keys:
+        # p = "portfolio2"
+        this_pf = pf[p].mask(pf[p].notnull(), 1.0)
+        wghts[p] = this_pf.divide(this_pf.mean(axis=1)*this_pf.count(axis=1),
+            axis=0)
+
+    return wghts
+
+
+def weighted_return(ret, w):
+    """
+    """
+    if isinstance(ret, pd.Series):
+        ret = ret.to_frame()
+    if isinstance(w, pd.Series):
+        w = w.to_frame()
+    mask = (ret + w).notnull()
+    w_rescaled = w.where(mask).divide(w.where(mask).sum(axis=1), axis=0)
+
+    res = (ret*w_rescaled).mean(axis=1)*(ret*w_rescaled).count(axis=1)
+
+    return res
+
 # ---------------------------------------------------------------------------
 # limbo
 # ---------------------------------------------------------------------------
