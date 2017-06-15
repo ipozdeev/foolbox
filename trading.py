@@ -365,4 +365,6 @@ if __name__ == "__main__":
 
 
     # adjusted for both
-    ts_lev_bas
+    ts_lev_bas = ts.leverage_adjusted().bas_adjusted()
+    xl_filename = data_path + '../../opec_meetings/calc/insights_lev_bas.xlsx'
+    fig, ax = ts_lev_bas.plot(color='#ddc061')
