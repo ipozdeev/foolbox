@@ -1288,20 +1288,20 @@ def rescale_weights(weights):
 
     return weights_rescaled
 
-def weighted_return(ret, w):
+def weighted_return(ret, weights):
     """
     """
     if isinstance(ret, pd.Series):
-        ret = ret.to_frame()
-    if isinstance(w, pd.Series):
-        w = w.to_frame()
-    mask = (ret + w).notnull()
+        return ret
+    if isinstance(weights, pd.Series):
+        weights = weights.to_frame()
 
-    w_rescaled = rescale_weights(w.where(mask))
+    # mask = (ret + w).notnull()
+    # w_rescaled = rescale_weights(w.where(mask))
 
     # this is just weighted product, needed because .sum() gives 0 when the
     #   row is full of nans
-    res = (ret*w_rescaled).mean(axis=1)*(ret*w_rescaled).count(axis=1)
+    res = (ret*weights).mean(axis=1)*(ret*weights).count(axis=1)
 
     return res
 
