@@ -214,7 +214,7 @@ class EventTradingStrategy(TradingStrategy):
         # copy class instance, assign weights -------------------------------
         self_copy = copy.deepcopy(self)
         self_copy._returns = np.log(new_mid).diff()
-        self_copy.prices = self.prices.update({"mid": new_mid})
+        self_copy.prices["mid"] = new_mid
 
         return self_copy
 
@@ -305,9 +305,31 @@ class EventTradingStrategy(TradingStrategy):
         return fig, ax
 
 
+    def dividends_adjusted(self, dividends):
+        """
+        """
+        h_a = self.settings["horizon_a"]
+        h_b = self.settings["horizon_b"]
+        # rolling h-period sum of swap points -------------------------------
+        # roll_sum = dividends.rolling(h_b-h_a+1).sum()
+
+        # create a copy of self ---------------------------------------------
+        # ipdb.set_trace()
+        self_copy = copy.deepcopy(self)
+
+        # add to prices
+        self_copy.prices["mid"] = self.prices["mid"].add(dividends)
+
+        # recalculate returns -----------------------------------------------
+        self_copy._returns = \
+            np.log(self_copy.prices["mid"]/self.prices["mid"].shift(1))
+
+        return self_copy
+
+
 if __name__ == "__main__":
 
-    %matplotlib
+    # %matplotlib
 
     # data ------------------------------------------------------------------
     data_path = set_credentials.gdrive_path("research_data/fx_and_events/")
@@ -346,25 +368,39 @@ if __name__ == "__main__":
         prices={"mid": mid, "bid": bid, "ask": ask},
         settings=settings)
 
-    # write to xlsx
-    xl_filename = data_path + '../../opec_meetings/calc/insights_simple.xlsx'
-    ts.to_excel(xl_filename)
-    fig, ax = ts.plot()
+    # # write to xlsx
+    # xl_filename = data_path + '../../opec_meetings/calc/insights_simple.xlsx'
+    # ts.to_excel(xl_filename)
+    # fig, ax = ts.plot()
+    #
+    #
+    # # bas adjusted
+    # ts_bas = ts.bas_adjusted()
+    # ts_bas.to_excel(xl_filename)
+    # fig, ax = ts_bas.plot(color='k')
+    #
+    #
+    # # leverage_adjusted
+    # ts_lev = ts.leverage_adjusted()
+    # ts_lev.to_excel(xl_filename)
+    # fig, ax = ts_lev.plot(color='r')
+    #
+    #
+    # # adjusted for both
+    # ts_lev_bas = ts.leverage_adjusted().bas_adjusted()
+    # xl_filename = data_path + '../../opec_meetings/calc/insights_lev_bas.xlsx'
+    # fig, ax = ts_lev_bas.plot(color='#ddc061')
 
 
-    # bas adjusted
-    ts_bas = ts.bas_adjusted()
-    ts_bas.to_excel(xl_filename)
-    fig, ax = ts_bas.plot(color='k')
+    # adjusted for dividend
+    # div = lol.loc[ts.prices["mid"].columns,:,"NYC"]
+    # div.loc[:,["aud","eur","gbp","nzd"]] *= -1
+    # div /= 10000
+    temp_div = pd.read_excel(data_path+"temp_div.xlsx", index_col=0)
+    temp_div *= -1
+    ts_div_bas_lev = \
+        ts.leverage_adjusted().bas_adjusted().dividends_adjusted(temp_div)
 
+    ts_div_bas_lev.plot()
 
-    # leverage_adjusted
-    ts_lev = ts.leverage_adjusted()
-    ts_lev.to_excel(xl_filename)
-    fig, ax = ts_lev.plot(color='r')
-
-
-    # adjusted for both
-    ts_lev_bas = ts.leverage_adjusted().bas_adjusted()
-    xl_filename = data_path + '../../opec_meetings/calc/insights_lev_bas.xlsx'
-    fig, ax = ts_lev_bas.plot(color='#ddc061')
+    div.to_clipboard()
