@@ -17,6 +17,7 @@ name_all_m = path + "data_all_m.p"  # all sample, monthly data
 name_all_evt = path + "events.p"  # events
 name_all_on = path + "overnight_rates.p"
 name_tz_data = path + "fx_by_tz_d.p"
+name_tz_mba = path + "mba_by_tz_d.p"
 name_tz_data_by_fixing = path + "fx_by_tz_all_fixings_d.p"
 
 # Definitions and settings
@@ -476,74 +477,102 @@ on = on[sorted(on.columns)]
 === PART VII: DIFFERENT TIME ZONES FX DATA                                  ===
 ===============================================================================
 """
-fname_spot = "fx_spot_diff_tz_1994_2017_d.xlsx"
-fname_fwd = "fx_fwd_diff_tz_1994_2017_d.xlsx"
+fname_spot = "fx_spot_mid_diff_tz_1994_2017_d.xlsx"
+fname_fwd = "fx_fwd_mid_diff_tz_1994_2017_d.xlsx"
+fname_spot_bid = "fx_spot_bid_diff_tz_1994_2017_d.xlsx"
+fname_spot_ask = "fx_spot_ask_diff_tz_1994_2017_d.xlsx"
 
-currencies = pd.read_excel(path+fname_spot,
-    sheetname="iso",
-    header=0)
-currencies = currencies.columns
+def parse_bloomberg_xlsx_temp(filename):
+    """
+    filename = fname_spot_bid
+    """
+    currencies = pd.read_excel(path+filename, sheetname="iso", header=0)
+    currencies = currencies.columns
 
-N = len(currencies)
-converters = {}
-for p in range(N):
-    converters[p*3] = lambda x: pd.to_datetime(x)
+    N = len(currencies)
+    converters = {}
+    for p in range(N):
+        converters[p*3] = lambda x: pd.to_datetime(x)
 
-# sheets
-sheetnames = ["NYC","LON","TOK"]
+    # sheets
+    sheetnames = ["NYC","LON","TOK"]
 
-spot_fwd_by_tz = dict()
-
-# read in
-for f in [fname_spot, fname_fwd]:
-    # f = fname_fwd
     this_data = dict()
 
     for s in sheetnames:
         # s = "NYC"
         data = pd.read_excel(
-            io=path+f,
+            io=path+filename,
             sheetname=s,
             skiprows=2,
             header=None,
             converters=converters)
 
+        # take every third third column: these are the values
         data = [data.ix[:,(p*3):(p*3+1)].dropna() for p in range(N)]
 
+        # pop dates as index
         for p in range(N):
             data[p].index = data[p].pop(p*3)
 
+        # `data` is a list -> concat to a df
         data = pd.concat(data, axis=1, ignore_index=False)
 
+        # columns are iso letters
         data.columns = currencies
 
+        # store
         this_data[s] = data
 
-    spot_fwd_by_tz[f.split('_')[1]] = pd.Panel.from_dict(
+    return this_data
+
+# loop over files, collect data
+data_by_tz_and_fix = dict()
+for f in [fname_spot, fname_spot_ask, fname_spot_bid]:
+    # f = fname_spot
+    this_data = parse_bloomberg_xlsx_temp(f)
+    data_by_tz_and_fix['_'.join(f.split('_')[1:3])] = pd.Panel.from_dict(
         this_data, orient="minor")
 
 # organize
+currencies = data_by_tz_and_fix["spot_mid"].items
 cur_by_tz = dict(zip(
-    currencies,
+    ['aud', 'cad', 'chf', 'dkk', 'eur', 'gbp', 'jpy', 'nok', 'nzd', 'sek'],
     ["TOK","NYC","LON","LON","LON","LON","TOK","LON","TOK","LON"]))
 
 # split
-spot = pd.concat([
-    spot_fwd_by_tz["spot"].loc[p,:,cur_by_tz[p]] for p in currencies],
+mid = pd.concat([
+    data_by_tz_and_fix["spot_mid"].loc[p,:,cur_by_tz[p]] for p in currencies],
     axis=1)
-spot.columns = currencies
+mid.columns = currencies
+ask = pd.concat([
+    data_by_tz_and_fix["spot_ask"].loc[p,:,cur_by_tz[p]] for p in currencies],
+    axis=1)
+ask.columns = currencies
+bid = pd.concat([
+    data_by_tz_and_fix["spot_bid"].loc[p,:,cur_by_tz[p]] for p in currencies],
+    axis=1)
+bid.columns = currencies
+
+# make sure bid is not larger than ask
+bid = bid.mask(bid > ask, ask)
+
+
 fwd = pd.concat([
-    spot_fwd_by_tz["fwd"].loc[p,:,cur_by_tz[p]] for p in currencies],
+    data_by_tz_and_fix["fwd"].loc[p,:,cur_by_tz[p]] for p in currencies],
     axis=1)
 fwd.columns = currencies
 fwd = fwd/10000 + spot
+
+# mid, bid and ask
+mba = pd.Panel.from_dict(
+    {"mid": mid, "bid": bid, "ask": ask}, orient="minor")
 
 # collect everything
 data_by_tz = dict()
 data_by_tz["spot"] = spot
 data_by_tz["fwd_disc"] = np.log(fwd/spot)
 data_by_tz["spot_ret"] = np.log(spot).diff()
-
 
 """
 ===============================================================================
@@ -589,4 +618,6 @@ with open(name_all_on, "wb") as fname:
 with open(name_tz_data, "wb") as fname:
     pickle.dump(data_by_tz, fname)
 with open(name_tz_data_by_fixing, "wb") as fname:
-    pickle.dump(spot_fwd_by_tz, fname)
+    pickle.dump(data_by_tz_and_fix, fname)
+with open(name_tz_mba, "wb") as fname:
+    pickle.dump(mba, fname)

@@ -1261,6 +1261,50 @@ def many_monthly_s(s_d):
 
     return all_m
 
+
+def wght_grid(pf):
+    """
+    """
+    pf_keys = [p for p in pf.keys() if "portfolio" in p]
+    n_pfs = len(pf_keys)
+
+    wghts = dict()
+    for p in pf_keys:
+        # p = "portfolio2"
+        this_pf = pf[p].mask(pf[p].notnull(), 1.0)
+        wghts[p] = this_pf.divide(this_pf.mean(axis=1)*this_pf.count(axis=1),
+            axis=0)
+
+    return wghts
+
+def rescale_weights(weights):
+    """
+    """
+    if isinstance(weights, pd.Series):
+        return weights
+
+    weights_rescaled = weights.divide(
+        np.abs(weights.mean(axis=1)*weights.count(axis=1)), axis=0)
+
+    return weights_rescaled
+
+def weighted_return(ret, weights):
+    """
+    """
+    if isinstance(ret, pd.Series):
+        return ret
+    if isinstance(weights, pd.Series):
+        weights = weights.to_frame()
+
+    # mask = (ret + w).notnull()
+    # w_rescaled = rescale_weights(w.where(mask))
+
+    # this is just weighted product, needed because .sum() gives 0 when the
+    #   row is full of nans
+    res = (ret*weights).mean(axis=1)*(ret*weights).count(axis=1)
+
+    return res
+
 # ---------------------------------------------------------------------------
 # limbo
 # ---------------------------------------------------------------------------
