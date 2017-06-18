@@ -6,6 +6,8 @@ import copy
 
 import matplotlib.pyplot as plt
 
+gr_1 = "#8c8c8c"
+
 # TODO: relocate to wp_settings?
 font_settings = {
     "family": "serif",
@@ -305,11 +307,19 @@ class EventTradingStrategy(TradingStrategy):
         return fig, ax
 
 
-    def dividends_adjusted(self, dividends):
-        """
+    def roll_adjusted(self, swap_points):
+        """ ForEx: adjust for roll-overs.
+
+        Parameters
+        ----------
+        swap_points : pandas.DataFrame
+            with swap points, in pips (1/10000 of XXXYYY, e.g. -178.00 for
+            AUDUSD); these should be expressed in the way such that adding
+            them to the prices reults in the correct formulae
         """
         h_a = self.settings["horizon_a"]
         h_b = self.settings["horizon_b"]
+
         # rolling h-period sum of swap points -------------------------------
         # roll_sum = dividends.rolling(h_b-h_a+1).sum()
 
@@ -317,12 +327,18 @@ class EventTradingStrategy(TradingStrategy):
         # ipdb.set_trace()
         self_copy = copy.deepcopy(self)
 
-        # add to prices
-        self_copy.prices["mid"] = self.prices["mid"].add(dividends)
+        # # add to prices
+        # self_copy.prices["mid"] = self.prices["mid"].add(dividends)
+
+        # adjust prices: swap points are added such that a series of
+        #   mini-forwards is created
+        prices_adjusted = self.prices["mid"].add(swap_points/10000)
 
         # recalculate returns -----------------------------------------------
+        # these are similar to excess returns in the standard case:
+        #   f-shift(1) - s
         self_copy._returns = \
-            np.log(self_copy.prices["mid"]/self.prices["mid"].shift(1))
+            np.log(self_copy.prices["mid"]/prices_adjusted.shift(1))
 
         return self_copy
 
@@ -352,7 +368,16 @@ if __name__ == "__main__":
         policy_fcasts[c] = pe.forecast_policy_change(
             lag=12, threshold=0.10, avg_impl_over=5, avg_refrce_over=5)
 
+    # dollar policy
+    pe = PolicyExpectation.from_pickles(data_path, "usd")
+    policy_fcast_usd = pe.forecast_policy_change(
+        lag=12, threshold=0.10, avg_impl_over=5, avg_refrce_over=5)
+
     policy_fcasts = pd.DataFrame.from_dict(policy_fcasts).loc["2000-11":]
+
+    # for c in policy_fcasts.columns:
+    #     policy_fcasts.loc[:,c] = policy_fcasts.loc[:,c].replace(0.0, np.nan)\
+    #         .fillna(policy_fcast_usd.replace(0.0, np.nan)*-1)
 
     # settings --------------------------------------------------------------
     settings = {
@@ -392,15 +417,33 @@ if __name__ == "__main__":
     # fig, ax = ts_lev_bas.plot(color='#ddc061')
 
 
-    # adjusted for dividend
+    # adjusted for dividend -------------------------------------------------
     # div = lol.loc[ts.prices["mid"].columns,:,"NYC"]
-    # div.loc[:,["aud","eur","gbp","nzd"]] *= -1
+    # div.tail()
+    # div.loc[:,["cad","chf","sek"]] *= -1
+    # div.to_clipboard()
     # div /= 10000
-    temp_div = pd.read_excel(data_path+"temp_div.xlsx", index_col=0)
-    temp_div *= -1
-    ts_div_bas_lev = \
-        ts.leverage_adjusted().bas_adjusted().dividends_adjusted(temp_div)
-
-    ts_div_bas_lev.plot()
-
-    div.to_clipboard()
+    # with open(data_path+"overnight_rates.p", "rb") as fname:
+    #     rf = pickle.load(fname)
+    #
+    # fig, ax = plt.subplots(figsize=(11.3*1.25,8.27*1.25))
+    # rf.loc["2000-11":,ts.returns.columns].subtract(rf.loc["2000-11":,"usd"],
+    #     axis=0).plot(ax=ax)
+    # ax.fill_between(rf.loc["2000-11":].index,
+    #     np.zeros(rf.loc["2000-11":].shape[0]),
+    #     np.ones(rf.loc["2000-11":].shape[0])*ax.get_ylim()[1],
+    #     color=gr_1, alpha=0.33)
+    #
+    # temp_roll = pd.read_excel(data_path+"temp_swap_points.xlsx", index_col=0)
+    # (temp_roll.loc["2000-11":]/10000*-1).resample('10D').sum()\
+    #     .loc[:"2008"].describe()
+    # temp_roll.tail()
+    #
+    #
+    # # temp_div *= -1
+    # ts_div_bas_lev = \
+    #     ts.leverage_adjusted().bas_adjusted().roll_adjusted(temp_roll*0)
+    #
+    # ts_div_bas_lev.plot()
+    #
+    # div.to_clipboard()
