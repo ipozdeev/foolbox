@@ -101,7 +101,7 @@ class EventTradingStrategy(TradingStrategy):
         self.prices = prices
 
         # position flags
-        self.position_flags = self.get_position_flags()
+        self.position_flags = self.get_position_flags().replace(0.0, np.nan)
 
         # weights
         self.meta_weights = weights
@@ -317,30 +317,51 @@ class EventTradingStrategy(TradingStrategy):
             AUDUSD); these should be expressed in the way such that adding
             them to the prices reults in the correct formulae
         """
-        h_a = self.settings["horizon_a"]
-        h_b = self.settings["horizon_b"]
+        sp_ask = swap_points["ask"].reindex(
+            index=self.position_flags.index, method="ffill")
+        sp_bid = swap_points["bid"].reindex(
+            index=self.position_flags.index, method="ffill")
 
-        # rolling h-period sum of swap points -------------------------------
-        # roll_sum = dividends.rolling(h_b-h_a+1).sum()
+        # treat short and long positions differently ------------------------
+        sp = sp_ask.mask(self.position_flags < 0, sp_bid)
 
-        # create a copy of self ---------------------------------------------
-        # ipdb.set_trace()
-        self_copy = copy.deepcopy(self)
+        # # new version. less approximate -------------------------------------
+        # # horizons: for pure convenience ------------------------------------
+        # h_a = self.settings["horizon_a"]
+        # h_b = self.settings["horizon_b"]
+        #
+        # # rolling h-period sum of swap points -------------------------------
+        # #   -1 is needed because roll starts from day 2 TODO really?
+        # roll_sum_sp = sp.rolling( (h_b-h_a+1)-1 ).sum()
+        #
+        # # adjust prices -----------------------------------------------------
+        # denom = self.prices["mid"].shift( (h_b-h_a+1) ) + \
+        #     roll_sum_sp.shift(1)/10000
+        #
+        # # recalculate returns -----------------------------------------------
+        # # these are similar to excess returns in the standard case:
+        # #   f.shift(1) - s
+        # numer = self.prices["mid"]
+        # new_returns = np.log(numer/denom).shift(-h_b) * self.signals
+        #
+        # return new_returns
 
-        # # add to prices
-        # self_copy.prices["mid"] = self.prices["mid"].add(dividends)
 
-        # adjust prices: swap points are added such that a series of
-        #   mini-forwards is created
-        prices_adjusted = self.prices["mid"].add(swap_points/10000)
+        # temp, approximate version -----------------------------------------
+        # roll is credited/debited two days fewer
+        roll_index = self.position_flags.shift(1).notnull() & \
+            self.position_flags.shift(-1).notnull()
+        swap_points_to_add = sp.where(roll_index).fillna(0.0)
 
-        # recalculate returns -----------------------------------------------
-        # these are similar to excess returns in the standard case:
-        #   f-shift(1) - s
-        self_copy._returns = \
-            np.log(self_copy.prices["mid"]/prices_adjusted.shift(1))
+        prices_adjusted = self.prices["mid"] + swap_points_to_add
+        new_returns = np.log(self.prices["mid"] / prices_adjusted.shift(1))
 
-        return self_copy
+        # copy self
+        new_self = copy.deepcopy(self)
+        new_self._returns = new_returns
+        new_self.swap_points = sp
+
+        return new_self
 
 
 if __name__ == "__main__":
@@ -398,12 +419,12 @@ if __name__ == "__main__":
     # ts.to_excel(xl_filename)
     # fig, ax = ts.plot()
     #
-    #
-    # # bas adjusted
-    # ts_bas = ts.bas_adjusted()
-    # ts_bas.to_excel(xl_filename)
-    # fig, ax = ts_bas.plot(color='k')
-    #
+
+    # bas adjusted
+    ts_bas = ts.bas_adjusted()
+    ts_bas.to_excel(xl_filename)
+    fig, ax = ts_bas.plot(color='k')
+
     #
     # # leverage_adjusted
     # ts_lev = ts.leverage_adjusted()
@@ -418,32 +439,22 @@ if __name__ == "__main__":
 
 
     # adjusted for dividend -------------------------------------------------
-    # div = lol.loc[ts.prices["mid"].columns,:,"NYC"]
-    # div.tail()
-    # div.loc[:,["cad","chf","sek"]] *= -1
-    # div.to_clipboard()
-    # div /= 10000
-    # with open(data_path+"overnight_rates.p", "rb") as fname:
-    #     rf = pickle.load(fname)
-    #
-    # fig, ax = plt.subplots(figsize=(11.3*1.25,8.27*1.25))
-    # rf.loc["2000-11":,ts.returns.columns].subtract(rf.loc["2000-11":,"usd"],
-    #     axis=0).plot(ax=ax)
-    # ax.fill_between(rf.loc["2000-11":].index,
-    #     np.zeros(rf.loc["2000-11":].shape[0]),
-    #     np.ones(rf.loc["2000-11":].shape[0])*ax.get_ylim()[1],
-    #     color=gr_1, alpha=0.33)
-    #
-    # temp_roll = pd.read_excel(data_path+"temp_swap_points.xlsx", index_col=0)
-    # (temp_roll.loc["2000-11":]/10000*-1).resample('10D').sum()\
-    #     .loc[:"2008"].describe()
-    # temp_roll.tail()
-    #
-    #
-    # # temp_div *= -1
-    # ts_div_bas_lev = \
-    #     ts.leverage_adjusted().bas_adjusted().roll_adjusted(temp_roll*0)
-    #
-    # ts_div_bas_lev.plot()
-    #
-    # div.to_clipboard()
+    with open(data_path + "fx_by_tz_all_fixings_d.p", mode='rb') as fname:
+        fx = pickle.load(fname)
+    tnswap_bid = fx["tnswap_bid"].loc[mid.columns,"2000-11":,"NYC"]/10000
+    tnswap_ask = fx["tnswap_ask"].loc[mid.columns,"2000-11":,"NYC"]/10000
+
+    usdxxx = ["sek","chf"]
+    tnswap_ask.loc[:,usdxxx] = \
+        1/(1/ask[usdxxx] + tnswap_bid[usdxxx]) - ask[usdxxx]
+    tnswap_bid.loc[:,usdxxx] = \
+        1/(1/bid[usdxxx] + tnswap_ask[usdxxx]) - bid[usdxxx]
+    tnswap = {"bid": tnswap_bid, "ask": tnswap_ask}
+
+    # adjust!
+    ts_div_bas = ts.bas_adjusted().roll_adjusted(tnswap)
+    ts_div_bas.sum(axis=1).cumsum().plot(color='r')
+
+    ts_div_bas.plot()
+
+    div.to_clipboard()
