@@ -477,14 +477,17 @@ on = on[sorted(on.columns)]
 === PART VII: DIFFERENT TIME ZONES FX DATA                                  ===
 ===============================================================================
 """
-fname_spot = "fx_spot_mid_diff_tz_1994_2017_d.xlsx"
-fname_fwd = "fx_fwd_mid_diff_tz_1994_2017_d.xlsx"
+fname_spot_mid = "fx_spot_mid_diff_tz_1994_2017_d.xlsx"
 fname_spot_bid = "fx_spot_bid_diff_tz_1994_2017_d.xlsx"
 fname_spot_ask = "fx_spot_ask_diff_tz_1994_2017_d.xlsx"
+fname_tnswap_ask = "fx_tnswap_ask_diff_tz_1994_2017_d.xlsx"
+fname_tnswap_bid = "fx_tnswap_bid_diff_tz_1994_2017_d.xlsx"
+files = [fname_spot_mid, fname_spot_ask, fname_spot_bid, fname_roll_ask,
+    fname_roll_bid]
 
 def parse_bloomberg_xlsx_temp(filename):
     """
-    filename = fname_spot_bid
+    filename = fname_tnswap_ask
     """
     currencies = pd.read_excel(path+filename, sheetname="iso", header=0)
     currencies = currencies.columns
@@ -528,8 +531,8 @@ def parse_bloomberg_xlsx_temp(filename):
 
 # loop over files, collect data
 data_by_tz_and_fix = dict()
-for f in [fname_spot, fname_spot_ask, fname_spot_bid]:
-    # f = fname_spot
+for f in files:
+    # f = fname_tnswap_ask
     this_data = parse_bloomberg_xlsx_temp(f)
     data_by_tz_and_fix['_'.join(f.split('_')[1:3])] = pd.Panel.from_dict(
         this_data, orient="minor")
