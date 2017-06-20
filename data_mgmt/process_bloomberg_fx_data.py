@@ -20,11 +20,19 @@ fname_spot_bid = "fx_spot_bid_diff_tz_1994_2017_d.xlsx"
 fname_spot_ask = "fx_spot_ask_diff_tz_1994_2017_d.xlsx"
 fname_tnswap_ask = "fx_tnswap_ask_diff_tz_1994_2017_d.xlsx"
 fname_tnswap_bid = "fx_tnswap_bid_diff_tz_1994_2017_d.xlsx"
+fname_1w_ask = "fx_1w_ask_diff_tz_1994_2017_d.xlsx"
+fname_1w_bid = "fx_1w_bid_diff_tz_1994_2017_d.xlsx"
+fname_1w_mid = "fx_1w_mid_diff_tz_1994_2017_d.xlsx"
+fname_1w_settl = "fx_1w_settl_diff_tz_1994_2017_d.xlsx"
+
+
 fnames = [fname_spot_mid, fname_spot_ask, fname_spot_bid, fname_tnswap_ask,
-    fname_tnswap_bid]
+    fname_tnswap_bid, fname_1w_ask, fname_1w_bid, fname_1w_mid,
+    fname_1w_settl]
 
 def parse_bloomberg_xlsx_temp(filename):
     """
+    filename = fname_1w_settl
     Returns
     -------
     this_data : dict
@@ -73,12 +81,15 @@ def parse_bloomberg_xlsx_temp(filename):
 # loop over files, collect data ---------------------------------------------
 data_by_tz = dict()
 for f in fnames:
-    # f = fname_tnswap_ask
+    # f = fnames[-1]
     this_data = parse_bloomberg_xlsx_temp(f)
 
     # keys will be "spot_mid", "tnswap_bid" etc.
     data_by_tz['_'.join(f.split('_')[1:3])] = pd.Panel.from_dict(
         this_data, orient="minor")
+
+# settlement dates to datetime ----------------------------------------------
+data_by_tz["1w_settl"] = data_by_tz["1w_settl"].apply(pd.to_datetime)
 
 # tom/next swap points: from pips to units ----------------------------------
 data_by_tz["tnswap_ask"] /= 10000

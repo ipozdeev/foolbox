@@ -98,7 +98,7 @@ class EventTradingStrategy(TradingStrategy):
             weights = returns.mask(returns.notnull(), 1.0)
 
         self._returns = returns
-        self.signals = signals
+        self.signals = signals.replace(0.0, np.nan)
         self.settings = settings
         self.prices = prices
 
@@ -386,6 +386,25 @@ class EventTradingStrategy(TradingStrategy):
 
         return fig, ax
 
+    def match_forwards(self, settl_dates):
+        """ In a cross-section of settl't dates find those of the signals.
+        """
+        idx_union = self.prices["actual"].index.union(
+            self.signals.index.union(settl_dates.index))
+
+        sig = self.signals.reindex(index=idx_union)
+        sig = sig.shift(horizon_b)
+
+        for c in self.signals.columns:
+            # subset this column, drop duplicated entries
+            this_col = settl_dates.loc[:,c].drop_duplicates(keep=False)
+
+            # match with signals
+            this_sig_dates = sig.loc[:,c].dropna().index
+            this_col.isin(this_sig_dates)
+
+
+
 
 if __name__ == "__main__":
 
@@ -424,9 +443,9 @@ if __name__ == "__main__":
     #
     policy_fcasts = pd.DataFrame.from_dict(policy_fcasts).loc["2000-11":]
 
-    for c in policy_fcasts.columns:
-        policy_fcasts.loc[:,c] = policy_fcasts.loc[:,c].replace(0.0, np.nan)\
-            .fillna(policy_fcast_usd.replace(0.0, np.nan)*-1)
+    # for c in policy_fcasts.columns:
+    #     policy_fcasts.loc[:,c] = policy_fcasts.loc[:,c].replace(0.0, np.nan)\
+    #         .fillna(policy_fcast_usd.replace(0.0, np.nan)*-1)
 
     # settings --------------------------------------------------------------
     settings = {
