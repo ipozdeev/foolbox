@@ -69,13 +69,13 @@ class EventTradingStrategy(TradingStrategy):
         """
         """
         if prices is not None:
-            if not isinstance(prices, dict):
-                prices = {"mid": prices, "actual": prices}
-            else:
+            if isinstance(prices, dict):
                 prices.update({"actual": prices["mid"]})
+            else:
+                prices = {"mid": prices, "actual": prices}
 
         if returns is None:
-            returns = np.log(prices["mid"]).diff()
+            returns = np.log(prices["actual"]).diff()
 
         # first and last valid indices
         s_dt = returns.first_valid_index()
@@ -91,11 +91,16 @@ class EventTradingStrategy(TradingStrategy):
             warnings.warn(
                 "Some dates in `signals` do not correspond to "+
                 "rows in `returns`.")
-            returns, _ = returns.align(signals, join="outer", axis=0)
+            returns, signals = returns.align(signals, join="outer", axis=0)
+
+        # THE index
+        the_idx = returns.index
 
         # weights are uniform unless otherwise given
         if weights is None:
             weights = returns.mask(returns.notnull(), 1.0)
+        else:
+            weights = weights.reindex(index=the_idx, method="ffill")
 
         self._returns = returns
         self.signals = signals.replace(0.0, np.nan)
@@ -106,11 +111,13 @@ class EventTradingStrategy(TradingStrategy):
         self.position_flags = self.get_position_flags().replace(0.0, np.nan)
 
         # weights
-        self.meta_weights = weights
+        self.meta_weights = weights.copy()
         self.weights = weights*self.position_flags
 
         self.e_dt = e_dt
         self.s_dt = s_dt
+
+        self.the_idx = the_idx
 
     # make returns appear multiplied with 100
     @property
@@ -137,10 +144,11 @@ class EventTradingStrategy(TradingStrategy):
             of same shape as `self.returns`
 
         """
-        # expand signals by aligning them with returns: will be used for
-        #   backward-filling
-        signals_reixed, _ = self.signals.align(self._returns, axis=0,
-            join="outer")
+        # # expand signals by aligning them with returns: will be used for
+        # #   backward-filling
+        # signals_reixed, _ = self.signals.align(self._returns, axis=0,
+        #     join="outer")
+        signals_reixed = self.signals.copy()
 
         # define the end of the horizon_b-horizon_a holding period
         to_b = signals_reixed.shift(self.settings["horizon_b"])
@@ -189,7 +197,9 @@ class EventTradingStrategy(TradingStrategy):
         """
 
         res = poco.weighted_return(self._returns, self.weights)
-        res = res.shift(-1*self.settings["horizon_b"])
+
+        # # align with events -------------------------------------------------
+        # res = res.shift(-1*self.settings["horizon_b"])
 
         return res
 
@@ -290,13 +300,16 @@ class EventTradingStrategy(TradingStrategy):
             AUDUSD); these should be expressed in the way such that adding
             them to the prices results in correct formulae
         """
-        sp_ask = swap_points["ask"].reindex(
-            index=self.position_flags.index, method="ffill")
-        sp_bid = swap_points["bid"].reindex(
-            index=self.position_flags.index, method="ffill")
-
-        # treat short and long positions differently ------------------------
-        sp = sp_ask.mask(self.position_flags < 0, sp_bid)
+        if isinstance(swap_points, dict):
+            sp_ask = swap_points["ask"].reindex(
+                index=self.the_idx, method="ffill")
+            sp_bid = swap_points["bid"].reindex(
+                index=self.the_idx, method="ffill")
+            # treat short and long positions differently --------------------
+            sp = sp_ask.mask(self.position_flags < 0, sp_bid)
+        else:
+            sp = swap_points.reindex(
+                index=self.the_idx, method="ffill")
 
         # new version. less approximate -------------------------------------
         # horizons: for pure convenience ------------------------------------
@@ -304,8 +317,7 @@ class EventTradingStrategy(TradingStrategy):
         h_b = self.settings["horizon_b"]
 
         # rolling h-period sum of swap points -------------------------------
-        #   -1 is needed because roll starts from day 2 TODO really?
-        roll_sum_sp = sp.rolling( (h_b-h_a+1)-1 ).sum()
+        roll_sum_sp = sp.rolling( (h_b-h_a+1) ).sum()
 
         # adjust prices -----------------------------------------------------
         denom = self.prices["actual"].shift( (h_b-h_a+1) ) + \
@@ -315,16 +327,18 @@ class EventTradingStrategy(TradingStrategy):
         # these are similar to excess returns in the standard case:
         #   f.shift(1) - s
         numer = self.prices["actual"]
+
+        # align signals with returns
         new_returns = np.log(numer/denom) * self.signals.shift(h_b)
 
-        return new_returns
+        # return new_returns
 
-        # # copy class instance, assign weights -------------------------------
-        # new_self = copy.deepcopy(self)
-        # new_self._returns = new_returns
-        # new_self.swap_points = sp
-        #
-        # return new_self
+        # copy class instance, assign weights -------------------------------
+        new_self = copy.deepcopy(self)
+        new_self._returns = new_returns
+        new_self.swap_points = sp
+
+        return new_self
 
 
         # # temp, approximate version -----------------------------------------
@@ -368,7 +382,11 @@ class EventTradingStrategy(TradingStrategy):
             sheet_name='portf_returns')
         self.prices["bid"].to_excel(writer, sheet_name='bid')
         self.prices["ask"].to_excel(writer, sheet_name='ask')
-        self.prices["mid"].to_excel(writer, sheet_name='mid')
+        self.prices["actual"].to_excel(writer, sheet_name='actual')
+        try:
+            self.swap_points.to_excel(writer, sheet_name='swap_points')
+        except:
+            pass
 
         # save and close
         writer.save()
@@ -389,19 +407,22 @@ class EventTradingStrategy(TradingStrategy):
     def match_forwards(self, settl_dates):
         """ In a cross-section of settl't dates find those of the signals.
         """
-        idx_union = self.prices["actual"].index.union(
-            self.signals.index.union(settl_dates.index))
+        pass
 
-        sig = self.signals.reindex(index=idx_union)
-        sig = sig.shift(horizon_b)
+        # idx_union = self.prices["actual"].index.union(
+        #     self.signals.index.union(settl_dates.index))
+        #
+        # sig = self.signals.reindex(index=idx_union)
+        # sig = sig.shift(horizon_b)
+        #
+        # for c in self.signals.columns:
+        #     # subset this column, drop duplicated entries
+        #     this_col = settl_dates.loc[:,c].drop_duplicates(keep=False)
+        #
+        #     # match with signals
+        #     this_sig_dates = sig.loc[:,c].dropna().index
+        #     this_col.isin(this_sig_dates)
 
-        for c in self.signals.columns:
-            # subset this column, drop duplicated entries
-            this_col = settl_dates.loc[:,c].drop_duplicates(keep=False)
-
-            # match with signals
-            this_sig_dates = sig.loc[:,c].dropna().index
-            this_col.isin(this_sig_dates)
 
 
 
@@ -449,7 +470,6 @@ if __name__ == "__main__":
 
     # settings --------------------------------------------------------------
     settings = {
-        "h": 10,
         "horizon_a": -10,
         "horizon_b": -1,
         "bday_reindex": True}
@@ -481,16 +501,25 @@ if __name__ == "__main__":
 
     # # adjusted for both
     # ts_lev_bas = ts.leverage_adjusted().bas_adjusted()
-    # xl_filename = data_path + '../../opec_meetings/calc/insights_lev_bas.xlsx'
+    xl_filename = data_path + '../../opec_meetings/calc/insights_lev_bas.xlsx'
     # fig, ax = ts_lev_bas.plot(color='#ddc061')
 
 
     # adjusted for dividend -------------------------------------------------
     ts_div_bas = ts.bas_adjusted().roll_adjusted(
-        {"bid": tnswap_bid, "ask": tnswap_ask})
-    ts_div_bas.sum(axis=1).cumsum().plot()
+        {"bid": tnswap_bid, "ask": tnswap_bid})
+    ts_div_bas._returns.sum(axis=1).cumsum().plot()
     ts_div_bas._returns.dropna(how="all").head()
     ts_div_bas.weights.dropna(how="all").loc["2001":].head(20)
     ts_div_bas.signals.dropna(how="all")
 
     div.to_clipboard()
+    ts_div_bas.to_excel(xl_filename)
+
+
+    %matplotlib
+    f, ax = plt.subplots()
+    ts_div_bas._returns.sum(axis=1).dropna().cumsum().plot(ax=ax,
+        linewidth=1.5)
+    ts_div_bas._returns.count().sum()
+    ts_div_bas._returns.loc[:,"aud"].dropna()
