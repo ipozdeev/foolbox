@@ -35,15 +35,16 @@ with open(data_path+input_dataset, mode="rb") as fname:
     data = pickle.load(fname)
 
 # Get the individual currenices
-rx = data["spot_ret"][start_date:end_date].drop(["dkk", "jpy", "nok"],
-                                                axis=1)
+spot_mid = data["spot_mid"][start_date:end_date].drop(["dkk", "jpy", "nok"],
+                                                      axis=1)
+rx = np.log(spot_mid/spot_mid.shift(1))
 
 # Import the all fixing times for the dollar index
-with open(data_path+"fx_by_tz_all_fixings_d.p", mode="rb") as fname:
+with open(data_path+"fx_by_tz_d.p", mode="rb") as fname:
     data_all_fix = pickle.load(fname)
 
 # Construct a pre-set fixing time dollar index
-data_usd = data_all_fix["spot"].loc[:, :, settings["usd_fixing_time"]]\
+data_usd = data_all_fix["spot_mid"].loc[:, :, settings["usd_fixing_time"]]\
     .drop(["dkk"], axis=1)
 rx_usd = -np.log(data_usd/data_usd.shift(1))[start_date:end_date].mean(axis=1)
 

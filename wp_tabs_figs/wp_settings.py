@@ -4,7 +4,7 @@ currency data set"""
 settings = {
     "sample_start": "2000-11-01",
     "sample_end": "2017-03-31",
-    "fx_data": "fx_by_tz_d.p",
+    "fx_data": "fx_by_tz_aligned_d.p",
     "events_data": "events.p",
     "fig_folder": "wp_figures_limbo/",
     "usd_fixing_time": "NYC",
