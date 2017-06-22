@@ -424,6 +424,56 @@ class EventTradingStrategy(TradingStrategy):
         #     this_col.isin(this_sig_dates)
 
 
+def run_this(h, thresh):
+    """
+    data_path = set_credentials.gdrive_path("research_data/fx_and_events/")
+
+    with open(data_path + "fx_by_tz_aligned_d.p", mode='rb') as fname:
+        fx = pickle.load(fname)
+    spot_ask = fx["spot_ask"].drop(["jpy","dkk","nok"],
+        axis=1).loc["2000-11":,:]
+    spot_mid = fx["spot_mid"].drop(["jpy","dkk","nok"],
+        axis=1).loc["2000-11":,:]
+    spot_bid = fx["spot_bid"].drop(["jpy","dkk","nok"],
+        axis=1).loc["2000-11":,:]
+
+    tnswap_ask = fx["tnswap_ask"].drop(["jpy","dkk","nok"],
+        axis=1).loc["2000-11":,:]
+    tnswap_bid = fx["tnswap_bid"].drop(["jpy","dkk","nok"],
+        axis=1).loc["2000-11":,:]
+
+    """
+    # policy expectations -----------------------------------------------
+    policy_fcasts = dict()
+    for c in ['aud', 'cad', 'chf', 'eur', 'gbp', 'nzd', 'sek']:
+        # c = "aud"
+        pe = PolicyExpectation.from_pickles(data_path, c)
+        policy_fcasts[c] = pe.forecast_policy_change(
+            lag=h+2,
+            threshold=thresh,
+            avg_impl_over=5,
+            avg_refrce_over=5)
+
+    policy_fcasts = pd.DataFrame.from_dict(policy_fcasts).loc["2000-11":]
+
+    # settings ----------------------------------------------------------
+    settings = {
+        "horizon_a": -h,
+        "horizon_b": -1,
+        "bday_reindex": True}
+
+    # strategies --------------------------------------------------------
+    # simple strategy: no leverage, no bas adjustment
+    ts = EventTradingStrategy(
+        signals=policy_fcasts,
+        prices={"mid": spot_mid, "bid": spot_bid, "ask": spot_ask},
+        settings=settings)
+
+    # advanced strategy: bas + roll
+    ts_div_bas = ts.bas_adjusted().roll_adjusted(
+        swap_points={"bid": tnswap_bid, "ask": tnswap_bid})
+
+    return ts_div_bas._returns
 
 
 
@@ -509,17 +559,6 @@ if __name__ == "__main__":
     ts_div_bas = ts.bas_adjusted().roll_adjusted(
         {"bid": tnswap_bid, "ask": tnswap_bid})
     ts_div_bas._returns.sum(axis=1).cumsum().plot()
-    ts_div_bas._returns.dropna(how="all").head()
-    ts_div_bas.weights.dropna(how="all").loc["2001":].head(20)
-    ts_div_bas.signals.dropna(how="all")
 
-    div.to_clipboard()
-    ts_div_bas.to_excel(xl_filename)
-
-
-    %matplotlib
-    f, ax = plt.subplots()
-    ts_div_bas._returns.sum(axis=1).dropna().cumsum().plot(ax=ax,
-        linewidth=1.5)
-    ts_div_bas._returns.count().sum()
-    ts_div_bas._returns.loc[:,"aud"].dropna()
+    # run this --------------------------------------------------------------
+    res = run_this(10, 0.100)
