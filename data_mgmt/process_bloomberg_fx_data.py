@@ -88,15 +88,55 @@ for f in fnames:
     data_by_tz['_'.join(f.split('_')[1:3])] = pd.Panel.from_dict(
         this_data, orient="minor")
 
+# pickle this raw file full of panels
+with open(name_data_by_tz, "wb") as fname:
+    pickle.dump(data_by_tz, fname)
+# with open(name_data_by_tz, "rb") as fname:
+#     data_by_tz = pickle.load(fname)
+
 # settlement dates to datetime ----------------------------------------------
 data_by_tz["1w_settl"] = data_by_tz["1w_settl"].apply(pd.to_datetime)
 
 # tom/next swap points: from pips to units ----------------------------------
+data_by_tz["1w_ask"] /= 10000
+data_by_tz["1w_bid"] /= 10000
+# yen has 100 as pips
+data_by_tz["1w_ask"].loc["jpy",:,:] *= 100
+data_by_tz["1w_bid"].loc["jpy",:,:] *= 100
+
 data_by_tz["tnswap_ask"] /= 10000
 data_by_tz["tnswap_bid"] /= 10000
 # yen has 100 as pips
 data_by_tz["tnswap_ask"].loc["jpy",:,:] *= 100
 data_by_tz["tnswap_bid"].loc["jpy",:,:] *= 100
+
+# swap points: bid and ask --------------------------------------------------
+usdxxx = ["cad","sek","dkk","chf","nok","jpy"]
+bids = dict()
+asks = dict()
+for tz in data_by_tz["spot_mid"].minor_axis:
+    # tz = "NYC"
+    this_sp_ask = data_by_tz["tnswap_ask"].loc[usdxxx,:,tz]
+    this_sp_bid = data_by_tz["tnswap_bid"].loc[usdxxx,:,tz]
+    this_spot_ask = data_by_tz["spot_ask"].loc[usdxxx,:,tz]
+    this_spot_bid = data_by_tz["spot_bid"].loc[usdxxx,:,tz]
+
+    this_ask_direct = 1/(1/this_spot_ask+this_sp_bid) - this_spot_ask
+    this_bid_direct = 1/(1/this_spot_bid+this_sp_ask) - this_spot_bid
+
+    this_tnswap_ask_full = pd.concat((
+        data_by_tz["tnswap_ask"].loc[:,:,tz].drop(usdxxx, axis=1),
+        this_ask_direct), axis=1)
+    this_tnswap_bid_full = pd.concat((
+        data_by_tz["tnswap_bid"].loc[:,:,tz].drop(usdxxx, axis=1),
+        this_bid_direct), axis=1)
+
+    asks[tz] = this_tnswap_ask_full
+    bids[tz] = this_tnswap_bid_full
+
+data_by_tz["tnswap_ask"] = pd.Panel.from_dict(asks, orient="minor")
+data_by_tz["tnswap_bid"] = pd.Panel.from_dict(bids, orient="minor")
+
 
 # organize according to the time zone a currency belongs to -----------------
 currencies = data_by_tz["spot_mid"].items
@@ -117,28 +157,35 @@ for k,v in data_by_tz.items():
 
 # "fix" sek, dkk, jpy, nok and chf ------------------------------------------
 # since these are in usdxxx form
-usdxxx = ["sek","dkk","chf","nok","jpy"]
 ask_sp_x = \
     1/(1/data_by_tz_aligned["spot_ask"].loc[:,usdxxx] +
-        data_by_tz_aligned["tnswap_bid"].loc[:,usdxxx]
+        data_by_tz_aligned["1w_bid"].loc[:,usdxxx]
         )-\
         data_by_tz_aligned["spot_ask"].loc[:,usdxxx]
 bid_sp_x = \
     1/(1/data_by_tz_aligned["spot_bid"].loc[:,usdxxx] +
-        data_by_tz_aligned["tnswap_ask"].loc[:,usdxxx]
+        data_by_tz_aligned["1w_ask"].loc[:,usdxxx]
         )-\
         data_by_tz_aligned["spot_bid"].loc[:,usdxxx]
 
-data_by_tz_aligned["tnswap_ask"].loc[:,usdxxx] = ask_sp_x
-data_by_tz_aligned["tnswap_bid"].loc[:,usdxxx] = bid_sp_x
+data_by_tz_aligned["1w_ask"].loc[:,usdxxx] = ask_sp_x
+data_by_tz_aligned["1w_bid"].loc[:,usdxxx] = bid_sp_x
 
 # adjust for negative ba spreads --------------------------------------------
+idx = (data_by_tz_aligned["1w_ask"] - data_by_tz_aligned["1w_bid"]) < 0
+data_by_tz_aligned["1w_bid"] = data_by_tz_aligned["1w_bid"].mask(
+    idx, data_by_tz_aligned["1w_ask"])
+
 idx = (data_by_tz_aligned["tnswap_ask"] - data_by_tz_aligned["tnswap_bid"]) < 0
 data_by_tz_aligned["tnswap_bid"] = data_by_tz_aligned["tnswap_bid"].mask(
     idx, data_by_tz_aligned["tnswap_ask"])
 
 # pickle (for the greater justment) -----------------------------------------
-with open(name_data_by_tz, "wb") as fname:
-    pickle.dump(data_by_tz, fname)
 with open(name_data_by_tz_aligned, "wb") as fname:
     pickle.dump(data_by_tz_aligned, fname)
+
+
+with open(data_path+"overnight_rates.p", "rb") as fname:
+    rf = pickle.load(fname)
+
+rf.sub(rf["usd"], axis=0).loc["2001-09","aud"]/100/365
