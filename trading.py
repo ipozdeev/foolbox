@@ -91,7 +91,8 @@ class EventTradingStrategy(TradingStrategy):
             warnings.warn(
                 "Some dates in `signals` do not correspond to "+
                 "rows in `returns`.")
-            returns, signals = returns.align(signals, join="outer", axis=0)
+
+        returns, signals = returns.align(signals, join="outer", axis=0)
 
         # THE index
         the_idx = returns.index
@@ -197,6 +198,22 @@ class EventTradingStrategy(TradingStrategy):
         """
 
         res = poco.weighted_return(self._returns, self.weights)
+
+        # # align with events -------------------------------------------------
+        # res = res.shift(-1*self.settings["horizon_b"])
+
+        return res
+
+    def get_matrix_of_returns(self):
+        """ Get returns before they are collapsed into one strategy return.
+
+        Returns
+        -------
+        res : pd.DataFrame
+            of returns
+        """
+
+        res = self._returns.multiply(self.weights, axis=0)
 
         # # align with events -------------------------------------------------
         # res = res.shift(-1*self.settings["horizon_b"])
@@ -311,7 +328,6 @@ class EventTradingStrategy(TradingStrategy):
             sp = swap_points.reindex(
                 index=self.the_idx, method="ffill")
 
-        # new version. less approximate -------------------------------------
         # horizons: for pure convenience ------------------------------------
         h_a = self.settings["horizon_a"]
         h_b = self.settings["horizon_b"]
@@ -319,29 +335,33 @@ class EventTradingStrategy(TradingStrategy):
         # rolling h-period sum of swap points -------------------------------
         roll_sum_sp = sp.rolling( (h_b-h_a+1) ).sum()
 
+        # ffill prices TODO: bad, very bad, but vodkee naidu? ---------------
+        P = self.prices["actual"].fillna(method="ffill", limit=(h_b-h_a)//2)
+
         # adjust prices -----------------------------------------------------
-        denom = self.prices["actual"].shift( (h_b-h_a+1) ) + \
-            roll_sum_sp.shift(1)
+        denom = P.shift( (h_b-h_a+1) ) + roll_sum_sp.shift(1)
 
         # recalculate returns -----------------------------------------------
         # these are similar to excess returns in the standard case:
         #   f.shift(1) - s
-        numer = self.prices["actual"]
 
         # align signals with returns
-        new_returns = np.log(numer/denom) * self.signals.shift(h_b)
+        new_returns = np.log(P/denom) * self.signals.shift(h_b)
 
         # return new_returns
 
         # copy class instance, assign weights -------------------------------
         new_self = copy.deepcopy(self)
         new_self._returns = new_returns
+        new_self.prices.update({"actual": P})
         new_self.swap_points = sp
 
         return new_self
 
+    def roll_adjusted_approx(self, swap_points):
+        """ Adjust for the rollovers by using a crude approximation
+        """
 
-        # # temp, approximate version -----------------------------------------
         # # roll is credited/debited two days fewer
         # roll_index = self.position_flags.shift(1).notnull() & \
         #     self.position_flags.shift(-1).notnull()
@@ -356,6 +376,8 @@ class EventTradingStrategy(TradingStrategy):
         # new_self.swap_points = sp
         #
         # return new_self
+
+        pass
 
     def to_excel(self, filename):
         """ Write stuff to the excel spreadsheet.
@@ -383,6 +405,8 @@ class EventTradingStrategy(TradingStrategy):
         self.prices["bid"].to_excel(writer, sheet_name='bid')
         self.prices["ask"].to_excel(writer, sheet_name='ask')
         self.prices["actual"].to_excel(writer, sheet_name='actual')
+        self.returns.where(self.position_flags.notnull()).to_excel(
+            writer, sheet_name='returns_at_positions')
         try:
             self.swap_points.to_excel(writer, sheet_name='swap_points')
         except:
@@ -399,7 +423,13 @@ class EventTradingStrategy(TradingStrategy):
         ret = self.get_strategy_returns()
         cum_ret = ret.cumsum()
 
-        fig, ax = plt.subplots()
+        # if there was an axis among the keyword arguments
+        if kwargs.get("ax") is None:
+            fig, ax = plt.subplots()
+        else:
+            fig = plt.gcf()
+            ax = kwargs.pop("ax")
+
         cum_ret.plot(ax=ax, **kwargs)
 
         return fig, ax
@@ -480,7 +510,8 @@ def run_this(h, thresh):
 
 if __name__ == "__main__":
 
-    # %matplotlib inline
+    %matplotlib inline
+    %config InlineBackend.figure_format = 'svg'
 
     # data ------------------------------------------------------------------
     data_path = set_credentials.gdrive_path("research_data/fx_and_events/")
@@ -500,24 +531,6 @@ if __name__ == "__main__":
     tnswap_bid = fx["tnswap_bid"].drop(["jpy","dkk","nok"],
         axis=1).loc["2000-11":,:]
 
-    # policy expectations
-    policy_fcasts = dict()
-    for c in ['aud', 'cad', 'chf', 'eur', 'gbp', 'nzd', 'sek']:
-        # c = "aud"
-        pe = PolicyExpectation.from_pickles(data_path, c)
-        policy_fcasts[c] = pe.forecast_policy_change(
-            lag=12, threshold=0.10, avg_impl_over=5, avg_refrce_over=5)
-
-    # # dollar policy
-    # pe = PolicyExpectation.from_pickles(data_path, "usd")
-    # policy_fcast_usd = pe.forecast_policy_change(
-    #     lag=12, threshold=0.10, avg_impl_over=5, avg_refrce_over=5)
-    #
-    policy_fcasts = pd.DataFrame.from_dict(policy_fcasts).loc["2000-11":]
-
-    # for c in policy_fcasts.columns:
-    #     policy_fcasts.loc[:,c] = policy_fcasts.loc[:,c].replace(0.0, np.nan)\
-    #         .fillna(policy_fcast_usd.replace(0.0, np.nan)*-1)
 
     # settings --------------------------------------------------------------
     settings = {
@@ -525,8 +538,23 @@ if __name__ == "__main__":
         "horizon_b": -1,
         "bday_reindex": True}
 
+
+    # policy expectations ---------------------------------------------------
+    policy_fcasts = dict()
+    for c in ['aud', 'cad', 'chf', 'eur', 'gbp', 'nzd', 'sek']:
+        # c = "aud"
+        pe = PolicyExpectation.from_pickles(data_path, c)
+        policy_fcasts[c] = pe.forecast_policy_change(
+            lag=12,
+            threshold=0.10,
+            avg_impl_over=5,
+            avg_refrce_over=5,
+            bday_reindex=True)
+
+    policy_fcasts = pd.DataFrame.from_dict(policy_fcasts).loc["2000-11":]
+
     # strategies ------------------------------------------------------------
-    # simple strategy: no leverage, no bas adjustment
+    # simple strategy: no leverage, no bas adjustment -----------------------
     ts = EventTradingStrategy(
         signals=policy_fcasts,
         prices={"mid": spot_mid, "bid": spot_bid, "ask": spot_ask},
@@ -536,30 +564,62 @@ if __name__ == "__main__":
     # xl_filename = data_path + '../../opec_meetings/calc/insights_simple.xlsx'
     # ts.to_excel(xl_filename)
     # fig, ax = ts.plot()
-    #
-
-    # bas adjusted
-    ts_bas = ts.bas_adjusted()
-    ts_bas.to_excel(xl_filename)
-    fig, ax = ts_bas.plot(color='k')
 
 
-    # leverage_adjusted
-    ts_lev = ts.leverage_adjusted()
-    ts_lev.to_excel(xl_filename)
-    fig, ax = ts_lev.plot(color='r')
-
-
-    # # adjusted for both
-    # ts_lev_bas = ts.leverage_adjusted().bas_adjusted()
-    xl_filename = data_path + '../../opec_meetings/calc/insights_lev_bas.xlsx'
-    # fig, ax = ts_lev_bas.plot(color='#ddc061')
+    # # bas adjusted ----------------------------------------------------------
+    # ts_bas = ts.bas_adjusted()
+    # ts_bas.to_excel(xl_filename)
+    # fig, ax = ts_bas.plot(ax=ax, color='k')
 
 
     # adjusted for dividend -------------------------------------------------
+    ts_bas_roll = ts.bas_adjusted().roll_adjusted(
+        swap_points={"bid": tnswap_bid, "ask": tnswap_ask})
+
+    ts_bas_roll._returns.sum(axis=1).cumsum().plot()
+    plt.show()
+
+
+
+    # FOMC ------------------------------------------------------------------
+    # assets
+    with open(data_path + "fx_by_tz_sp_fixed.p", mode='rb') as fname:
+        fx = pickle.load(fname)
+    spot_ask = fx["spot_ask"].loc[:,"2000-11":,"NYC"].drop(["dkk"], axis=1)
+    spot_mid = fx["spot_mid"].loc[:,"2000-11":,"NYC"].drop(["dkk"], axis=1)
+    spot_bid = fx["spot_bid"].loc[:,"2000-11":,"NYC"].drop(["dkk"], axis=1)
+
+    tnswap_ask = fx["tnswap_ask"].loc[:,"2000-11":,"NYC"].drop(["dkk"], axis=1)
+    tnswap_bid = fx["tnswap_bid"].loc[:,"2000-11":,"NYC"].drop(["dkk"], axis=1)
+
+    # dollar policy: *-1 to reverse the direction
+    pe = PolicyExpectation.from_pickles(data_path, "usd", use_ffut=False)
+    policy_fcast_usd = pe.forecast_policy_change(
+        lag=12,
+        threshold=0.10,
+        avg_impl_over=5,
+        avg_refrce_over=5)*-1
+
+    policy_fcast_usd = pd.concat([policy_fcast_usd,]*spot_mid.shape[1], axis=1)
+    policy_fcast_usd.columns = spot_mid.columns
+
+    # make weights be equal
+    weights = pd.DataFrame(1/policy_fcast_usd.shape[1],
+        index=policy_fcast_usd.index,
+        columns=policy_fcast_usd.columns)
+
+    ts = EventTradingStrategy(
+        signals=policy_fcast_usd,
+        weights=weights,
+        settings=settings,
+        prices={"mid": spot_mid, "bid": spot_bid, "ask": spot_ask})
+
     ts_div_bas = ts.bas_adjusted().roll_adjusted(
         {"bid": tnswap_bid, "ask": tnswap_bid})
-    ts_div_bas._returns.sum(axis=1).cumsum().plot()
 
-    # run this --------------------------------------------------------------
-    res = run_this(10, 0.100)
+    ts.get_strategy_returns().dropna().cumsum().plot()
+    ts.bas_adjusted().get_strategy_returns().dropna().cumsum().plot()
+    ts_div_bas._returns.mean(axis=1).dropna().cumsum().plot()
+    ts_div_bas.to_excel(xl_filename)
+
+    ts.signals.dropna().count()

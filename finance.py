@@ -415,7 +415,8 @@ class PolicyExpectation():
         lag=1,
         threshold=0.125,
         avg_impl_over=1,
-        avg_refrce_over=None):
+        avg_refrce_over=None,
+        bday_reindex=False):
         """ Predict +1, -1 or 0 for every meeting date.
 
         Some periods before each event (`lag`) we take the implied rate
@@ -439,6 +440,8 @@ class PolicyExpectation():
         avg_refrce_over : int
             the number of periods to average the reference rate over before
             comparing it to the implied rate
+        bday_reindex : boolean
+            True if the rates are reindexed with business days ('B' in pandas)
 
         Returns
         -------
@@ -454,22 +457,35 @@ class PolicyExpectation():
 
         """
         # take implied rate `lag` periods before
-        impl_rate = self.rate_expectation
+        impl_rate = self.rate_expectation.copy()
+        refrce_rate = self.reference_rate.copy()
+
+        # reindex if asked to
+        if bday_reindex:
+            first_dt = min((impl_rate.index[0], refrce_rate.index[0]))
+            last_dt = max((impl_rate.index[-1], refrce_rate.index[-1]))
+            bday_dt = pd.date_range(first_dt, last_dt, freq='B')
+
+            impl_rate = impl_rate.reindex(index=bday_dt)
+            refrce_rate = refrce_rate.reindex(index=bday_dt)
 
         # will need to compare it to either some rolling average of the
         #   reference rate or the previously set policy rate (avg_refrce_over
         #   is None)
+        # 1) asked to smooth over several periods
         if isinstance(avg_refrce_over, int):
             # fill some NAs
-            avg_refrce = self.reference_rate.fillna(method="ffill", limit=2)
-
-            avg_refrce = avg_refrce.rolling(avg_refrce_over, min_periods=1)\
-                .mean().shift(lag)\
+            avg_refrce = refrce_rate.fillna(method="ffill", limit=2)
+            # smooth
+            avg_refrce = avg_refrce.rolling(
+                avg_refrce_over, min_periods=1).mean()
+            # shift to alighn with the event dates
+            avg_refrce = avg_refrce.shift(lag)\
                 .reindex(index=self.meetings.index, method="ffill")
 
         elif isinstance(avg_refrce_over, str):
             # collect everything between events
-            refrce_aligned, meets_aligned = self.reference_rate.align(
+            refrce_aligned, meets_aligned = refrce_rate.align(
                 self.meetings, join="outer", axis=0)
             refrce_aligned = refrce_aligned.to_frame()
             refrce_aligned.loc[:,"dates"] = meets_aligned.index
@@ -484,13 +500,15 @@ class PolicyExpectation():
                     refrce_aligned.loc[:,"dates"]==this_dt,0].loc[prev_dt:] = \
                         this_piece.loc[prev_dt:].expanding().mean()
 
+                # shift to alighn with the event dates
                 avg_refrce = refrce_aligned.shift(lag).\
                     reindex(index=self.meetings.index, method="ffill")
 
         else:
             # else, if None, take the last meetings decision
             avg_refrce = self.meetings.loc[:,"rate_level"].shift(1)
-            avg_refrce.name = self.reference_rate.name
+            # rename!
+            avg_refrce.name = refrce_rate.name
 
         # smooth implied rate
         avg_impl = impl_rate.rolling(avg_impl_over, min_periods=1).mean()\
@@ -506,7 +524,7 @@ class PolicyExpectation():
             abs(impl_less_bench) > threshold).fillna(0.0)
 
         # add name
-        policy_fcast.name = avg_impl.name
+        policy_fcast.name = impl_rate.name
 
         return policy_fcast
 
