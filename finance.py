@@ -805,6 +805,7 @@ def pe_backtest(returns, holding_range, threshold_range,
                                     xs_avg=False)
 
             # Append the disaggregated and aggregated outputs
+            # TODO: Review mean vs sum/count
             aggr.loc[:, ix[holding_period, threshold]] = strat.mean(axis=1)
             results["disaggr"][str(holding_period)][str(threshold)] = strat
 
@@ -885,7 +886,7 @@ def pe_perfect_foresight_strat(returns, holding_range, data_path,
             this_signal.name = curr
             # --------
             if forecast_consistent:
-                # Get the first forecast date available, leave enought data
+                # Get the first forecast date available, leave enough data
                 # to make a forecast, control for averaging
                 first_date = tmp_pe.rate_expectation.dropna()\
                     .iloc[[lag_expect+smooth_burn-1]].index[0]

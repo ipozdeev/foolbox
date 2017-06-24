@@ -465,13 +465,14 @@ def run_this(h, thresh):
     # strategies --------------------------------------------------------
     # simple strategy: no leverage, no bas adjustment
     ts = EventTradingStrategy(
-        signals=policy_fcasts,
-        prices={"mid": spot_mid, "bid": spot_bid, "ask": spot_ask},
+        signals=policy_fcasts[["aud"]],
+        prices={"mid": spot_mid[["aud"]], "bid": spot_bid[["aud"]],
+                "ask": spot_ask[["aud"]]},
         settings=settings)
 
     # advanced strategy: bas + roll
     ts_div_bas = ts.bas_adjusted().roll_adjusted(
-        swap_points={"bid": tnswap_bid, "ask": tnswap_bid})
+        swap_points={"bid": tnswap_bid, "ask": tnswap_ask})
 
     return ts_div_bas._returns
 
