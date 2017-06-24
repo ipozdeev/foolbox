@@ -467,8 +467,8 @@ class PolicyExpectation():
             last_dt = max((impl_rate.index[-1], refrce_rate.index[-1]))
             bday_dt = pd.date_range(first_dt, last_dt, freq='B')
 
-            impl_rate = impl_rate.reindex(index=bday_dt)
-            refrce_rate = refrce_rate.reindex(index=bday_dt)
+            impl_rate = impl_rate.reindex(index=bday_dt, method="ffill")
+            refrce_rate = refrce_rate.reindex(index=bday_dt, method="ffill")
 
         # will need to compare it to either some rolling average of the
         #   reference rate or the previously set policy rate (avg_refrce_over
