@@ -49,10 +49,10 @@ rx = rx.shift(1)
 # Run the backtests
 btest = pe_backtest(rx, holding_range, threshold_range, data_path,
                     avg_impl_over=avg_impl_over,
-                    avg_refrce_over=avg_refrce_over)
+                    avg_refrce_over=avg_refrce_over, sum=True)
 aggr = btest["aggr"]
 cumret = aggr.dropna(how="all").replace(np.nan, 0).cumsum()
 
 # Plot the results and save 'em
 fig = broomstick_plot(cumret)
-fig.savefig(out_path + "broomstick_plot.pdf")
+fig.savefig(out_path + "broomstick_plot_spot.pdf")

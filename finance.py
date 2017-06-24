@@ -5,6 +5,7 @@ from pandas.tseries.offsets import DateOffset, MonthBegin, MonthEnd, \
     relativedelta
 from sklearn.metrics import confusion_matrix
 import matplotlib.pyplot as plt
+from utils import *
 
 import itertools
 
@@ -730,7 +731,7 @@ def into_currency(data, new_cur):
 
 
 def pe_backtest(returns, holding_range, threshold_range,
-                data_path, avg_impl_over=2, avg_refrce_over=2):
+                data_path, avg_impl_over=2, avg_refrce_over=2, sum=False):
     """
 
     Parameters
@@ -750,6 +751,9 @@ def pe_backtest(returns, holding_range, threshold_range,
     avg_refrce_over : int
         the number of periods to average the reference rate over before
         comparing it to the implied rate
+    sum: bool
+        controlling whether to sum or average aggregated returns over the cross
+        section. Default is False, i.e. mean is taken
 
     Returns
     -------
@@ -810,7 +814,8 @@ def pe_backtest(returns, holding_range, threshold_range,
                     tmp_pe.forecast_policy_change(lag=lag_expect,
                                                   threshold=threshold/100,
                                                   avg_impl_over=avg_impl_over,
-                                                  avg_refrce_over=avg_refrce_over)
+                                                  avg_refrce_over=avg_refrce_over,
+                                                  bday_reindex=True)
                 # Append the signals
                 pooled_signals.append(tmp_fcast)
 
@@ -824,7 +829,11 @@ def pe_backtest(returns, holding_range, threshold_range,
 
             # Append the disaggregated and aggregated outputs
             # TODO: Review mean vs sum/count
-            aggr.loc[:, ix[holding_period, threshold]] = strat.mean(axis=1)
+            if sum:
+                aggr.loc[:, ix[holding_period, threshold]] =\
+                    strat.mean(axis=1) * strat.count(axis=1)
+            else:
+                aggr.loc[:, ix[holding_period, threshold]] = strat.mean(axis=1)
             results["disaggr"][str(holding_period)][str(threshold)] = strat
 
             print("Policy expectation backtest\n",
@@ -838,7 +847,7 @@ def pe_backtest(returns, holding_range, threshold_range,
 
 def pe_perfect_foresight_strat(returns, holding_range, data_path,
                                forecast_consistent=False,
-                               smooth_burn=5):
+                               smooth_burn=5, sum=False):
     """Generate a backetst of perfect foresight strategies, with optional
     forecast availability consistency.
 
@@ -860,6 +869,9 @@ def pe_perfect_foresight_strat(returns, holding_range, data_path,
         additional number of days to burn in order to account for forecast
         smoothing, as in the real backtest. Corresponds to  avg_XXX_over of
         policy_forecast. Default is five
+    sum: bool
+        controlling whether to sum or average aggregated returns over the cross
+        section. Default is False, i.e. mean is taken
 
     Returns
     -------
@@ -923,7 +935,11 @@ def pe_perfect_foresight_strat(returns, holding_range, data_path,
                                 xs_avg=False)
 
         # Append the disaggregated and aggregated outputs
-        aggr.loc[:, holding_period] = strat.mean(axis=1)
+        if sum:
+            aggr.loc[:, holding_period] =\
+                strat.mean(axis=1) * strat.count(axis=1)
+        else:
+            aggr.loc[:, holding_period] = strat.mean(axis=1)
         results["disaggr"][str(holding_period)] = strat
 
         print("Perfect foresight backtest\n",
@@ -1002,7 +1018,10 @@ def event_trading_backtest(fx_data, holding_range, threshold_range,
         containing dataframes with mid, ask, bid spot quotes and bid, ask t/n
         swap points. The FX data should adhere to the following convention:
         all exchange rates are in units of base currency per unit of quote
-        currency, swap points should be added to get the excess returns
+        currency, swap points should be added to get the excess returns. The
+        keys are as follows: "spot_mid", "spot_bid", "spot_ask", "tnswap_bid",
+        "tnswap_ask". Furthermore the data are assumed to be 'prepared' in
+        terms of nan handling and index alignment
     holding_range
     threshold_range
     start_date: str
@@ -1018,15 +1037,12 @@ def event_trading_backtest(fx_data, holding_range, threshold_range,
 
 
     """
-    # Forward fill the data in the input dictionary
-    # TODO: USE DESIGNATED FUNCTION HERE
-
-    # Place holders for fx data
-    spot_mid = 0
-    spot_bid = 0
-    spot_ask = 0
-    tn_swap_bid = 0
-    tn_swap_ask = 0
+    # Get the shorthand notation of the data
+    spot_mid = fx_data["spot_mid"]
+    spot_bid = fx_data["spot_bid"]
+    spot_ask = fx_data["spot_ask"]
+    tn_swap_bid = fx_data["tnswap_bid"]
+    tn_swap_ask = fx_data["tnswap_ask"]
 
     # Get he pandas slicer for convenient MultiIndex reference
     ix = pd.IndexSlice
@@ -1038,7 +1054,7 @@ def event_trading_backtest(fx_data, holding_range, threshold_range,
     # The aggregated outpu is a multiindex
     combos = list(itools.product(holding_range, threshold_range))
     cols = pd.MultiIndex.from_tuples(combos, names=["holding", "threshold"])
-    aggr = pd.DataFrame(index=returns.index, columns=cols)
+    aggr = pd.DataFrame(index=spot_mid.index, columns=cols)
 
     # Start backtesting looping over holding periods and thresholds
     for holding_period in holding_range:

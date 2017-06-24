@@ -4,6 +4,7 @@ import matplotlib.dates as mdates
 from matplotlib.ticker import MultipleLocator
 from wp_tabs_figs.wp_settings import settings
 from foolbox.trading import EventTradingStrategy
+from foolbox.utils import *
 
 """Plots returns to strategy based on monetary policy action forecasts along
 with prediction-data-availability-consistent prefect foresight. Adjust returns
@@ -74,8 +75,17 @@ us_swap_ask = data_usd["tnswap_ask"].loc[:, :, settings["usd_fixing_time"]]\
 us_swap_bid = data_usd["tnswap_bid"].loc[:, :, settings["usd_fixing_time"]]\
     .drop(["dkk"], axis=1)[start_date:end_date]
 
+# Align and ffill the data, first for tz-aligned countries
+(spot_mid, spot_bid, spot_ask, swap_bid, swap_ask) =\
+    align_and_fillna((spot_mid, spot_bid, spot_ask, swap_bid, swap_ask),
+                     "B", method="ffill")
+# Now for the dollar index
+(us_spot_mid, us_spot_bid, us_spot_ask, us_swap_bid, us_swap_ask) =\
+    align_and_fillna((us_spot_mid, us_spot_bid, us_spot_ask,
+                      us_swap_bid, us_swap_ask),
+                     "B", method="ffill")
 
-# TODO: Discuss missing events
+
 # Get signals for all countries except for the US
 policy_fcasts = list()
 for curr in spot_mid.columns:
@@ -85,7 +95,8 @@ for curr in spot_mid.columns:
         tmp_pe.forecast_policy_change(lag=lag_expect,
                                       threshold=threshold/100,
                                       avg_impl_over=avg_impl_over,
-                                      avg_refrce_over=avg_refrce_over))
+                                      avg_refrce_over=avg_refrce_over,
+                                      bday_reindex=True))
 
 # Put individual predictions into a single dataframe
 signals = pd.concat(policy_fcasts, join="outer", axis=1)[start_date:end_date]
@@ -106,7 +117,8 @@ us_pe = PolicyExpectation.from_pickles(data_path, "usd")
 us_fcast = us_pe.forecast_policy_change(lag=lag_expect,
                                         threshold=threshold/100,
                                         avg_impl_over=avg_impl_over,
-                                        avg_refrce_over=avg_refrce_over)
+                                        avg_refrce_over=avg_refrce_over,
+                                        bday_reindex=True)
 
 # Create signals for every currency around FOMC announcements, mind the minus
 us_signal = pd.concat([-us_fcast]*len(us_spot_mid.columns), axis=1)\
@@ -131,8 +143,12 @@ usd_ret = us_strat_bas_adj._returns.dropna(how="all").mean(axis=1).to_frame()
 usd_ret.columns = ["usd"]
 
 # Add it to other returns
-strat_ret = pd.concat([strat_ret, usd_ret], axis=1).mean(axis=1).to_frame()
-strat_ret.columns = ["fcst"]
+fcst_strat = pd.concat([strat_ret, usd_ret], axis=1).sum(axis=1).to_frame()
+fcst_strat.columns = ["fcst"]
+
+# Get the descriptives for the forecast strategy, use mean instead of sum
+descr_fcst = taf.descriptives(
+    pd.concat([strat_ret, usd_ret], axis=1).mean(axis=1).to_frame(), 1)
 
 
 # Construct the perfect foresight, forecastablility consistent signals
@@ -196,32 +212,9 @@ usd_pfct_ret = us_pfct_strat_bas_adj._returns.dropna(how="all").mean(axis=1)\
 usd_pfct_ret.columns = ["usd"]
 
 # Combine with all countries
-pfct_strat_ret = pd.concat([pfct_strat_ret, usd_pfct_ret], axis=1)\
+perfect_consistent = pd.concat([pfct_strat_ret, usd_pfct_ret], axis=1)\
     .mean(axis=1).to_frame()
-pfct_strat_ret.columns = ["pfct"]
-
-
-# Rename for plotting
-fcst_strat = strat_ret
-perfect_consistent = pfct_strat_ret
-
-# Get the descriptives for the forecast strategy
-descr_fcst = taf.descriptives(fcst_strat, 1)
-
-
-
-
-
-
-# returns = np.log(spot_mid/spot_mid.shift(1))[start_date:end_date]
-# returns = returns.reindex(pd.date_range(
-#     returns.first_valid_index(), returns.last_valid_index(), freq="B"
-#     ))
-# strat2 = multiple_timing(returns.rolling(10).sum().shift(1),
-#                                     signals.replace(0, np.nan),
-#                                     xs_avg=False)
-#
-# strat2=strat2.sum(axis=1)
+perfect_consistent.columns = ["pfct"]
 
 
 # Figure 3: plot OIS-availability consistent perfect foresight and real strat

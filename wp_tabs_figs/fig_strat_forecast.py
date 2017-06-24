@@ -60,14 +60,15 @@ threshold_range = np.arange(threshold, threshold+1, 1)
 
 perfect_consistent =\
     pe_perfect_foresight_strat(rx, holding_range, data_path, True,
-                               smooth_burn)["aggr"]
+                               smooth_burn, True)["aggr"]
 forecasted =\
     pe_backtest(rx, holding_range, threshold_range, data_path, avg_impl_over,
-                avg_refrce_over)["aggr"]
+                avg_refrce_over, True)["aggr"]
 
-# Get the corresponding descriptives
-descr_pfct_consistent = taf.descriptives(perfect_consistent, 1)
-descr_fcst = taf.descriptives(forecasted, 1)
+# Get the corresponding descriptives, mind averaging instead of taking a sum
+descr_fcst = taf.descriptives(
+    pe_backtest(rx, holding_range, threshold_range, data_path, avg_impl_over,
+                avg_refrce_over, False)["aggr"], 1)
 
 # Figure 3: plot OIS-availability consistent perfect foresight and real strat
 fig3, ax = plt.subplots(figsize=(8.4, 11.7/3))
