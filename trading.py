@@ -510,8 +510,8 @@ def run_this(h, thresh):
 
 if __name__ == "__main__":
 
-    %matplotlib inline
-    %config InlineBackend.figure_format = 'svg'
+    #%matplotlib inline
+    #%config InlineBackend.figure_format = 'svg'
 
     # data ------------------------------------------------------------------
     data_path = set_credentials.gdrive_path("research_data/fx_and_events/")

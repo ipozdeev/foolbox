@@ -992,6 +992,103 @@ def broomstick_plot(data, ci=(0.1, 0.9)):
     return fig
 
 
+def event_trading_backtest(fx_data, holding_range, threshold_range,
+                           start_date, end_date,
+                           data_path, avg_impl_over=2, avg_refrce_over=2):
+    """
+    Parameters
+    ----------
+    fx_data: dictionary
+        containing dataframes with mid, ask, bid spot quotes and bid, ask t/n
+        swap points. The FX data should adhere to the following convention:
+        all exchange rates are in units of base currency per unit of quote
+        currency, swap points should be added to get the excess returns
+    holding_range
+    threshold_range
+    start_date: str
+        specifying the start date of signals and fx_data
+    end_date: str
+        specifying the end_date of signals and fx_data
+    data_path
+    avg_impl_over
+    avg_refrce_over
+
+    Returns
+    -------
+
+
+    """
+    # Forward fill the data in the input dictionary
+    # TODO: USE DESIGNATED FUNCTION HERE
+
+    # Place holders for fx data
+    spot_mid = 0
+    spot_bid = 0
+    spot_ask = 0
+    tn_swap_bid = 0
+    tn_swap_ask = 0
+
+    # Get he pandas slicer for convenient MultiIndex reference
+    ix = pd.IndexSlice
+
+    # Set up the output structure
+    results = dict()
+    results["disaggr"] = dict()
+
+    # The aggregated outpu is a multiindex
+    combos = list(itools.product(holding_range, threshold_range))
+    cols = pd.MultiIndex.from_tuples(combos, names=["holding", "threshold"])
+    aggr = pd.DataFrame(index=returns.index, columns=cols)
+
+    # Start backtesting looping over holding periods and thresholds
+    for holding_period in holding_range:
+
+        # Transform holding period into lag_expect argument for the
+        # 'forecast_policy_change()' method of the 'PolicyExpectation' class
+        lag_expect = holding_period + 2  # forecast rate before trading FX
+
+        # Create an entry for the disaggregated output
+        results["disaggr"][str(holding_period)] = dict()
+
+        # A soup of several loops
+        for threshold in threshold_range:
+
+            # For the predominant case of multiple currencies pool the signals
+            pooled_signals = list()
+
+            # Get the policy forecast for each currency
+            for curr in returns.columns:
+                tmp_pe = PolicyExpectation.from_pickles(data_path, curr)
+                tmp_fcast =\
+                    tmp_pe.forecast_policy_change(lag=lag_expect,
+                                                  threshold=threshold/100,
+                                                  avg_impl_over=avg_impl_over,
+                                                  avg_refrce_over=avg_refrce_over)
+                # Append the signals
+                pooled_signals.append(tmp_fcast)
+
+            # Aggregate the signals, construct strategies, append the output
+            pooled_signals = pd.concat(pooled_signals, join="outer", axis=1)
+
+            # Replace 0 with nan to consider only expected hikes and cuts
+            strat = multiple_timing(returns.rolling(holding_period).sum(),
+                                    pooled_signals.replace(0, np.nan),
+                                    xs_avg=False)
+
+            # Append the disaggregated and aggregated outputs
+            # TODO: Review mean vs sum/count
+            aggr.loc[:, ix[holding_period, threshold]] = strat.mean(axis=1)
+            results["disaggr"][str(holding_period)][str(threshold)] = strat
+
+            print("Policy expectation backtest\n",
+                  "Holding period:", holding_period,
+                  "Threshold level:", threshold, "\n")
+
+    results["aggr"] = aggr
+
+    pass
+
+
 if __name__  == "__main__":
     pass
     # from foolbox.data_mgmt import set_credentials
