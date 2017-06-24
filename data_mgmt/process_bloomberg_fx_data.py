@@ -13,6 +13,7 @@ path = set_cred.gdrive_path("research_data/fx_and_events/")
 # pickle name ---------------------------------------------------------------
 name_data_by_tz = path + "fx_by_tz_d.p"
 name_data_by_tz_aligned = path + "fx_by_tz_aligned_d.p"
+name_data_by_tz_sp_fixed = path + "fx_by_tz_sp_fixed.p"
 
 # xlsx names
 fname_spot_mid = "fx_spot_mid_diff_tz_1994_2017_d.xlsx"
@@ -81,7 +82,7 @@ def parse_bloomberg_xlsx_temp(filename):
 # loop over files, collect data ---------------------------------------------
 data_by_tz = dict()
 for f in fnames:
-    # f = fnames[-1]
+    # f = "fx_tnswap_bid_diff_tz_1994_2017_d.xlsx"
     this_data = parse_bloomberg_xlsx_temp(f)
 
     # keys will be "spot_mid", "tnswap_bid" etc.
@@ -116,13 +117,17 @@ bids = dict()
 asks = dict()
 for tz in data_by_tz["spot_mid"].minor_axis:
     # tz = "NYC"
-    this_sp_ask = data_by_tz["tnswap_ask"].loc[usdxxx,:,tz]
-    this_sp_bid = data_by_tz["tnswap_bid"].loc[usdxxx,:,tz]
-    this_spot_ask = data_by_tz["spot_ask"].loc[usdxxx,:,tz]
-    this_spot_bid = data_by_tz["spot_bid"].loc[usdxxx,:,tz]
+    ask_sp_y = data_by_tz["tnswap_ask"].loc[usdxxx,:,tz]
+    bid_sp_y = data_by_tz["tnswap_bid"].loc[usdxxx,:,tz]
+    ask_x_s = data_by_tz["spot_ask"].loc[usdxxx,:,tz]
+    bid_x_s = data_by_tz["spot_bid"].loc[usdxxx,:,tz]
 
-    this_ask_direct = 1/(1/this_spot_ask+this_sp_bid) - this_spot_ask
-    this_bid_direct = 1/(1/this_spot_bid+this_sp_ask) - this_spot_bid
+    # ask_x_s.loc["2017-03-31",:]
+    # bid_sp_y.loc["2017-03-31",:]
+    # this_bid_direct.loc["2017-03-31",:]
+
+    this_ask_direct = 1/(1/ask_x_s+bid_sp_y) - ask_x_s
+    this_bid_direct = 1/(1/bid_x_s+ask_sp_y) - bid_x_s
 
     this_tnswap_ask_full = pd.concat((
         data_by_tz["tnswap_ask"].loc[:,:,tz].drop(usdxxx, axis=1),
@@ -137,6 +142,9 @@ for tz in data_by_tz["spot_mid"].minor_axis:
 data_by_tz["tnswap_ask"] = pd.Panel.from_dict(asks, orient="minor")
 data_by_tz["tnswap_bid"] = pd.Panel.from_dict(bids, orient="minor")
 
+# save this better version
+with open(name_data_by_tz_sp_fixed, "wb") as fname:
+    pickle.dump(data_by_tz, fname)
 
 # organize according to the time zone a currency belongs to -----------------
 currencies = data_by_tz["spot_mid"].items
@@ -185,7 +193,5 @@ with open(name_data_by_tz_aligned, "wb") as fname:
     pickle.dump(data_by_tz_aligned, fname)
 
 
-with open(data_path+"overnight_rates.p", "rb") as fname:
-    rf = pickle.load(fname)
-
-rf.sub(rf["usd"], axis=0).loc["2001-09","aud"]/100/365
+# with open(data_path+"overnight_rates.p", "rb") as fname:
+#     rf = pickle.load(fname)
