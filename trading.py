@@ -91,7 +91,8 @@ class EventTradingStrategy(TradingStrategy):
             warnings.warn(
                 "Some dates in `signals` do not correspond to "+
                 "rows in `returns`.")
-            returns, signals = returns.align(signals, join="outer", axis=0)
+
+        returns, signals = returns.align(signals, join="outer", axis=0)
 
         # THE index
         the_idx = returns.index
@@ -197,6 +198,22 @@ class EventTradingStrategy(TradingStrategy):
         """
 
         res = poco.weighted_return(self._returns, self.weights)
+
+        # # align with events -------------------------------------------------
+        # res = res.shift(-1*self.settings["horizon_b"])
+
+        return res
+
+    def get_matrix_of_returns(self):
+        """ Get returns before they are collapsed into one strategy return.
+
+        Returns
+        -------
+        res : pd.DataFrame
+            of returns
+        """
+
+        res = self._returns.multiply(self.weights, axis=0)
 
         # # align with events -------------------------------------------------
         # res = res.shift(-1*self.settings["horizon_b"])
@@ -319,23 +336,25 @@ class EventTradingStrategy(TradingStrategy):
         # rolling h-period sum of swap points -------------------------------
         roll_sum_sp = sp.rolling( (h_b-h_a+1) ).sum()
 
+        # ffill prices TODO: bad, very bad, but vodkee naidu? ---------------
+        P = self.prices["actual"].fillna(method="ffill", limit=(h_b-h_a)//2)
+
         # adjust prices -----------------------------------------------------
-        denom = self.prices["actual"].shift( (h_b-h_a+1) ) + \
-            roll_sum_sp.shift(1)
+        denom = P.shift( (h_b-h_a+1) ) + roll_sum_sp.shift(1)
 
         # recalculate returns -----------------------------------------------
         # these are similar to excess returns in the standard case:
         #   f.shift(1) - s
-        numer = self.prices["actual"]
 
         # align signals with returns
-        new_returns = np.log(numer/denom) * self.signals.shift(h_b)
+        new_returns = np.log(P/denom) * self.signals.shift(h_b)
 
         # return new_returns
 
         # copy class instance, assign weights -------------------------------
         new_self = copy.deepcopy(self)
         new_self._returns = new_returns
+        new_self.prices.update({"actual": P})
         new_self.swap_points = sp
 
         return new_self
@@ -383,6 +402,8 @@ class EventTradingStrategy(TradingStrategy):
         self.prices["bid"].to_excel(writer, sheet_name='bid')
         self.prices["ask"].to_excel(writer, sheet_name='ask')
         self.prices["actual"].to_excel(writer, sheet_name='actual')
+        self.returns.where(self.position_flags.notnull()).to_excel(
+            writer, sheet_name='returns_at_positions')
         try:
             self.swap_points.to_excel(writer, sheet_name='swap_points')
         except:
@@ -543,22 +564,81 @@ if __name__ == "__main__":
     fig, ax = ts_bas.plot(color='k')
 
 
-    # leverage_adjusted
-    ts_lev = ts.leverage_adjusted()
-    ts_lev.to_excel(xl_filename)
-    fig, ax = ts_lev.plot(color='r')
+    # # leverage_adjusted
+    # ts_lev = ts.leverage_adjusted()
+    # ts_lev.to_excel(xl_filename)
+    # fig, ax = ts_lev.plot(color='r')
 
 
     # # adjusted for both
     # ts_lev_bas = ts.leverage_adjusted().bas_adjusted()
-    xl_filename = data_path + '../../opec_meetings/calc/insights_lev_bas.xlsx'
+    # xl_filename = data_path + '../../opec_meetings/calc/insights_lev_bas.xlsx'
     # fig, ax = ts_lev_bas.plot(color='#ddc061')
 
 
     # adjusted for dividend -------------------------------------------------
-    ts_div_bas = ts.bas_adjusted().roll_adjusted(
-        {"bid": tnswap_bid, "ask": tnswap_bid})
-    ts_div_bas._returns.sum(axis=1).cumsum().plot()
+    ts_bas_roll = ts.bas_adjusted().roll_adjusted(
+        swap_points={"bid": tnswap_bid, "ask": tnswap_ask})
+
+    ts_bas_roll._returns.sum(axis=1).cumsum().plot()
+    ts_bas_roll.weights.loc["2001-01"]
+    ts_bas_roll._returns.loc["2001-01"]
+
 
     # run this --------------------------------------------------------------
     res = run_this(10, 0.100)
+
+
+    # FOMC ------------------------------------------------------------------
+    # assets
+    with open(data_path + "fx_by_tz_sp_fixed.p", mode='rb') as fname:
+        fx = pickle.load(fname)
+    spot_ask = fx["spot_ask"].loc[:,"2000-11":,"NYC"].drop(["dkk"], axis=1)
+    spot_mid = fx["spot_mid"].loc[:,"2000-11":,"NYC"].drop(["dkk"], axis=1)
+    spot_bid = fx["spot_bid"].loc[:,"2000-11":,"NYC"].drop(["dkk"], axis=1)
+
+    tnswap_ask = fx["tnswap_ask"].loc[:,"2000-11":,"NYC"].drop(["dkk"], axis=1)
+    tnswap_bid = fx["tnswap_bid"].loc[:,"2000-11":,"NYC"].drop(["dkk"], axis=1)
+
+    # dollar policy
+    pe = PolicyExpectation.from_pickles(data_path, "usd", use_ffut=False)
+    policy_fcast_usd = pe.forecast_policy_change(
+        lag=12, threshold=0.10, avg_impl_over=5, avg_refrce_over=5)*-1
+
+    policy_fcast_usd = pd.concat([policy_fcast_usd,]*spot_mid.shape[1], axis=1)
+    policy_fcast_usd.columns = spot_mid.columns
+
+    weights = pd.DataFrame(1/policy_fcast_usd.shape[1],
+        index=policy_fcast_usd.index,
+        columns=policy_fcast_usd.columns)
+
+    settings.update({"horizon_a": -10, "horizon_b": -1})
+    ts = EventTradingStrategy(
+        signals=policy_fcast_usd,
+        weights=weights,
+        settings=settings,
+        prices={"mid": spot_mid, "bid": spot_bid, "ask": spot_ask})
+
+    ts_div_bas = ts.bas_adjusted().roll_adjusted(
+        {"bid": tnswap_bid, "ask": tnswap_bid})
+
+    ts.get_strategy_returns().dropna().cumsum().plot()
+    ts.bas_adjusted().get_strategy_returns().dropna().cumsum().plot()
+    ts_div_bas._returns.mean(axis=1).dropna().cumsum().plot()
+    ts_div_bas.to_excel(xl_filename)
+
+    ts.signals.dropna().count()
+
+
+
+
+    poco.weighted_return(ts_bas_roll._returns, ts_bas_roll.weights).dropna()\
+        .cumsum().plot()
+
+    ts_bas_roll.weights.loc["2001"]
+
+    ts_bas_roll._returns.loc["2001"]
+    ts_bas_roll._returns.sum(axis=1).cumsum().plot()
+    ts_bas_roll.get_matrix_of_returns().sum(axis=1).cumsum().plot()
+    ts_bas_roll.to_excel(xl_filename)
+    ts_bas_roll._returns.count()
