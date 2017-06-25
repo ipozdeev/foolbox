@@ -6,6 +6,7 @@ from pandas.tseries.offsets import DateOffset, MonthBegin, MonthEnd, \
 from sklearn.metrics import confusion_matrix
 import matplotlib.pyplot as plt
 from utils import *
+from foolbox.trading import EventTradingStrategy
 
 import itertools
 
@@ -1008,10 +1009,11 @@ def broomstick_plot(data, ci=(0.1, 0.9)):
     return fig
 
 
-def event_trading_backtest(fx_data, holding_range, threshold_range,
-                           start_date, end_date,
-                           data_path, avg_impl_over=2, avg_refrce_over=2):
-    """
+def event_backtest_wrapper(fx_data, fx_data_us, holding_range, threshold_range,
+                           data_path, **kwargs):
+    """Wrapper around 'event_trading_backtest' combining fomc dollar index and
+    other currencies into single return
+
     Parameters
     ----------
     fx_data: dictionary
@@ -1022,79 +1024,158 @@ def event_trading_backtest(fx_data, holding_range, threshold_range,
         keys are as follows: "spot_mid", "spot_bid", "spot_ask", "tnswap_bid",
         "tnswap_ask". Furthermore the data are assumed to be 'prepared' in
         terms of nan handling and index alignment
-    holding_range
-    threshold_range
-    start_date: str
-        specifying the start date of signals and fx_data
-    end_date: str
-        specifying the end_date of signals and fx_data
-    data_path
-    avg_impl_over
-    avg_refrce_over
+    fx_data: dictionary
+        structured similarly to the one above, containing fx data for the
+        dollar index trading strategy around the fomc meetings
+    holding_range: np.arange
+        specifying the range of holding periods
+    threshold_range: np.arange
+        specifying threshold levels in basis points
+    data_path: str
+        to the 'events.p' file with data for policy forecasts
+    kwargs: dict
+        of arguments of PolicyExpectation().forecast_policy_change() method,
+        namely: avg_impl_over, avg_refrce_over, bday_reindex
 
     Returns
     -------
-
+    strat_ret: Multiindex DataFrame
+        with the first level corresponding to holding periods and the second
+        level corresponding to the threshold levels, and columns containing sum
+        of return on the expected policy rate strategy across assets
 
     """
-    # Get the shorthand notation of the data
+    # Get returns of the currencies around local events, except for fomc
+    ret_x_us = event_trading_backtest(fx_data, holding_range, threshold_range,
+                                      data_path, fomc=False, **kwargs)["aggr"]
+
+    # Get returns of the dollar portfolio around the FOMC meetings
+    ret_us = event_trading_backtest(fx_data_us, holding_range, threshold_range,
+                                    data_path, fomc=True, **kwargs)["aggr"]
+
+    # Add one to the other
+    strat_ret = ret_x_us.add(ret_us, axis=1).\
+        fillna(value=ret_x_us).fillna(value=ret_us)
+
+    return strat_ret
+
+
+def event_trading_backtest(fx_data, holding_range, threshold_range,
+                           data_path, fomc=False, **kwargs):
+    """Backtest using policy forecast and EventTrading strategy, to compute
+    bid-ask spread and t/n-swap -adjusted returns around forecast events
+
+    Parameters
+    ----------
+    fx_data: dictionary
+        containing dataframes with mid, ask, bid spot quotes and bid, ask t/n
+        swap points. The FX data should adhere to the following convention:
+        all exchange rates are in units of base currency per unit of quote
+        currency, swap points should be added to get the excess returns. The
+        keys are as follows: "spot_mid", "spot_bid", "spot_ask", "tnswap_bid",
+        "tnswap_ask". Furthermore the data are assumed to be 'prepared' in
+        terms of nan handling and index alignment
+    holding_range: np.arange
+        specifying the range of holding periods
+    threshold_range: np.arange
+        specifying threshold levels in basis points
+    data_path: str
+        to the 'events.p' file with data for policy forecasts
+    fomc: bool
+        If false the forecasts are obtained for each currency in the currencies
+        list. If false the inverse fomc events are returned for each currency
+        in the list. Default is False
+    kwargs: dict
+        of arguments of PolicyExpectation().forecast_policy_change() method,
+        namely: avg_impl_over, avg_refrce_over, bday_reindex
+
+    Returns
+    -------
+    results: dict
+        with key 'aggr' containing a MultiIndex dataframe with the first level
+        corresponding to holding period and second level corresponding to the
+        threshold levels, and columns containing sum of return on the expected
+        policy rate strategy across assets (mean for the case of dollar index
+        i.e. if fomc=True). The second key 'disaggr' is a dict of dicts with
+        first level corresponding to holding strategy and second level
+        corresponding to the threshold levels with dataframes of returns to
+        individual currencies as items. For example
+
+        results = {
+            "aggr": MultiIndex of summed (or averaged for fomc) returns,
+            "disaggr": {
+                "10":
+                   {"5": DataFrame,
+                    "10": DataFrame}
+                "11":
+                    {"5": DataFrame,
+                     "10": DataFrame}
+                    },
+            }
+
+    """
+    # Get he pandas slicer for convenient MultiIndex reference
+    ix = pd.IndexSlice
+
+    # Initialize trading strategy settings
+    trade_strat_settings = {"horizon_a": None,
+                            "horizon_b": -1,
+                            "bday_reindex": kwargs["bday_reindex"]}
+
+    # Get the shorthand notation of the data for all countries
     spot_mid = fx_data["spot_mid"]
     spot_bid = fx_data["spot_bid"]
     spot_ask = fx_data["spot_ask"]
-    tn_swap_bid = fx_data["tnswap_bid"]
-    tn_swap_ask = fx_data["tnswap_ask"]
-
-    # Get he pandas slicer for convenient MultiIndex reference
-    ix = pd.IndexSlice
+    swap_bid = fx_data["tnswap_bid"]
+    swap_ask = fx_data["tnswap_ask"]
 
     # Set up the output structure
     results = dict()
     results["disaggr"] = dict()
 
-    # The aggregated outpu is a multiindex
+    # The aggregated output is a multiindex
     combos = list(itools.product(holding_range, threshold_range))
     cols = pd.MultiIndex.from_tuples(combos, names=["holding", "threshold"])
     aggr = pd.DataFrame(index=spot_mid.index, columns=cols)
 
     # Start backtesting looping over holding periods and thresholds
     for holding_period in holding_range:
-
         # Transform holding period into lag_expect argument for the
         # 'forecast_policy_change()' method of the 'PolicyExpectation' class
         lag_expect = holding_period + 2  # forecast rate before trading FX
+
+        # Adjust the trading strategy settings
+        trade_strat_settings["horizon_a"] = -holding_period
 
         # Create an entry for the disaggregated output
         results["disaggr"][str(holding_period)] = dict()
 
         # A soup of several loops
         for threshold in threshold_range:
+            # Get the signals
+            signals = get_pe_signals(currencies=spot_mid.columns,
+                                     lag=lag_expect, threshold=threshold,
+                                     data_path=data_path, fomc=fomc, **kwargs)
 
-            # For the predominant case of multiple currencies pool the signals
-            pooled_signals = list()
+            # Get the trading strategy
+            strat = EventTradingStrategy(
+                signals=signals,
+                prices={"mid": spot_mid, "bid": spot_bid, "ask": spot_ask},
+                settings=trade_strat_settings)
 
-            # Get the policy forecast for each currency
-            for curr in returns.columns:
-                tmp_pe = PolicyExpectation.from_pickles(data_path, curr)
-                tmp_fcast =\
-                    tmp_pe.forecast_policy_change(lag=lag_expect,
-                                                  threshold=threshold/100,
-                                                  avg_impl_over=avg_impl_over,
-                                                  avg_refrce_over=avg_refrce_over)
-                # Append the signals
-                pooled_signals.append(tmp_fcast)
+            # Adjust for transaction costs and swap points, get returns
+            strat = strat.bas_adjusted()\
+                .roll_adjusted({"bid": swap_bid, "ask": swap_ask})._returns
 
-            # Aggregate the signals, construct strategies, append the output
-            pooled_signals = pd.concat(pooled_signals, join="outer", axis=1)
-
-            # Replace 0 with nan to consider only expected hikes and cuts
-            strat = multiple_timing(returns.rolling(holding_period).sum(),
-                                    pooled_signals.replace(0, np.nan),
-                                    xs_avg=False)
-
-            # Append the disaggregated and aggregated outputs
-            # TODO: Review mean vs sum/count
-            aggr.loc[:, ix[holding_period, threshold]] = strat.mean(axis=1)
+            # Append the output
             results["disaggr"][str(holding_period)][str(threshold)] = strat
+
+            # For FOMC, report aggragated mean, else sum over the x-section
+            if fomc:
+                aggr.loc[:, ix[holding_period, threshold]] = strat.mean(axis=1)
+            else:
+                aggr.loc[:, ix[holding_period, threshold]] =\
+                    strat.mean(axis=1) * strat.count(axis=1)
 
             print("Policy expectation backtest\n",
                   "Holding period:", holding_period,
@@ -1102,7 +1183,66 @@ def event_trading_backtest(fx_data, holding_range, threshold_range,
 
     results["aggr"] = aggr
 
-    pass
+    return results
+
+
+def get_pe_signals(currencies, lag, threshold, data_path, fomc=False,
+                   **kwargs):
+    """Fetches a dataframe of signals from the 'PolicyExpectation' class, for
+    currencies in the list for a given holding period and threshold. If fomc
+    is True, returns a dataframe of inverse fomc signal for each currency in
+    currencies
+
+    Parameters
+    ----------
+    currencies: list
+        of strings with currency codes, e.g ["aud", "gbp", "jpy"]
+    lag: int
+        forecast is made 'T-lag' days before a meeting, where T is announcement
+        day
+    threshold: float
+        threshold for policy expectation forecast in basis points
+    data_path: str
+        to the 'events.p' file with data for policy forecasts
+    fomc: bool
+        If false the forecasts are obtained for each currency in the currencies
+        list. If false the inverse fomc events are returned for each currency
+        in the list. Default is False
+    kwargs: dict
+        of arguments of PolicyExpectation().forecast_policy_change() method,
+        namely: avg_impl_over, avg_refrce_over, bday_reindex
+
+    Returns
+    -------
+    signals. pd.DataFrame
+        of predicted policy changes (+1 - hike, 0 - no change, -1 - cut)
+
+    """
+    # For the US get the fomc announcements and use them for every currency
+    if fomc:
+        # Construct signals for the dollar index
+        us_pe = PolicyExpectation.from_pickles(data_path, "usd")
+        us_fcast = \
+            us_pe.forecast_policy_change(lag=lag, threshold=threshold/100,
+                                         **kwargs)
+
+        # Create inverse signals for every currency around FOMC announcements
+        signals = pd.concat([-us_fcast]*len(currencies), axis=1)
+        signals.columns = currencies
+
+    # Otherwise get signals for each currency in the list
+    else:
+        policy_fcasts = list()
+        # Get signals for each currency in the list
+        for curr in currencies:
+            tmp_pe = PolicyExpectation.from_pickles(data_path, curr)
+            policy_fcasts.append(
+                tmp_pe.forecast_policy_change(lag=lag,threshold=threshold/100,
+                                              **kwargs))
+        # Pool signals into a single dataframe
+        signals = pd.concat(policy_fcasts, join="outer", axis=1)
+
+    return signals
 
 
 if __name__  == "__main__":
