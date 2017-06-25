@@ -15,8 +15,8 @@ start_date = settings["sample_start"]
 end_date = settings["sample_end"]
 
 # Set up the parameters of trading strategies
-holding_range = np.arange(1, 16, 5)
-threshold_range = np.arange(1, 26, 5)
+holding_range = np.arange(1, 16, 1)
+threshold_range = np.arange(1, 26, 1)
 
 # Policy expectations keyword arguments
 pol_exp_args = {"avg_impl_over": 5,
