@@ -94,10 +94,3 @@ fig_all.savefig(out_path + "broomstick_plot_rx_bas.pdf")
 
 fig_us = broomstick_plot(cumret_us)
 fig_us.savefig(out_path + "broomstick_plot_rx_bas_usd.pdf")
-
-
-
-
-
-
-
