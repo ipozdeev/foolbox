@@ -359,23 +359,10 @@ class EventTradingStrategy(TradingStrategy):
         return new_self
 
     def roll_adjusted_approx(self, swap_points):
-        """ Adjust for the rollovers by using a crude approximation
+        """ Adjust for the rollovers by using an approximation
         """
+        
 
-        # # roll is credited/debited two days fewer
-        # roll_index = self.position_flags.shift(1).notnull() & \
-        #     self.position_flags.shift(-1).notnull()
-        # swap_points_to_add = sp.where(roll_index).fillna(0.0)
-        #
-        # prices_adjusted = self.prices["mid"] + swap_points_to_add
-        # new_returns = np.log(self.prices["mid"] / prices_adjusted.shift(1))
-        #
-        # # copy self
-        # new_self = copy.deepcopy(self)
-        # new_self._returns = new_returns
-        # new_self.swap_points = sp
-        #
-        # return new_self
 
         pass
 
