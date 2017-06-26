@@ -76,7 +76,7 @@ fx_data_us = {"spot_mid": spot_mid_us, "spot_bid": spot_bid_us,
 # Run backtests separately for ex-us and dollar index
 ret_xus = event_trading_backtest(fx_data, holding_range, threshold_range,
                                  data_path, fomc=False, **pol_exp_args)["aggr"]
-ret_us = event_trading_backtest(fx_data, holding_range, threshold_range,
+ret_us = event_trading_backtest(fx_data_us, holding_range, threshold_range,
                                 data_path, fomc=True, **pol_exp_args)["aggr"]
 
 # Get the all-events returns
