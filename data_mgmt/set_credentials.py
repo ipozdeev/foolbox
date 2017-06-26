@@ -13,11 +13,12 @@ user_info =\
                    },
      "Igor": {"R_USER": "Igor",
               "R_HOME": "c:/Program Files/R/R-3.2.5",
-              "gdrive": "C:/Users/Igor/Google Drive/Personal/"
+              "gdrive": "C:/Users/Igor/Google Drive/Personal/",
               },
      "HSG-Spezial": {"R_USER": "HSG-Spezial",
                      "R_HOME": "c:/Program Files/R/R-3.2.5",
-                     "gdrive": "C:/Users/HSG-Spezial/Google Drive/Personal/"
+                     "gdrive": "C:/Users/HSG-Spezial/Google Drive/Personal/",
+                     "local": "D:/Personal/"
                      }
      }
 
@@ -62,6 +63,26 @@ def gdrive_path(shared_path, user_info=user_info):
         user-contingent path to a shared Google Drive folder
 
     """
+    return set_path(shared_path, which="gdrive")
+
+
+def set_path(path_to_set, user_info=user_info, which="gdrive"):
+    """ Set path to a folder, contingent on the current user.
+
+    Parameters
+    ----------
+    path_to_set: str
+        representing a path
+    user_info: dict
+        with key corresponding to users, and a nested dictionary for each key
+        contains paths to R. See the default dictionary above
+
+    Returns
+    -------
+    path: str
+        user-contingent path
+
+    """
     # Get the current user
     current_user = getpass.getuser()
 
@@ -69,7 +90,7 @@ def gdrive_path(shared_path, user_info=user_info):
     current_user_info = user_info[current_user]
 
     # Set the path
-    path = current_user_info["gdrive"] + shared_path
+    path = current_user_info[which] + path_to_set
 
     return path
 
