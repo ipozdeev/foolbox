@@ -5,7 +5,7 @@ from pandas.tseries.offsets import DateOffset, MonthBegin, MonthEnd, \
     relativedelta
 from sklearn.metrics import confusion_matrix
 import matplotlib.pyplot as plt
-from utils import *
+from foolbox.utils import *
 from foolbox.trading import EventTradingStrategy
 
 import itertools

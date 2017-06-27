@@ -1229,23 +1229,42 @@ def timed_strat(returns, signals):
 
     return timed_returns
 
-def many_monthly_rx(s_d, fdisc_d):
+def many_monthly_rx(S_d, F_d):
     """ Get 22 overlapping monthly excess returns.
     Parameters
     ----------
     fdisc_d : pd.DataFrame
         forward discounts (30-day forwards) from perspective of US investor
     """
-    s_d, fdisc_d = s_d.align(fdisc_d, axis=0)
+    S_d, F_d = S_d.align(F_d, axis=0)
+    F_d = F_d.ffill()
 
-    s = s_d.rolling(22).sum()
-    f = fdisc_d.shift(22)
+    res = pd.Series(index=S_d.index)*np.nan
+
+    for t in S_d.index:
+        # t = S_d.index[100]
+        prev_t = t - DateOffset(months=1)
+        if prev_t < (F_d.index[0]):
+            continue
+        # subsample y and x
+        r = np.log(S_d.loc[t]/F_d.iloc[F_d.index.get_loc(prev_t, "ffill")])
+
+        res.loc[t,:] = r
+
+    return res
 
     all_m = dict()
     for p in range(22):
         all_m[p] = s_d.iloc[p::22,:] + f.iloc[p::22,:]
 
-    return all_m
+    # s = s_d.rolling(22).sum()
+    # f = fdisc_d.shift(22)
+    #
+    # all_m = dict()
+    # for p in range(22):
+    #     all_m[p] = s_d.iloc[p::22,:] + f.iloc[p::22,:]
+    #
+    # return all_m
 
 def many_monthly_s(s_d):
     """ Get 22 overlapping monthly spot returns.
