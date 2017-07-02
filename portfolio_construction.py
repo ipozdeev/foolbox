@@ -1,4 +1,5 @@
 import pandas as pd
+from pandas.tseries.offsets import DateOffset
 import numpy as np
 from foolbox.data_mgmt import set_credentials as setc
 import pickle
@@ -1229,33 +1230,37 @@ def timed_strat(returns, signals):
 
     return timed_returns
 
-def many_monthly_rx(S_d, F_d):
-    """ Get 22 overlapping monthly excess returns.
+def many_monthly_rx(s_d, f_d):
+    """ Get 28 overlapping monthly excess returns.
     Parameters
     ----------
     fdisc_d : pd.DataFrame
         forward discounts (30-day forwards) from perspective of US investor
     """
-    S_d, F_d = S_d.align(F_d, axis=0)
-    F_d = F_d.ffill()
+    s_d, f_d = s_d.align(f_d, axis=0)
+    idx = pd.date_range(s_d.index[0], s_d.index[-1], freq='D')
 
-    res = pd.Series(index=S_d.index)*np.nan
+    f_d = f_d.reindex(idx).ffill()
+    s_d = s_d.reindex(idx)
 
-    for t in S_d.index:
-        # t = S_d.index[100]
+    res = pd.DataFrame(index=s_d.index, columns=s_d.columns)*np.nan
+
+    for t in s_d.index:
+        # t = s_d.index[100]
         prev_t = t - DateOffset(months=1)
-        if prev_t < (F_d.index[0]):
+        if prev_t < (f_d.index[0]):
             continue
         # subsample y and x
-        r = np.log(S_d.loc[t]/F_d.iloc[F_d.index.get_loc(prev_t, "ffill")])
+        r = s_d.loc[(prev_t+DateOffset(days=1)):t,:].sum().add(
+            f_d.iloc[f_d.index.get_loc(prev_t, "ffill")])
 
         res.loc[t,:] = r
 
-    return res
-
     all_m = dict()
-    for p in range(22):
-        all_m[p] = s_d.iloc[p::22,:] + f.iloc[p::22,:]
+    for p in range(28):
+        all_m[p] = res.ix[(res.index.day == p+1),:]
+
+    return all_m
 
     # s = s_d.rolling(22).sum()
     # f = fdisc_d.shift(22)
