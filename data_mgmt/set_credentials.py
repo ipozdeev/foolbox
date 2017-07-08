@@ -66,7 +66,7 @@ def gdrive_path(shared_path, user_info=user_info):
     return set_path(shared_path, which="gdrive")
 
 
-def set_path(path_to_set, user_info=user_info, which="gdrive"):
+def set_path(path_to_set, which="gdrive", user_info=user_info):
     """ Set path to a folder, contingent on the current user.
 
     Parameters

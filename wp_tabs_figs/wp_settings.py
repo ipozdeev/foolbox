@@ -16,11 +16,15 @@ settings = {
 
 # matplotlib settings -------------------------------------------------------
 import matplotlib.pyplot as plt
+from matplotlib.colors import LinearSegmentedColormap
 
 # colors
 new_gray = "#8c8c8c"
 new_red = "#ce3300"
 new_blue = "#2f649e"
+
+my_palette = [new_red, new_blue, new_gray]
+my_cmap = LinearSegmentedColormap.from_list("my_cmap", my_palette)
 
 # settings
 font_settings = {
