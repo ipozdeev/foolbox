@@ -361,7 +361,7 @@ class EventTradingStrategy(TradingStrategy):
     def roll_adjusted_approx(self, swap_points):
         """ Adjust for the rollovers by using an approximation
         """
-        
+
 
 
         pass
