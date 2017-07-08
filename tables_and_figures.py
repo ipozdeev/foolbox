@@ -111,7 +111,7 @@ def fama_macbeth_second(Y, betas):
     return lambdas, alphas
 
 
-def descriptives(data, scale=12):
+def descriptives(data, scale=12, use_statsmodels=False):
     """Estimates frequency-adjusted descriptive statistics for each series in
     the input DataFrame, by default assumes monthly inputs and annualized
     output.
@@ -142,9 +142,21 @@ def descriptives(data, scale=12):
 
     # Iterate over input's columns, computing statistics
     for column in data.columns:
+        # column = data.columns[0]
+        if use_statsmodels:
+            endog = data[column].dropna().values
+            exog = np.ones(shape=(len(endog),))
+            mod = sm.OLS(endog, exog)
+            mod_fit = mod.fit(cov_type='HAC', cov_kwds={"maxlags":1})
+            mean = mod_fit.params[0]
+            se_mean = mod_fit.bse[0]
+        else:
+            mean, se_mean, _ = ec.rOls(
+                data[column], None, const=True, HAC=True)
+        # # Compute mean with HAC-adjusted standard error
+        # mean, se_mean, _ = ec.rOls(data[column], None, const=True, HAC=True)
 
-        # Compute mean with HAC-adjusted standard error
-        mean, se_mean, _ = ec.rOls(data[column], None, const=True, HAC=True)
+
         out[column]["mean"] = mean[0] * scale
         out[column]["se_mean"] = se_mean[0] * scale
 
