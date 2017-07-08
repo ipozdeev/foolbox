@@ -1045,6 +1045,8 @@ def get_hml(returns, signals, n_portf=3):
     pf = rank_sort(returns, signals, n_portf)
     hml = get_factor_portfolios(pf, hml=True).loc[:,"hml"]
 
+    hml = hml.reindex(index=signals.index)
+
     return hml
 
 def buy_before_events(s_d, fdisc_d, evts, fwd_maturity='W', burnin=1):
@@ -1241,7 +1243,7 @@ def many_monthly_rx(s_d, f_d):
     idx = pd.date_range(s_d.index[0], s_d.index[-1], freq='D')
 
     f_d = f_d.reindex(idx).ffill()
-    s_d = s_d.reindex(idx)
+    s_d = s_d.reindex(idx).fillna(value=0)
 
     res = pd.DataFrame(index=s_d.index, columns=s_d.columns)*np.nan
 
