@@ -1,4 +1,5 @@
 import pandas as pd
+import numpy as np
 
 def align_and_fillna(data, reindex_freq=None, **kwargs):
     """
@@ -30,3 +31,18 @@ def align_and_fillna(data, reindex_freq=None, **kwargs):
         new_data = [p.reindex(index=common_idx).fillna(**kwargs) for p in data]
 
     return new_data
+
+
+def add_fake_signal(ret, sig):
+    """ Add fake series to signal: the median in each row.
+    """
+    r, s = ret.copy(), sig.copy()
+
+    # calculate median across rows
+    fake_sig = sig.apply(np.nanmedian, axis=1)
+
+    # reinstall
+    s.loc[:,"fake"] = fake_sig
+    r.loc[:,"fake"] = np.nan
+
+    return r, s
