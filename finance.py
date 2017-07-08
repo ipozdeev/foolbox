@@ -597,15 +597,16 @@ class PolicyExpectation():
             # p = 0.085
             cmx = self.assess_forecast_quality(
                 lag=lag, threshold=p, **kwargs)
+            # ipdb.set_trace()
 
             fcast_accy.loc["hike",p,"true_pos"] = \
                 cmx.loc[1,1]/cmx.loc[:,1].sum()
             fcast_accy.loc["hike",p,"false_pos"] = \
-                cmx.loc[1,-1:0].sum()/cmx.loc[-1:0,-1:0].sum().sum()
+                cmx.loc[1,-1:0].sum()/cmx.loc[:,-1:0].sum().sum()
             fcast_accy.loc["cut",p,"true_pos"] = \
                 cmx.loc[-1,-1]/cmx.loc[:,-1].sum()
             fcast_accy.loc["cut",p,"false_pos"] = \
-                cmx.loc[-1,0:1].sum()/cmx.loc[-1:0,-1:0].sum().sum()
+                cmx.loc[-1,0:1].sum()/cmx.loc[:,0:1].sum().sum()
 
             # add back extreme values
             fcast_accy.loc["hike",1,:] = [1.0, 1]
@@ -616,19 +617,24 @@ class PolicyExpectation():
         for h in range(2):
             # h = 0
             this_ax = plt.subplot(121+h)
+            # ipdb.set_trace()
             self.plot_roc(fcast_accy.iloc[h,:,:], ax=this_ax,
                 linewidth=1.5)
             this_ax.set_title(fcast_accy.items[h]+'s')
 
+
         this_ax.set_ylabel('', visible=False)
-        this_ax.legend(loc="lower right", prop={'size':12},
-            bbox_to_anchor=((1+0.01)/1.1, (0.05+0.01)/1.1))
+        # this_ax.legend(loc="lower right", prop={'size':12},
+        #     bbox_to_anchor=((1+0.01)/1.1, (0.05+0.01)/1.1))
+        # this_ax.legend_.remove()
 
         fig.suptitle("roc curves", fontsize=12)
 
         if out_path is not None:
-            fig.savefig(out_path+"roc_lags_"+'_'.join([str(l) for l in lag])+\
+            fig.savefig(out_path+"roc_lag_"+str(lag)+\
                 ".png", dpi=300, bbox_inches="tight")
+
+        return ax
 
     @staticmethod
     def plot_roc(data, ax=None, **kwargs):
@@ -641,7 +647,8 @@ class PolicyExpectation():
         if ax is None:
             fig, ax = plt.subplots(figsize=(8.4,8.4))
 
-        data.sort_values(["false_pos","true_pos"]).plot(
+        data_sorted = data.sort_values(["false_pos","true_pos"])
+        data_sorted.plot(
             ax=ax,
             x="false_pos",
             y="true_pos",
@@ -664,6 +671,14 @@ class PolicyExpectation():
         ax.set_xlabel("false positive")
         ax.set_ylabel("true positive")
         ax.legend_.remove()
+
+        # area under the curve
+        auc = np.trapz(
+            data_sorted["true_pos"].values,
+            data_sorted["false_pos"].values)
+
+        ax.annotate(r"$AUC={:5.4f}$".format(auc),
+            xy=(0.5, 0.1), xycoords='axes fraction')
 
         return
 
