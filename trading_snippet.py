@@ -1,45 +1,51 @@
+import pandas as pd
+
 class FXPosition(object):
     """
 
     """
 
-    def __init__(self, currency, position_type, price_data, initial_price,
-                 initial_quantity, action=None):
-
+    def __init__(self, currency):
         """
 
         Parameters
         ----------
-        currency
-        position_type: str
-            'long' or 'short'
-        action: str
-            'buy', 'sell', 'roll over', 'flip'
+        currency: str
+
 
         Returns
         -------
 
         """
         self.currency = currency
-        self.position_type = position_type
-        self.action = action
-        self.price_ask = price_data["price_ask"]
-        self.price_bid = price_data["price_ask"]
-        self.swap_pts_ask = price_data["swap_ask"]
-        self.swap_pts_bid = price_data["swap_bid"]
-        self.initial_price = initial_price
-        self.initial_quantity = initial_quantity
+
+        self.position_type = None
+        self.initial_price = 0
+        self.initial_quantity = 0
+        self.avg_price = 0
 
         self.unrealized_pnl = 0
-        self.realized_pnl =0
+        self.realized_pnl = 0
 
-        self.initial_value = self.initial_price * self.initial_quantity
         self.end_quantity = self.initial_quantity
-        self.end_value = self.initial_value
-        self.avg_price = initial_price
-        self.end_type = position_type
 
-    def buy(self, quantity):
+    def buy(self, quantity, price):
+        """
+
+        Parameters
+        ----------
+        quantity
+        price
+
+        Returns
+        -------
+
+        """
+        # If there is no open position open a long one, set the initial price
+        if self.position_type is None:
+            self.position_type = "long"
+            self.initial_price = price
+
         # If the initial position is long, then buy MOAR
         if self.position_type == "long":
             # Increase the quantity
@@ -47,36 +53,182 @@ class FXPosition(object):
             # Compute VWAP
             self.avg_price = \
                 (self.initial_price * self.initial_quantity +
-                 self.price_ask * quantity) / self.end_quantity
+                 price * quantity) / self.end_quantity
+
         # If short -- partial close at ask or flip to long
         else:
-            self.end_quantity = self.initial_quantity - quantity
+            # If quantity to buy is leq than that available - partial close
+            if self.initial_quantity >= quantity:
+                # Reduce the quanity
+                self.end_quantity = self.initial_quantity - quantity
+                # Intuition: price > init_price means loss in short position
+                self.realized_pnl = \
+                    self.realized_pnl - quantity * (price - self.initial_price)
+                # Average price remains the same
 
-            self.realized_pnl = self.realized_pnl - \
-                quantity * (self.price_ask - self.initial_price)
+            # Else the position is closed and opened in the opposite direction
+            else:
+                self.flip(quantity, price)
 
-    def sell(self, quantity):
+        # Check the end quantity, render position type to None if nothing left
+        if self.end_quantity == 0:
+            self.position_type = None
 
-        if self.position_type == "long":  # partial close
-            self.end_quantity = self.initial_quantity - quantity
-            self.end_value = self.end_quantity * self.initial_price
+    def sell(self, quantity, price):
+        """
 
-        else:  # short moar
-            self.end_quantity = self.initial_quantity + quantity
-            self.end_value = self.initial_value + self.price_bid * quantity
-            self.avg_price = self.end_value / self.end_quantity
+        Parameters
+        ----------
+        quantity
+        price
 
-    def roll_over(self):
+        Returns
+        -------
+
+        """
+        # If there is no open position, create a short one, set initial price
+        if self.position_type is None:
+            self.position_type = "short"
+            self.initial_price = price
+
+        # If the initial position is long, partial close or flip to short
         if self.position_type == "long":
-            self.end_value = self.end_value + \
-                             self.end_quantity * self.swap_pts_ask
+            # If quantity to sell is leq than that available - partial close
+            if self.initial_quantity >= quantity:
+                # Reduce the quanity
+                self.end_quantity = self.initial_quantity - quantity
+                # Intuition: price > init_price means gain in long position
+                self.realized_pnl = \
+                    self.realized_pnl + quantity * (price - self.initial_price)
+                # Average price remains the same
+
+            # Else the position is closed and opened in the opposite direction
+            else:
+                self.flip(quantity, price)
+
+        # If short, short even, more. It's FX after all
         else:
-            self.end_value = self.end_value + \
-                             self.end_quantity * self.swap_pts_bid
+            # Increase the quantity
+            self.end_quantity = self.initial_quantity + quantity
+            # Compute VWAP
+            self.avg_price = \
+                (self.initial_price * self.initial_quantity +
+                 price * quantity) / self.end_quantity
 
+        # Check the end quantity, render position type to None if nothing left
+        if self.end_quantity == 0:
+            self.position_type = None
 
-    def flip(self, quantity):
-        pass
+    def flip(self, quantity, price):
+        """
+
+        Parameters
+        ----------
+        quantity
+        price
+
+        Returns
+        -------
+
+        """
+        # If the intital position was long, sell it out
+        if self.position_type == "long":
+            # First, close the existing position, by selling initial quantity
+            self.sell(self.initial_quantity, price)
+
+            # Set the leftover quantity to trade in opposite direction
+            quantity_flip = quantity - self.initial_quantity
+
+            # Reset the initial quantity, nothing is left on balance
+            self.initial_quantity = 0
+
+            # Swap the position type
+            self.position_type = "short"
+
+            # And sell even more
+            self.sell(quantity_flip, price)
+
+            # Finally, set the new average prive
+            self.avg_price = price
+
+        # Similarly take care of short positions buying moar
+        else:
+            self.buy(self.initial_quantity, price)
+            quantity_flip = quantity - self.initial_quantity
+            self.initial_quantity = 0
+            self.position_type = "long"
+            self.buy(quantity_flip, price)
+            self.avg_price = price
+
+    def roll_over(self, swap_points):
+        """
+
+        Parameters
+        ----------
+        swap_points: pd.Series
+            indexed with 'bid' and 'ask' and containing corresponding quotes
+
+        Returns
+        -------
+
+        """
+        swap_points_ask = swap_points["ask"]
+        swap_points_bid = swap_points["bid"]
+        # Accrue swap points to the average price
+        if self.position_type == "long":
+            self.avg_price = self.avg_price + swap_points_ask
+        else:
+            self.avg_price = self.avg_price + swap_points_bid
+
+    def get_market_value(self, market_prices):
+        """
+
+        Parameters
+        ----------
+        market_prices: pd.Series
+            indexed with 'bid' and 'ask' and containing corresponding
+            exchange rates
+
+        Returns
+        -------
+
+        """
+        # Long positions are
+        if self.position_type == "long":
+            liquidation_price = market_prices["bid"]
+        else:
+            liquidation_price = market_prices["ask"]
+
+        market_value = liquidation_price * self.end_quantity
+
+        return market_value
+
+    def get_unrealized_pnl(self, market_prices):
+        """
+
+        Parameters
+        ----------
+        market_prices: pd.Series
+            indexed with 'bid' and 'ask' and containing corresponding
+            exchange rates
+
+        Returns
+        -------
+
+        """
+        # Shortcut to the price quotes
+        ask = market_prices["ask"]
+        bid = market_prices["bid"]
+
+        # Liquidate long positions at bid
+        if self.position_type == "long":
+            unrealized_pnl = (bid - self.avg_price) * self.end_quantity
+        # And short positions at ask, mind the minus sign
+        else:
+            unrealized_pnl = (self.avg_price - ask) * self.end_quantity
+
+        return unrealized_pnl
+
 
 
 def main():
@@ -85,25 +237,49 @@ def main():
 if __name__ == '__main__':
 
     currency = "gbp"
-    position_type = "short"
-    price_data = {"price_ask": 1.27,
-                  "price_bid": 1.23,
-                  "swap_ask": 0.02,
-                  "swap_bid": 0.01}
+    position_type = "long"
 
     initial_price = 1.25
     initial_quantity = 1
 
-    pos = FXPosition(currency, position_type, price_data, initial_price,
-                     initial_quantity)
+    pos = FXPosition(currency=currency)
+    pos.initial_price = 1.25
 
 
-    print(pos.end_value)
+    pos.sell(1.5, 1.23)
 
 
+    prices = pd.Series([1.27, 1.23], index=["ask", "bid"])
+    swap_points = pd.Series([0.02, 0.01], index=["ask", "bid"])
 
+    pos.get_market_value(prices)
+    pos.roll_over(swap_points)
+    pos.get_market_value(prices)
 
+    prices = pd.DataFrame({"ask": [1.27, 1.28],
+                           "bid": [1.23, 1.24]})
+    swap_points = pd.DataFrame({"ask": [0.02, 0.025],
+                                "bid": [0.01, 0.015]})
 
+    pos = FXPosition(currency=currency)
+    pos.buy(1, prices.loc[0, "ask"])
+    print(pos.get_unrealized_pnl(prices.loc[0, :]))
+    print(pos.get_market_value(prices.loc[0, :]))
+
+    # Do a barrel roll
+    pos.roll_over(swap_points.loc[0, :])
+    print(pos.get_unrealized_pnl(prices.loc[0, :]))
+    print(pos.get_market_value(prices.loc[0, :]))
+
+    # Assign the initial price to the next date
+    pos.initial_price = pos.avg_price
+    pos.sell(0.5, prices.loc[1, "bid"])
+    print(pos.get_unrealized_pnl(prices.loc[1, :]))
+    print(pos.get_market_value(prices.loc[1, :]))
+
+    pos.roll_over(swap_points.loc[1, :])
+    print(pos.get_unrealized_pnl(prices.loc[1, :]))
+    print(pos.get_market_value(prices.loc[1, :]))
 
 
 
