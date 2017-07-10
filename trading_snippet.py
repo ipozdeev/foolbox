@@ -237,24 +237,6 @@ def main():
 if __name__ == '__main__':
 
     currency = "gbp"
-    position_type = "long"
-
-    initial_price = 1.25
-    initial_quantity = 1
-
-    pos = FXPosition(currency=currency)
-    pos.initial_price = 1.25
-
-
-    pos.sell(1.5, 1.23)
-
-
-    prices = pd.Series([1.27, 1.23], index=["ask", "bid"])
-    swap_points = pd.Series([0.02, 0.01], index=["ask", "bid"])
-
-    pos.get_market_value(prices)
-    pos.roll_over(swap_points)
-    pos.get_market_value(prices)
 
     prices = pd.DataFrame({"ask": [1.27, 1.28],
                            "bid": [1.23, 1.24]})
