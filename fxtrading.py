@@ -223,7 +223,7 @@ class FXPortfolio():
         return res
 
 class FXPosition(object):
-    """
+    """Handles transaction and roll overs of positions in a foreign currency
 
     """
 
@@ -233,6 +233,7 @@ class FXPosition(object):
         Parameters
         ----------
         currency: str
+            reperesenting counter currency of an FXPosition
 
 
         Returns
@@ -241,7 +242,8 @@ class FXPosition(object):
         """
         self.currency = currency
 
-        self.position_type = None
+        # Set the initial values for an empty position
+        self.position_type = None  # Set to str 'short' or 'long'
         self.initial_price = 0
         self.initial_quantity = 0
         self.avg_price = 0
@@ -249,10 +251,11 @@ class FXPosition(object):
         self.unrealized_pnl = 0
         self.realized_pnl = 0
 
+        # By default, no transactions take place
         self.end_quantity = self.initial_quantity
 
     def __str__(self):
-        """
+        """ Handles string representation of the object
         """
         if self.position_type is None:
             return ' '.join((self.currency, "inactive"))
@@ -283,28 +286,49 @@ class FXPosition(object):
             self.buy(self.end_quantity, prices["ask"])
 
     def transact(self, quantity, price):
-        """
-        """
-        if quantity < 0:
-            self.sell(-1*quantity, price["bid"])
-        else:
-            self.buy(quantity, price["ask"])
-
-        self.initial_quantity = self.end_quantity
-
-    def buy(self, quantity, price):
-        """
+        """Wrapper around the 'buy()' and 'sell()' methods, recognizing sells
+        as transactions with negative quantity. Furthermore, updates the
+        intial_quantity to end_quantity, allowing for sequential transactions
 
         Parameters
         ----------
-        quantity
-        price
+        quantity: float
+            units of currency to transact, negative for sells
+        price: pd.Series
+            indexed with 'bid' and 'ask' containing the corresponding price
+            quotes
 
         Returns
         -------
 
         """
-        if quantity == 0.0:
+        if quantity < 0:
+            self.sell(-1*quantity, price["bid"])
+        elif quantity > 0:
+            self.buy(quantity, price["ask"])
+        else:
+            Warning("Transacting zero quantity, nothing happens")
+            return
+
+        self.initial_quantity = self.end_quantity
+
+    def buy(self, quantity, price):
+        """Buys 'quantity' units at 'price' price
+
+        Parameters
+        ----------
+        quantity: float
+            number of units of the currency to buy
+        price: float
+            transaction price
+
+        Returns
+        -------
+
+        """
+        # When attempting to transact zero units do nothing, pop up a warning
+        if quantity == 0:
+            Warning("Transacting zero quantity, nothing happens")
             return
 
         # If there is no open position open a long one, set the initial price
@@ -341,17 +365,24 @@ class FXPosition(object):
             self.position_type = None
 
     def sell(self, quantity, price):
-        """
+        """Sells 'quantity' units at 'price' price
 
         Parameters
         ----------
-        quantity
-        price
+        quantity: float
+            number of units of the currency to sell
+        price: float
+            transaction price
 
         Returns
         -------
 
         """
+        # When attempting to transact zero units do nothing, pop up a warning
+        if quantity == 0:
+            Warning("Transacting zero quantity, nothing happens")
+            return
+
         # If there is no open position, create a short one, set initial price
         if self.position_type is None:
             self.position_type = "short"
@@ -386,12 +417,16 @@ class FXPosition(object):
             self.position_type = None
 
     def flip(self, quantity, price):
-        """
+        """Utility method wrapping 'buy()' and 'sell()' which induce a change
+        in self.position_type. For example, flipping position from long to
+        short, when sell amount exceeds the current quantity
 
         Parameters
         ----------
-        quantity
-        price
+        quantity: float
+            number of units of the currency to transact
+        price: float
+            transaction price
 
         Returns
         -------
@@ -418,19 +453,20 @@ class FXPosition(object):
             self.avg_price = price
 
         # Similarly take care of short positions buying moar
-        else:
-            # TODO/
-            first_tranche = self.initial_quantity
-            self.buy(first_tranche, price)
-            quantity_flip = quantity - first_tranche
-            # /TODO
+        elif self.position_type == "short":
+            self.buy(self.initial_quantity, price)
+            quantity_flip = quantity - self.initial_quantity
             self.initial_quantity = 0
             self.position_type = "long"
             self.buy(quantity_flip, price)
             self.avg_price = price
 
+        else:
+            raise ValueError("position_type should be either 'long' or "
+                             "'short'")
+
     def roll_over(self, swap_points):
-        """
+        """Rolls the position overnight accruing swap points to the VWAP
 
         Parameters
         ----------
@@ -441,7 +477,7 @@ class FXPosition(object):
         -------
 
         """
-        if self.end_quantity == 0.0:
+        if self.end_quantity == 0:
             return
 
         swap_points_ask = swap_points["ask"]
@@ -449,11 +485,14 @@ class FXPosition(object):
         # Accrue swap points to the average price
         if self.position_type == "long":
             self.avg_price = self.avg_price + swap_points_ask
-        else:
+        elif self.position_type == "short":
             self.avg_price = self.avg_price + swap_points_bid
+        else:
+            raise ValueError("position_type should be either 'long' or "
+                             "'short'")
 
     def get_market_value(self, market_prices):
-        """
+        """Computes liquidation value of the position at given market prices
 
         Parameters
         ----------
@@ -463,20 +502,27 @@ class FXPosition(object):
 
         Returns
         -------
+        market_value: float
+            with liquidation value of the position at the given market prices
 
         """
         # Long positions are
         if self.position_type == "long":
             liquidation_price = market_prices["bid"]
-        else:
+        elif self.position_type == "short":
             liquidation_price = market_prices["ask"]
+        else:
+            raise ValueError("position_type should be either 'long' or "
+                             "'short'")
 
         market_value = liquidation_price * self.end_quantity
 
         return market_value
 
     def get_unrealized_pnl(self, market_prices):
-        """
+        """Get the unrealized profit and loss, comparing the average price of
+        the position with given market prices at which the position can be
+        liquidated
 
         Parameters
         ----------
@@ -486,6 +532,9 @@ class FXPosition(object):
 
         Returns
         -------
+        unrealized_pnl: float
+            with unrealized profit and loss of the position at the given market
+            prices
 
         """
         # Shortcut to the price quotes
@@ -496,8 +545,11 @@ class FXPosition(object):
         if self.position_type == "long":
             unrealized_pnl = (bid - self.avg_price) * self.end_quantity
         # And short positions at ask, mind the minus sign
-        else:
+        elif self.position_type == "short":
             unrealized_pnl = (self.avg_price - ask) * self.end_quantity
+        else:
+            raise ValueError("position_type should be either 'long' or "
+                             "'short'")
 
         return unrealized_pnl
 
