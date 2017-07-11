@@ -1,6 +1,6 @@
 import pandas as pd
 import numpy as np
-# import ipdb
+import ipdb
 
 class FXTrading():
     """
@@ -19,7 +19,10 @@ class FXTrading():
             fillna(method="bfill", limit=self.settings["h"])
         # position weights are signals through absolute sum thereof
         self.position_weights = self.position_flags.divide(
-            np.abs(self.position_flags).sum(axis=1), axis=0)
+            np.abs(self.position_flags).sum(axis=1), axis=0).fillna(0.0)
+
+        # actions
+        self.actions = self.position_weights.diff().shift(-1)
 
         # portfolio
         positions = [FXPosition(currency=p) for p in self.signals.columns]
@@ -29,7 +32,7 @@ class FXTrading():
         """
         """
         # allocate space for P&L
-        lqd_val = pd.Series(index=self.signals.index)
+        lqd_val = pd.Series(index=self.position_flags.index)
 
         # loop over time
         for t, row in self.position_weights.iterrows():
@@ -37,14 +40,14 @@ class FXTrading():
             these_prices = self.prices.loc[:,t,:]
             these_swap_points = self.swap_points.loc[:,t,:]
 
-            # get liquidation value
-            lqd_val.loc[t] = self.get_liquidation_value(these_prices)
-
             # rebalance
-            self.rebalance_from_pw(row)
+            self.portfolio.rebalance_from_position_weights(row, these_prices)
 
             # roll
-            self.roll()
+            self.portfolio.roll_over(these_swap_points)
+
+            # get liquidation value
+            lqd_val.loc[t] = self.portfolio.get_liquidation_value(these_prices)
 
         return lqd_val
 
@@ -115,10 +118,45 @@ class FXPortfolio():
 
         return res
 
-    def rebalance_from_pw(self, pw, prices):
+    def rebalance_from_position_weights(self, new_pw, prices):
         """
         """
-        dp = self.pw2quantities(new_pw=pw, prices=prices)
+        # previos positions weights
+        old_pw = self.pw
+
+        # recover liquidation value
+        lqd_val = self.get_liquidation_value(prices)
+
+        # 1) the ones that get closed
+        to_close_idx = new_pw.ix[new_pw == 0].index
+        for idx, p in self.positions.ix[to_close_idx].iteritems():
+            # close -> realized p&l here
+            p.close(prices.loc[idx,:])
+
+        # 2) for each position, calculate additional amount to be transacted
+        # total dollar amount
+        pos_dol_vals = new_pw * lqd_val
+        # total quantity
+        new_qty = self.fxdivide(pos_dol_vals, prices)
+        # current quantities
+        cur_qty = self.positions.map(lambda x: x.end_quantity)
+        cur_pos_types = self.positions.map(lambda x: x.position_float())
+        cur_qty *= cur_pos_types
+
+        # difference in positions
+        dp = new_qty - cur_qty
+
+        # rebalance
+        for idx, p in self.positions.drop(to_close_idx).iteritems():
+            p.transact(dp[idx], prices.loc[idx,:])
+
+        # drag position weights
+        self.pw = new_pw
+
+    def rebalance_from_dpw(self, dpw, prices):
+        """
+        """
+        dp = self.dpw2quantities(dpw=dpw, prices=prices)
 
         self.rebalance_from_dp(dp, prices)
 
@@ -133,7 +171,7 @@ class FXPortfolio():
         for idx, p in dp.iteritems():
             self.positions[idx].transact(p, prices.loc[idx,:])
 
-    def pw2quantities(self, new_pw, prices):
+    def dpw2quantities(self, dpw, prices):
         """ Transform position weights to quantitites to be transacted.
         Parameters
         ----------
@@ -143,9 +181,6 @@ class FXPortfolio():
         # 1) calculate liquidation value of portfolio
         lqd_val = self.get_liquidation_value(prices)
 
-        # 2) change in position weights
-        dpw = new_pw - self.pw
-
         # 3) dollar value of positions
         dpw_dollar_val = dpw * lqd_val
 
@@ -154,11 +189,11 @@ class FXPortfolio():
 
         return qty
 
-    def roll_over(self):
+    def roll_over(self, swap_points):
         """ Roll over all positions.
         """
         for idx, p in self.positions.iteritems():
-            p.roll(self.swap_points.loc[idx,:])
+            p.roll_over(swap_points.loc[idx,:])
 
     def get_position_quantities(self):
         """
@@ -179,7 +214,7 @@ class FXPortfolio():
         return res
 
     @staticmethod
-    def fdivide(main, other):
+    def fxdivide(main, other):
         """
         """
         masked_ba = other["bid"].mask(main > 0, other["ask"])
@@ -222,12 +257,30 @@ class FXPosition(object):
         if self.position_type is None:
             return ' '.join((self.currency, "inactive"))
 
-        res = ' '.join((
-            self.position_type,
-            str(self.end_quantity*(1 if self.position_type == "long" else -1)),
-            self.currency))
+        qty = np.round(self.end_quantity, 4)
+
+        res = ' '.join((self.position_type, str(qty), self.currency))
 
         return res
+
+    def position_float(self):
+        """
+        """
+        if self.position_type is None:
+            return 0
+
+        return 1 if self.position_type == "long" else -1
+
+    def close(self, prices):
+        """
+        """
+        if self.position_type is None:
+            return
+
+        if self.position_type == "long":
+            self.sell(self.end_quantity, prices["bid"])
+        else:
+            self.buy(self.end_quantity, prices["ask"])
 
     def transact(self, quantity, price):
         """
@@ -565,26 +618,30 @@ class FXPosition(object):
 
 
 if __name__ == "__main__":
-    # curs = ["gbp", "chf"]
-    # dt = pd.date_range("2001-01-03", periods=5, freq='D')
-    #
-    # bid = pd.DataFrame(
-    #     data=np.abs(np.random.normal(size=(5,2))),
-    #     index=dt,
-    #     columns=curs)
-    # ask = bid + 1.0
-    # prices = pd.Panel.from_dict({"bid": bid, "ask": ask}, orient="items")
-    #
-    # swap_points = prices/100
-    #
-    # signals = bid*0.0
-    # signals.iloc[3,0] = 1
-    # signals.iloc[2,1] = -1
-    #
-    # settings = {"h": 2}
-    #
-    # fxtr = FXTrading(prices, swap_points, signals, settings)
-    # fxtr.portfolio.get_liquidation_value(prices=prices.iloc[:,0,:])
+    curs = ["gbp", "chf"]
+    dt = pd.date_range("2001-01-03", periods=6, freq='D')
+
+    bid = pd.DataFrame(
+        data=np.abs(np.random.random(size=(6,2))),
+        index=dt,
+        columns=curs)
+    ask = bid + 0.1
+    prices = pd.Panel.from_dict({"bid": bid, "ask": ask}, orient="items")
+
+    swap_points = prices/100
+
+    signals = bid*0.0
+    signals.iloc[4,0] = 1
+    signals.iloc[3,1] = -1
+
+    settings = {"h": 2}
+
+    fxtr = FXTrading(prices, swap_points, signals, settings)
+
+    ipdb.set_trace()
+    fxtr.backtest()
+
+
     # fxtr.position_flags
     # fxtr.position_weights
     #
@@ -597,11 +654,11 @@ if __name__ == "__main__":
     #
     # fxtr.portfolio.get_position_quantities()
 
-    fx_pos = FXPosition(currency="nzd")
-
-    # buy some
-    ipdb.set_trace()
-    fx_pos.buy(quantity=0.25, price=0.5)
-
-    # sell same some
-    fx_pos.sell(quantity=0.25, price=0.66)
+    # fx_pos = FXPosition(currency="nzd")
+    #
+    # # buy some
+    # ipdb.set_trace()
+    # fx_pos.buy(quantity=0.25, price=0.5)
+    #
+    # # sell same some
+    # fx_pos.sell(quantity=0.25, price=0.66)
