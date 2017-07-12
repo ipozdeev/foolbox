@@ -1,6 +1,6 @@
 import pandas as pd
 import numpy as np
-import ipdb
+#import ipdb
 
 class FXTrading():
     """
@@ -548,8 +548,7 @@ class FXPosition(object):
         elif self.position_type == "short":
             unrealized_pnl = (self.avg_price - ask) * self.end_quantity
         else:
-            raise ValueError("position_type should be either 'long' or "
-                             "'short'")
+            unrealized_pnl = 0
 
         return unrealized_pnl
 
@@ -679,7 +678,6 @@ if __name__ == "__main__":
         columns=curs)
     ask = bid + 0.1
     prices = pd.Panel.from_dict({"bid": bid, "ask": ask}, orient="items")
-
     swap_points = prices/100
 
     signals = bid*0.0
@@ -688,9 +686,34 @@ if __name__ == "__main__":
 
     settings = {"h": 2}
 
+    bid = pd.DataFrame({"gbp": [1.23, 1.25, 1.22, 1.26, 1.25, 1.27],
+                        "chf": [1.0, 0.99, 0.98, 1.01, 0.98, 0.97]},
+                       index=dt)
+    ask = bid * 1.01
+    prices = pd.Panel.from_dict({"bid": bid, "ask": ask}, orient="items")
+
+    swap_bid = pd.DataFrame(
+        {"gbp": [-0.02, -0.015, -0.02, -0.01, -0.015, -0.02],
+         "chf": [0.01, 0.01, 0.015, 0.01, 0.02, 0.015]},
+        index=dt)
+
+    swap_ask = pd.DataFrame(
+        {"gbp": [-0.015, -0.01, -0.015, -0.005, -0.01, -0.01],
+         "chf": [0.015, 0.015, 0.02, 0.015, 0.025, 0.025]},
+        index=dt)
+
+    swap_points = pd.Panel.from_dict(
+        {"bid": swap_bid, "ask": swap_ask}, orient="items")
+
+    signals = bid * 0.0
+    signals.iloc[4, 1] = 1
+    signals.iloc[3, 0] = -1
+
+    settings = {"h": 2}
+
     fxtr = FXTrading(prices, swap_points, signals, settings)
 
-    ipdb.set_trace()
+    #ipdb.set_trace()
     fxtr.backtest()
 
 
