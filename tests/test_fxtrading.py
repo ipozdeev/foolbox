@@ -204,25 +204,22 @@ class TestFXTrading(unittest.TestCase):
     def setUp(self):
         """
         """
-        curs = ["gbp", "chf"]
+        curs = ["nzd",]
         dt = pd.date_range("2001-01-03", periods=5, freq='D')
 
         bid = pd.DataFrame(
-            data=np.abs(np.random.normal(size=(5,2))),
+            data=np.array([[1.0],[1.1],[1.21],[1.21],[1.05]]),
             index=dt,
             columns=curs)
-        ask = bid + 1.0
+        ask = bid + 0.05
         prices = pd.Panel.from_dict({"bid": bid, "ask": ask}, orient="items")
 
-        swap_points = prices/100
+        swap_points = -prices/25
 
         signals = bid*0.0
         signals.iloc[3,0] = 1
-        signals.iloc[2,1] = -1
 
-        settings = {"h": 2}
-
-        fxtr = FXTrading(prices, swap_points, signals, settings)
+        settings = {"h": 1}
 
         self.prices = prices
         self.swap_points = swap_points
