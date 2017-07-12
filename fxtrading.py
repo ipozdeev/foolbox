@@ -1,6 +1,6 @@
 import pandas as pd
 import numpy as np
-#import ipdb
+# import ipdb
 
 class FXTrading():
     """
@@ -289,9 +289,9 @@ class FXPosition(object):
             return
 
         if self.position_type == "long":
-            self.sell(self.end_quantity, prices["bid"])
+            self.transact(-1*self.end_quantity, prices)
         else:
-            self.buy(self.end_quantity, prices["ask"])
+            self.transact(self.end_quantity, prices)
 
     def transact(self, quantity, price):
         """Wrapper around the 'buy()' and 'sell()' methods, recognizing sells
@@ -405,6 +405,7 @@ class FXPosition(object):
                 self.end_quantity = self.initial_quantity - quantity
                 # Intuition: price > avg_price means gain in long position
                 #
+                #  initial_price -> avg_price?
                 # initial_price -> avg_price?
                 self.realized_pnl = \
                     self.realized_pnl + quantity * (price - self.avg_price)
@@ -683,46 +684,96 @@ class FXPosition(object):
 
 if __name__ == "__main__":
 
-    curs = ["nzd",]
-    dt = pd.date_range("2001-01-03", periods=5, freq='D')
-
-    bid = pd.DataFrame(
-        data=np.array([[1.0],[1.1],[1.21],[1.21],[1.05]]),
-        index=dt,
-        columns=curs)
-    ask = bid + 0.05
-    prices = pd.Panel.from_dict({"bid": bid, "ask": ask}, orient="items")
-
-    swap_points = -prices/25
-
-    signals = bid*0.0
-    signals.iloc[3,0] = 1
-
-    settings = {"h": 1}
-
-    fxtr = FXTrading(prices, swap_points, signals, settings)
-
-    ipdb.set_trace()
-    fxtr.backtest()
-
-
-    # fxtr.position_flags
-    # fxtr.position_weights
+    # curs = ["nzd",]
+    # dt = pd.date_range("2001-01-03", periods=5, freq='D')
     #
-    # fxtr.portfolio.positions
-    # fxtr.portfolio.get_position_quantities()
+    # bid = pd.DataFrame(
+    #     data=np.array([[1.0],[1.1],[1.21],[1.21],[1.05]]),
+    #     index=dt,
+    #     columns=curs)
+    # ask = bid + 0.05
+    # prices = pd.Panel.from_dict({"bid": bid, "ask": ask}, orient="items")
     #
-    # dp = pd.Series(data=[100, -10], index=fxtr.portfolio.currencies)
+    # swap_points = -prices/25
     #
-    # fxtr.portfolio.rebalance_from_dp(dp=dp, prices=prices.iloc[:,0,:])
+    # signals = bid*0.0
+    # signals.iloc[3,0] = 1
     #
-    # fxtr.portfolio.get_position_quantities()
-
-    # fx_pos = FXPosition(currency="nzd")
+    # settings = {"h": 1}
     #
-    # # buy some
+    # fxtr = FXTrading(prices, swap_points, signals, settings)
+    #
     # ipdb.set_trace()
-    # fx_pos.buy(quantity=0.25, price=0.5)
-    #
-    # # sell same some
-    # fx_pos.sell(quantity=0.25, price=0.66)
+    # fxtr.backtest()
+
+    from foolbox.api import *
+    from foolbox.fxtrading import FXTrading
+    import matplotlib.pyplot as plt
+    import matplotlib.dates as mdates
+    from matplotlib.ticker import MultipleLocator
+    from foolbox.wp_tabs_figs.wp_settings import settings
+    from foolbox.utils import *
+
+    """Broomstick plots for swap points- and bid-ask spreads-adjusted returns
+    """
+    # Set the output path, input data and sample
+    out_path = data_path + settings["fig_folder"]
+    input_dataset = settings["fx_data"]
+    start_date = "2001-08-01"
+    end_date = settings["sample_end"]
+
+    # Import the FX data
+    with open(data_path+input_dataset, mode="rb") as fname:
+        data = pickle.load(fname)
+
+    # Import the all fixing times for the dollar index
+    with open(data_path+"fx_by_tz_sp_fixed.p", mode="rb") as fname:
+        data_usd = pickle.load(fname)
+
+    # Get the individual currenices, spot rates:
+    spot_bid = data["spot_bid"][start_date:end_date].loc[:,["aud"]]
+    spot_ask = data["spot_ask"][start_date:end_date].loc[:,["aud"]]
+    swap_ask = data["tnswap_ask"][start_date:end_date].loc[:,["aud"]]
+    swap_bid = data["tnswap_bid"][start_date:end_date].loc[:,["aud"]]
+
+    # Align and ffill the data, first for tz-aligned countries
+    (spot_bid, spot_ask, swap_bid, swap_ask) =\
+        align_and_fillna((spot_bid, spot_ask, swap_bid, swap_ask),
+                         "B", method="ffill")
+
+    prices = pd.Panel.from_dict({"bid": spot_bid, "ask": spot_ask},
+        orient="items")
+    swap_points = pd.Panel.from_dict({"bid": swap_bid, "ask": swap_ask},
+        orient="items")
+    settings = {"h": 10}
+    # Get signals for all countries except for the US
+    policy_fcasts = list()
+    for curr in spot_bid.columns:
+        # Get the predicted change in policy rate
+        tmp_pe = PolicyExpectation.from_pickles(data_path, curr)
+        policy_fcasts.append(
+            tmp_pe.forecast_policy_change(lag=12,
+                                          threshold=0.10,
+                                          avg_impl_over=5,
+                                          avg_refrce_over=5,
+                                          bday_reindex=True))
+
+    # Put individual predictions into a single dataframe
+    signals = pd.concat(policy_fcasts, join="outer", axis=1)\
+        .loc[start_date:end_date,:]
+    signals = signals.reindex(
+        index=pd.date_range(
+            start=signals.index[0]-DateOffset(months=1),
+            end=signals.index[-1]+DateOffset(months=1),
+            freq='B'))
+    signals = signals.shift(-1).dropna()
+
+    fxtr = FXTrading(prices=prices, swap_points=swap_points, settings=settings,
+        signals=signals.loc["2001-09":,:])
+
+    nav = fxtr.backtest()
+
+
+    nav.plot()
+    nav.loc["2007-10"]
+    prices.loc[:,"2001-09","aud"]
