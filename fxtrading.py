@@ -1,6 +1,6 @@
 import pandas as pd
 import numpy as np
-import ipdb
+# import ipdb
 
 class FXTrading():
     """
@@ -35,8 +35,9 @@ class FXTrading():
         lqd_val = pd.Series(index=self.position_flags.index)
 
         # loop over time
-        ipdb.set_trace()
         for t, row in self.actions.iterrows():
+            # if t > pd.to_datetime("2007-10-18"):
+            #     ipdb.set_trace()
             # fetch prices and swap points
             these_prices = self.prices.loc[:,t,:]
             these_swap_points = self.swap_points.loc[:,t,:]
@@ -290,9 +291,9 @@ class FXPosition(object):
             return
 
         if self.position_type == "long":
-            self.sell(self.end_quantity, prices["bid"])
+            self.transact(-1*self.end_quantity, prices)
         else:
-            self.buy(self.end_quantity, prices["ask"])
+            self.transact(self.end_quantity, prices)
 
     def transact(self, quantity, price):
         """Wrapper around the 'buy()' and 'sell()' methods, recognizing sells
@@ -761,12 +762,19 @@ if __name__ == "__main__":
     # Put individual predictions into a single dataframe
     signals = pd.concat(policy_fcasts, join="outer", axis=1)\
         .loc[start_date:end_date,:]
+    signals = signals.reindex(
+        index=pd.date_range(
+            start=signals.index[0]-DateOffset(months=1),
+            end=signals.index[-1]+DateOffset(months=1),
+            freq='B'))
+    signals = signals.shift(-1).dropna()
 
     fxtr = FXTrading(prices=prices, swap_points=swap_points, settings=settings,
         signals=signals.loc["2001-09":,:])
 
     nav = fxtr.backtest()
 
+
     nav.plot()
-    nav.loc["2001-09":"2001-10"]
+    nav.loc["2007-10"]
     prices.loc[:,"2001-09","aud"]
