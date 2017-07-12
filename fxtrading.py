@@ -1,6 +1,6 @@
 import pandas as pd
 import numpy as np
-import ipdb
+#import ipdb
 
 class FXTrading():
     """
@@ -252,7 +252,7 @@ class FXPosition(object):
 
         # Set the initial values for an empty position
         self.position_type = None  # Set to str 'short' or 'long'
-        self.initial_price = 0
+        #self.initial_price = 0
         self.initial_quantity = 0
         self.avg_price = 0
 
@@ -342,7 +342,7 @@ class FXPosition(object):
         # If there is no open position open a long one, set the initial price
         if self.position_type is None:
             self.position_type = "long"
-            self.initial_price = price
+            self.avg_price = price
 
         # If the initial position is long, then buy MOAR
         if self.position_type == "long":
@@ -350,7 +350,7 @@ class FXPosition(object):
             self.end_quantity = self.initial_quantity + quantity
             # Compute VWAP
             self.avg_price = \
-                (self.initial_price * self.initial_quantity +
+                (self.avg_price * self.initial_quantity +
                  price * quantity) / self.end_quantity
 
         # If short -- partial close at ask or flip to long
@@ -359,7 +359,7 @@ class FXPosition(object):
             if self.initial_quantity >= quantity:
                 # Reduce the quanity
                 self.end_quantity = self.initial_quantity - quantity
-                # Intuition: price > init_price means loss in short position
+                # Intuition: price > avg_price means loss in short position
                 # NB: what about: initial_price -> avg_price
                 self.realized_pnl = \
                     self.realized_pnl - quantity * (price - self.avg_price)
@@ -392,10 +392,10 @@ class FXPosition(object):
             Warning("Transacting zero quantity, nothing happens")
             return
 
-        # If there is no open position, create a short one, set initial price
+        # If there is no open position, create a short one, set average price
         if self.position_type is None:
             self.position_type = "short"
-            self.initial_price = price
+            self.avg_price = price
 
         # If the initial position is long, partial close or flip to short
         if self.position_type == "long":
@@ -403,9 +403,9 @@ class FXPosition(object):
             if self.initial_quantity >= quantity:
                 # Reduce the quanity
                 self.end_quantity = self.initial_quantity - quantity
-                # Intuition: price > init_price means gain in long position
+                # Intuition: price > avg_price means gain in long position
                 #
-                § initial_price -> avg_price?
+                # initial_price -> avg_price?
                 self.realized_pnl = \
                     self.realized_pnl + quantity * (price - self.avg_price)
                 # Average price remains the same
@@ -420,7 +420,7 @@ class FXPosition(object):
             self.end_quantity = self.initial_quantity + quantity
             # Compute VWAP
             self.avg_price = \
-                (self.initial_price * self.initial_quantity +
+                (self.avg_price * self.initial_quantity +
                  price * quantity) / self.end_quantity
 
         # Check the end quantity, render position type to None if nothing left
