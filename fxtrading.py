@@ -35,7 +35,7 @@ class FXTrading():
         lqd_val = pd.Series(index=self.position_flags.index)
 
         # loop over time
-        for t, row in self.position_weights.iterrows():
+        for t, row in self.actions.iterrows():
             # fetch prices and swap points
             these_prices = self.prices.loc[:,t,:]
             these_swap_points = self.swap_points.loc[:,t,:]
@@ -118,20 +118,28 @@ class FXPortfolio():
 
         return res
 
-    def rebalance_from_position_weights(self, new_pw, prices):
+    def rebalance_from_position_weights(self, dpw, prices):
         """
         """
         # previos positions weights
-        old_pw = self.pw
+        if (dpw == 0.0).all():
+            return
 
-        # recover liquidation value
-        lqd_val = self.get_liquidation_value(prices)
+        new_pw = self.pw + dpw
 
         # 1) the ones that get closed
         to_close_idx = new_pw.ix[new_pw == 0].index
         for idx, p in self.positions.ix[to_close_idx].iteritems():
             # close -> realized p&l here
             p.close(prices.loc[idx,:])
+
+        # replenish balance
+        for p in self.positions.ix[to_close_idx].values:
+            self.balance += p.realized_pnl
+            p.realized_pnl = 0.0
+
+        # recover liquidation value
+        lqd_val = self.get_liquidation_value(prices)
 
         # 2) for each position, calculate additional amount to be transacted
         # total dollar amount
@@ -352,8 +360,9 @@ class FXPosition(object):
                 # Reduce the quanity
                 self.end_quantity = self.initial_quantity - quantity
                 # Intuition: price > init_price means loss in short position
+                # NB: what about: initial_price -> avg_price
                 self.realized_pnl = \
-                    self.realized_pnl - quantity * (price - self.initial_price)
+                    self.realized_pnl - quantity * (price - self.avg_price)
                 # Average price remains the same
 
             # Else the position is closed and opened in the opposite direction
@@ -395,8 +404,10 @@ class FXPosition(object):
                 # Reduce the quanity
                 self.end_quantity = self.initial_quantity - quantity
                 # Intuition: price > init_price means gain in long position
+                #
+                § initial_price -> avg_price?
                 self.realized_pnl = \
-                    self.realized_pnl + quantity * (price - self.initial_price)
+                    self.realized_pnl + quantity * (price - self.avg_price)
                 # Average price remains the same
 
             # Else the position is closed and opened in the opposite direction
@@ -548,8 +559,9 @@ class FXPosition(object):
         elif self.position_type == "short":
             unrealized_pnl = (self.avg_price - ask) * self.end_quantity
         else:
-            raise ValueError("position_type should be either 'long' or "
-                             "'short'")
+            # raise ValueError("position_type should be either 'long' or "
+            #                  "'short'")
+            return 0.0
 
         return unrealized_pnl
 
@@ -670,23 +682,23 @@ class FXPosition(object):
 
 
 if __name__ == "__main__":
-    curs = ["gbp", "chf"]
-    dt = pd.date_range("2001-01-03", periods=6, freq='D')
+
+    curs = ["nzd",]
+    dt = pd.date_range("2001-01-03", periods=5, freq='D')
 
     bid = pd.DataFrame(
-        data=np.abs(np.random.random(size=(6,2))),
+        data=np.array([[1.0],[1.1],[1.21],[1.21],[1.05]]),
         index=dt,
         columns=curs)
-    ask = bid + 0.1
+    ask = bid + 0.05
     prices = pd.Panel.from_dict({"bid": bid, "ask": ask}, orient="items")
 
-    swap_points = prices/100
+    swap_points = -prices/25
 
     signals = bid*0.0
-    signals.iloc[4,0] = 1
-    signals.iloc[3,1] = -1
+    signals.iloc[3,0] = 1
 
-    settings = {"h": 2}
+    settings = {"h": 1}
 
     fxtr = FXTrading(prices, swap_points, signals, settings)
 
