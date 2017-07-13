@@ -7,125 +7,151 @@ class FXTrading():
     """
     def __init__(self, prices, swap_points, signals, settings):
         """
+        Parameters
+        ----------
+        prices : pandas.Panel
+            with currencies along the items axis, time on major_axis
+        swap_points : pandas.Panel
+            with currencies along the items axis, time on major_axis
+        signals : pd.DataFrame
+            of +1,0,-1, indexed by currency names (same as the items axis
+            above). These will be shifted around according to settings.
+        settings : dict
+            'holding_period' - holding period, in periods
+            'blackout' - periods before a +1/-1 signal when position is closed
         """
         self.prices = prices
         self.swap_points = swap_points
-        self.signals = signals.replace(0.0, np.nan)
         self.settings = settings
 
-        # position flags are continuous indicators
-        self.position_flags = self.signals.\
-            reindex(index=prices.major_axis).\
-            fillna(method="bfill", limit=self.settings["h"])
-        # position weights are signals through absolute sum thereof
-        self.position_weights = self.position_flags.divide(
-            np.abs(self.position_flags).sum(axis=1), axis=0).fillna(0.0)
+        # put signals into the required form: continuous frame etc. ---------
+        # position flags are a continuous panel of subsequent signals
+        #   indicating where a position is held from dusk till dawn (such that
+        #   a return is realized)
+        # to be able to fill na backwards, replace zeros with nan's
+        self.signals = signals.replace(0.0, np.nan)
 
-        # actions
-        self.actions = self.position_weights.diff().shift(-1)
+        # shift by balckout, extend from that `holding_period` into the past
+        #   to arrive at position flags
+        # align signals with prices: it is hereby assumed that the latter are
+        #   indexed comme il faut, e.g. with business days
+        position_flags = self.signals.reindex(index=prices.major_axis)
+        # shift by blackout
+        position_flags = position_flags.shift(settings["blackout"])
+        # fill into the past
+        position_flags = position_flags.fillna(
+            method="bfill",
+            limit=self.settings["holding_period"])
 
-        # portfolio
+        # in case of equally-weighted no-leverage portfolio, position weights
+        #   are signals divided by the absolute sum thereof
+        # also, make sure that pandas does not sum all nan's to zero
+        row_leverage = np.abs(position_flags).apply(axis=1, func=np.nansum)
+        position_weights = position_flags.divide(row_leverage, axis=0)
+        # reinstall zeros where nan's are
+        position_weights = position_weights.fillna(value=0.0)
+
+        # actions are changes in positions: to realize a return on day t, a
+        #   position on t-1 should be opened.
+        actions = position_weights.diff().shift(-1)
+
+        # collect positions into portfolio
         positions = [FXPosition(currency=p) for p in self.signals.columns]
-        self.portfolio = FXPortfolio(positions=positions)
+        portfolio = FXPortfolio(positions=positions)
+
+        self.position_flags = position_flags
+        self.positions_weights = position_weights
+        self.actions = actions
+        self.portfolio = portfolio
 
     def backtest(self):
-        """
-        """
-        # allocate space for P&L
-        lqd_val = pd.Series(index=self.position_flags.index)
+        """ Backtest a strategy based on self.`signals`.
 
-        # loop over time
+        Routine, for each date t:
+        1) take changes in positions
+        2) rebalance accordingly
+        3) roll after rebalancing
+        4) record liquidation value
+
+        """
+        # allocate space for liquidation values
+        liquidation_v = pd.Series(index=self.position_flags.index)
+
+        # loop over time and position weights
         for t, row in self.actions.iterrows():
-            # fetch prices and swap points
+            # ipbd.set_trace()
+
+            # fetch prices and swap points ----------------------------------
             these_prices = self.prices.loc[:,t,:]
             these_swap_points = self.swap_points.loc[:,t,:]
 
-            # rebalance
-            self.portfolio.rebalance_from_position_weights(row, these_prices)
+            # rebalance -----------------------------------------------------
+            self.portfolio.rebalance_from_dpw(row, these_prices)
 
-            # roll
+            # roll over -----------------------------------------------------
             self.portfolio.roll_over(these_swap_points)
 
-            # get liquidation value
-            lqd_val.loc[t] = self.portfolio.get_liquidation_value(these_prices)
+            # get liquidation value -----------------------------------------
+            liquidation_v.loc[t] =  self.portfolio.get_liquidation_value(
+                prices=these_prices)
 
-        return lqd_val
+        return liquidation_v
 
 
 class FXPortfolio():
     """
     """
     def __init__(self, positions):
+        """ Portfolio of FX positions.
         """
-        """
-        self.currencies = [p.currency for p in positions]
-        self.positions = pd.Series(data=positions, index=self.currencies)
-
+        # start with balance = 1.0
         self.balance = 1.0
-        self.pw = pd.Series(0.0, index=[p.currency for p in positions])
-
-    # @property
-    # def prices(self):
-    #     if self._prices is not None:
-    #         return self._prices
-    #
-    #     return pd.Series(np.nan, index=["bid","ask"])
-    #
-    # @prices.setter
-    # def prices(self, value):
-    #     self._prices = value
-    #
-    # @property
-    # def swap_points(self):
-    #     if self._swap_points is not None:
-    #         return self._swap_points
-    #
-    #     return pd.Series(np.nan, index=["bid","ask"])
-    #
-    # @swap_points.setter
-    # def swap_points(self, value):
-    #     self._swap_points = value
-
-    # def get_market_value(self, prices):
-    #     """
-    #     """
-    #     # init result at 0
-    #     res = 0.0
-    #
-    #     # loop over positions, for repective currency fetch price & apply the
-    #     #   same method
-    #     for p in self.positions:
-    #         res += p.get_market_value(prices.loc[p.currency])
-    #
-    #     # do not forget about balance
-    #     res += self.balance
-    #
-    #     return res
+        # currencies
+        self.currencies = [p.currency for p in positions]
+        # represent positions as a pandas.Series
+        self.positions = pd.Series(
+            data=positions,
+            index=self.currencies)
+        # position weights: start with 0 everywhere
+        self.position_weights = pd.Series(0.0, index=self.currencies)
 
     def get_liquidation_value(self, prices):
         """ Calculate total liquidation value of portfolio.
+
+        Liquidation value is the result of closing all open position
+        immediately and draining any balance.
+
+        Parameters
+        ----------
+        prices : pd.DataFrame
+            of quotes, indexed with currency names, column'ed by ["bid", "ask"]
         """
         # init result at 0
         res = 0.0
 
-        # loop over positions, for repective currency fetch price & apply the
-        #   same method
+        # loop over positions, for repective currency fetch price & get p&l
         for p in self.positions.values:
             res += p.get_unrealized_pnl(prices.loc[p.currency])
 
-        # do not forget about balance
+        # drain the balance
         res += self.balance
 
         return res
 
-    def rebalance_from_position_weights(self, dpw, prices):
+    def rebalance_from_dpw(self, dpw, prices):
+        """ Rebalance from change in position weights.
+        0. skip if changes in position weights are all zero
+        i. close positions to be closed, drain realized p&l onto balance
+        ii. determine liquidation value: this much can be reallocated
+        iii. determine how much is to be bought/sold, in units of base currency
+        iv. transact in each position accordingly
         """
-        """
-        # previos positions weights
+        # if no change is necessary, skip
         if (dpw == 0.0).all():
             return
 
-        new_pw = self.pw + dpw
+        # new position weights
+        new_pw = self.position_weights + dpw
 
         # 1) the ones that get closed
         to_close_idx = new_pw.ix[new_pw == 0].index
@@ -133,7 +159,7 @@ class FXPortfolio():
             # close -> realized p&l here
             p.close(prices.loc[idx,:])
 
-        # replenish balance
+        # for each closed position, replenish the balance
         for p in self.positions.ix[to_close_idx].values:
             self.balance += p.realized_pnl
             p.realized_pnl = 0.0
@@ -144,7 +170,7 @@ class FXPortfolio():
         # 2) for each position, calculate additional amount to be transacted
         # total dollar amount
         pos_dol_vals = new_pw * lqd_val
-        # total quantity
+        # total quantity: divide through ask prices for buys, bid for sells
         new_qty = self.fxdivide(pos_dol_vals, prices)
         # current quantities
         cur_qty = self.positions.map(lambda x: x.end_quantity)
@@ -159,14 +185,7 @@ class FXPortfolio():
             p.transact(dp[idx], prices.loc[idx,:])
 
         # drag position weights
-        self.pw = new_pw
-
-    def rebalance_from_dpw(self, dpw, prices):
-        """
-        """
-        dp = self.dpw2quantities(dpw=dpw, prices=prices)
-
-        self.rebalance_from_dp(dp, prices)
+        self.position_weights = new_pw
 
     def rebalance_from_dp(self, dp, prices):
         """ Reabalance given differences in position quantities.
@@ -179,23 +198,23 @@ class FXPortfolio():
         for idx, p in dp.iteritems():
             self.positions[idx].transact(p, prices.loc[idx,:])
 
-    def dpw2quantities(self, dpw, prices):
-        """ Transform position weights to quantitites to be transacted.
-        Parameters
-        ----------
-        new_pw : pandas.Series
-            of new position weights, indexed with currency names
-        """
-        # 1) calculate liquidation value of portfolio
-        lqd_val = self.get_liquidation_value(prices)
-
-        # 3) dollar value of positions
-        dpw_dollar_val = dpw * lqd_val
-
-        # 4) from dollar value to foreign currency quantity
-        qty = self.fxdivide(dpw_dollar_val, prices)
-
-        return qty
+    # def dpw2quantities(self, dpw, prices):
+    #     """ Transform position weights to quantitites to be transacted.
+    #     Parameters
+    #     ----------
+    #     new_pw : pandas.Series
+    #         of new position weights, indexed with currency names
+    #     """
+    #     # 1) calculate liquidation value of portfolio
+    #     lqd_val = self.get_liquidation_value(prices)
+    #
+    #     # 3) dollar value of positions
+    #     dpw_dollar_val = dpw * lqd_val
+    #
+    #     # 4) from dollar value to foreign currency quantity
+    #     qty = self.fxdivide(dpw_dollar_val, prices)
+    #
+    #     return qty
 
     def roll_over(self, swap_points):
         """ Roll over all positions.
@@ -566,214 +585,228 @@ class FXPosition(object):
 
         return unrealized_pnl
 
-# class FXPosition():
-#     """
-#     """
-#     def __init__(self, base_cur, counter_cur):
-#         """
-#         """
-#         self.base_cur = base_cur
-#         self.counter_cur = counter_cur
-#
-#         # closed by default
-#         self.is_open = False
-#
-#     def open(self, price, direction="long", size=0.0):
-#         """
-#         Parameters
-#         ----------
-#         price : float
-#             ask price for long position, bid price for short ones, expressed
-#             in units of counter currency
-#         size : float
-#             units of base currency lent out (`bought`)
-#         """
-#         if size == 0.0:
-#             return
-#
-#         self.is_open = True
-#         self.size = size
-#         self.direction = 1 if direction == "long" else -1
-#         self.accum_roll = 0.0
-#         self.price_open = price
-#
-#     def close(self, price, partial=None):
-#         """
-#         price : float
-#             bid price for long position, ask price for short ones, expressed
-#             in units of counter currency
-#         partial : float
-#             share of position size to be closed
-#         """
-#         if partial is None:
-#             partial = 1.0
-#
-#         payoff = self.get_unrealized_pl(price=price) * partial
-#
-#         # reduce size
-#         self.size *= (1.0-partial)
-#
-#         if partial == 1.0:
-#             self.is_open = False
-#
-#         return payoff
-#
-#     def get_spot_ret(self, price):
-#         """ Calculate change in the spot price.
-#         price : float
-#             bid price for long position, ask price for short ones, expressed
-#             in units of counter currency
-#         """
-#         if not self.is_open:
-#             return np.nan
-#
-#         # spot return on one unit of base currency
-#         unit_spot_ret = (price - self.price_open)*self.direction
-#
-#         # spot ret on the whole position
-#         spot_ret = unit_spot_ret * self.size
-#
-#         return spot_ret
-#
-#     def get_unrealized_pl(self, price):
-#         """ Calculate total return: spot return plus total roll.
-#         """
-#         # payoff as difference between open and close prices
-#         payoff = self.get_spot_ret(price) + self.accum_roll
-#
-#         return payoff
-#
-#     def roll_over(self, swap_points):
-#         """
-#         Parameters
-#         ----------
-#         swap_points : float
-#             in units of counter currency per unit of base currency
-#         """
-#         if not self.is_open:
-#             return
-#
-#         self.accum_roll += (self.size * swap_points) * self.direction
 
-# class FXSeries(pd.Series):
-#     """
-#     """
-#     def mask_bid_ask(self, bid, ask):
-#         """ Match negative entries in `self` with `bid`, long with `ask`.
-#         """
-#         res = bid.mask(self > 0, ask)
-#
-#         return res
-#
-#     def fxdivide(self, other):
-#         """
-#         """
-#         masked_ba = self.mask_bid_ask(other["bid"], other["ask"])
-#         res = self.divide(masked_ba)
-#
-#         return res
-#
-#     def fxmul(self, other):
-#         """
-#         """
-#         masked_ba = self.mask_bid_ask(other["bid"], other["ask"])
-#         res = self.mul(masked_ba)
-#
-#         return res
+class FXPosition_deprecated():
+    """
+    """
+    def __init__(self, base_cur, counter_cur):
+        """
+        """
+        self.base_cur = base_cur
+        self.counter_cur = counter_cur
+
+        # closed by default
+        self.is_open = False
+
+    def open(self, price, direction="long", size=0.0):
+        """
+        Parameters
+        ----------
+        price : float
+            ask price for long position, bid price for short ones, expressed
+            in units of counter currency
+        size : float
+            units of base currency lent out (`bought`)
+        """
+        if size == 0.0:
+            return
+
+        self.is_open = True
+        self.size = size
+        self.direction = 1 if direction == "long" else -1
+        self.accum_roll = 0.0
+        self.price_open = price
+
+    def close(self, price, partial=None):
+        """
+        price : float
+            bid price for long position, ask price for short ones, expressed
+            in units of counter currency
+        partial : float
+            share of position size to be closed
+        """
+        if partial is None:
+            partial = 1.0
+
+        payoff = self.get_unrealized_pl(price=price) * partial
+
+        # reduce size
+        self.size *= (1.0-partial)
+
+        if partial == 1.0:
+            self.is_open = False
+
+        return payoff
+
+    def get_spot_ret(self, price):
+        """ Calculate change in the spot price.
+        price : float
+            bid price for long position, ask price for short ones, expressed
+            in units of counter currency
+        """
+        if not self.is_open:
+            return np.nan
+
+        # spot return on one unit of base currency
+        unit_spot_ret = (price - self.price_open)*self.direction
+
+        # spot ret on the whole position
+        spot_ret = unit_spot_ret * self.size
+
+        return spot_ret
+
+    def get_unrealized_pl(self, price):
+        """ Calculate total return: spot return plus total roll.
+        """
+        # payoff as difference between open and close prices
+        payoff = self.get_spot_ret(price) + self.accum_roll
+
+        return payoff
+
+    def roll_over(self, swap_points):
+        """
+        Parameters
+        ----------
+        swap_points : float
+            in units of counter currency per unit of base currency
+        """
+        if not self.is_open:
+            return
+
+        self.accum_roll += (self.size * swap_points) * self.direction
 
 
 if __name__ == "__main__":
 
-    # curs = ["nzd",]
-    # dt = pd.date_range("2001-01-03", periods=5, freq='D')
-    #
-    # bid = pd.DataFrame(
-    #     data=np.array([[1.0],[1.1],[1.21],[1.21],[1.05]]),
-    #     index=dt,
-    #     columns=curs)
-    # ask = bid + 0.05
-    # prices = pd.Panel.from_dict({"bid": bid, "ask": ask}, orient="items")
-    #
-    # swap_points = -prices/25
-    #
-    # signals = bid*0.0
-    # signals.iloc[3,0] = 1
-    #
-    # settings = {"h": 1}
-    #
-    # fxtr = FXTrading(prices, swap_points, signals, settings)
-    #
-    # ipdb.set_trace()
-    # fxtr.backtest()
-
     from foolbox.api import *
-    from foolbox.fxtrading import FXTrading
-    import matplotlib.pyplot as plt
-    import matplotlib.dates as mdates
-    from matplotlib.ticker import MultipleLocator
     from foolbox.wp_tabs_figs.wp_settings import settings
     from foolbox.utils import *
 
-    """Broomstick plots for swap points- and bid-ask spreads-adjusted returns
-    """
     # Set the output path, input data and sample
     out_path = data_path + settings["fig_folder"]
     input_dataset = settings["fx_data"]
-    start_date = "2001-08-01"
+    start_date = settings["sample_start"]
     end_date = settings["sample_end"]
 
     # Import the FX data
     with open(data_path+input_dataset, mode="rb") as fname:
-        data = pickle.load(fname)
+        data_merged_tz = pickle.load(fname)
 
     # Import the all fixing times for the dollar index
     with open(data_path+"fx_by_tz_sp_fixed.p", mode="rb") as fname:
-        data_usd = pickle.load(fname)
+        data_all_tz = pickle.load(fname)
 
     # Get the individual currenices, spot rates:
-    spot_bid = data["spot_bid"][start_date:end_date].loc[:,["aud"]]
-    spot_ask = data["spot_ask"][start_date:end_date].loc[:,["aud"]]
-    swap_ask = data["tnswap_ask"][start_date:end_date].loc[:,["aud"]]
-    swap_bid = data["tnswap_bid"][start_date:end_date].loc[:,["aud"]]
+    spot_bid = data_merged_tz["spot_bid"].loc[start_date:end_date,:]
+    spot_ask = data_merged_tz["spot_ask"].loc[start_date:end_date,:]
+    swap_ask = data_merged_tz["tnswap_ask"].loc[start_date:end_date,:]
+    swap_bid = data_merged_tz["tnswap_bid"].loc[start_date:end_date,:]
+    # swap_ask = data_all_tz["tnswap_ask"].loc[:,start_date:end_date,"NYC"]
+    # swap_bid = data_all_tz["tnswap_bid"].loc[:,start_date:end_date,"NYC"]
+
+    # spot_ask_us = data_all_tz["spot_ask"].loc[:,start_date:end_date,"NYC"]
+    # spot_bid_us = data_all_tz["spot_bid"].loc[:,start_date:end_date,"NYC"]
+    # swap_ask_us = data_all_tz["tnswap_ask"].loc[:,start_date:end_date,"NYC"]
+    # swap_bid_us = data_all_tz["tnswap_bid"].loc[:,start_date:end_date,"NYC"]
 
     # Align and ffill the data, first for tz-aligned countries
-    (spot_bid, spot_ask, swap_bid, swap_ask) =\
-        align_and_fillna((spot_bid, spot_ask, swap_bid, swap_ask),
-                         "B", method="ffill")
+    (spot_bid, spot_ask, swap_bid, swap_ask) = align_and_fillna(
+        (spot_bid, spot_ask, swap_bid, swap_ask),
+        "B", method="ffill")
 
-    prices = pd.Panel.from_dict({"bid": spot_bid, "ask": spot_ask},
-        orient="items")
-    swap_points = pd.Panel.from_dict({"bid": swap_bid, "ask": swap_ask},
-        orient="items")
-    settings = {"h": 10}
-    # Get signals for all countries except for the US
-    policy_fcasts = list()
-    for curr in spot_bid.columns:
-        # Get the predicted change in policy rate
-        tmp_pe = PolicyExpectation.from_pickles(data_path, curr)
-        policy_fcasts.append(
-            tmp_pe.forecast_policy_change(lag=12,
-                                          threshold=0.10,
-                                          avg_impl_over=5,
-                                          avg_refrce_over=5,
-                                          bday_reindex=True))
+    # # Now for the dollar index
+    # (spot_bid_us, spot_ask_us, swap_bid_us, swap_ask_us) =\
+    #     align_and_fillna((spot_bid_us, spot_ask_us,
+    #                       swap_bid_us, swap_ask_us),
+    #                      "B", method="ffill")
+    # spot_bid.loc[:,"usd"] = spot_bid_us.drop(settings["drop_currencies"],
+    #     axis=1).mean(axis=1)
+    # spot_ask.loc[:,"usd"] = spot_ask_us.drop(settings["drop_currencies"],
+    #     axis=1).mean(axis=1)
+    # swap_bid.loc[:,"usd"] = swap_bid_us.drop(settings["drop_currencies"],
+    #     axis=1).mean(axis=1)
+    # swap_ask.loc[:,"usd"] = swap_ask_us.drop(settings["drop_currencies"],
+    #     axis=1).mean(axis=1)
 
-    # Put individual predictions into a single dataframe
-    signals = pd.concat(policy_fcasts, join="outer", axis=1)\
-        .loc[start_date:end_date,:]
-    signals = signals.reindex(
-        index=pd.date_range(
-            start=signals.index[0]-DateOffset(months=1),
-            end=signals.index[-1]+DateOffset(months=1),
-            freq='B'))
-    signals = signals.shift(-1).dropna()
+    prices = pd.Panel.from_dict(
+        {"bid": spot_bid, "ask": spot_ask},
+        orient="items").drop(settings["drop_currencies"], axis="minor_axis")
+    swap_points = pd.Panel.from_dict(
+        {"bid": swap_bid, "ask": swap_ask},
+        orient="items").drop(settings["drop_currencies"], axis="minor_axis")
 
-    fxtr = FXTrading(prices=prices, swap_points=swap_points, settings=settings,
-        signals=signals.loc["2001-09":,:])
+    nav_fcast = pd.Panel(
+        items=np.arange(1,16),
+        major_axis=prices.major_axis,
+        minor_axis=np.arange(1,26))
+    nav_perf = pd.DataFrame(index=prices.major_axis, columns=np.arange(1,16))
 
-    nav = fxtr.backtest()
+    # the loop
+    for h in range(1,16):
+        for p in range(1,26):
+            # Get signals for all countries except for the US
+            policy_fcasts = list()
+            for curr in prices.minor_axis:
+                # Get the predicted change in policy rate
+                tmp_pe = PolicyExpectation.from_pickles(data_path, curr)
+                policy_fcasts.append(
+                    tmp_pe.forecast_policy_change(
+                        lag=h+1+settings["base_blackout"],
+                        threshold=p/100,
+                        avg_impl_over=settings["avg_impl_over"],
+                        avg_refrce_over=settings["avg_refrce_over"],
+                        bday_reindex=True))
 
+            # Put individual predictions into a single dataframe
+            signals = pd.concat(policy_fcasts, join="outer", axis=1)\
+                .loc[start_date:end_date,:]
+            signals = signals.dropna(how="all")
 
-    nav.plot()
-    nav.loc["2007-10"]
-    prices.loc[:,"2001-09","aud"]
+            trading_settings = {
+                "holding_period": h,
+                "blackout": settings["base_blackout"]}
+
+            fxtr = FXTrading(
+                prices=prices,
+                swap_points=swap_points,
+                signals=signals,
+                settings=trading_settings)
+
+            this_nav = fxtr.backtest()
+
+            nav_fcast.loc[h,:,p] = this_nav
+
+        # perfect -----------------------------------------------------------
+        with open(data_path+"events.p", mode="rb") as fname:
+            events = pickle.load(fname)
+        perfect_sig = np.sign(events["joint_cbs"])
+        perfect_sig = perfect_sig.loc[:,prices.minor_axis].dropna(how="all")
+        perfect_sig = perfect_sig.loc[start_date:]
+
+        perfect_sig = perfect_sig.where(signals).dropna(how="all")
+
+        fxtr = FXTrading(
+            prices=prices,
+            swap_points=swap_points,
+            signals=perfect_sig,
+            settings=trading_settings)
+
+        this_nav_perf = fxtr.backtest()
+
+        # perfect foresight
+        nav_perf.loc[:,h] = this_nav_perf
+
+    with open(out_path + "output.p", mode="wb") as hangar:
+        pickle.dump({"perf": nav_perf, "fcast": nav_fcast}, hangar)
+
+    # with open(out_path + "output.p", mode="rb") as hangar:
+    #     lol = pickle.load(hangar)
+
+    #
+    # %matplotlib inline
+    # fig, ax = plt.subplots()
+    # nav_perfect.plot(ax=ax, color='k')
+    # nav_perf.loc[:,trading_settings["holding_period"]].plot(ax=ax,
+    #     color=my_red)
+    # fig.tight_layout()
+    # fig.savefig(out_path + "nav_perfect.pdf", transparent=True)
