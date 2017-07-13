@@ -2,6 +2,7 @@
 currency data set"""
 
 settings = {
+    "drop_currencies": ["jpy","dkk","nok"],
     "sample_start": "2000-11-01",
     "sample_end": "2017-03-31",
     "fx_data": "fx_by_tz_aligned_d.p",
@@ -11,7 +12,8 @@ settings = {
     "avg_impl_over": 5,
     "avg_refrce_over": 5,
     "base_threshold": 0.10,
-    "base_holding_h": 10,
+    "base_holding_h": 2,
+    "base_blackout": 1,
     }
 
 # matplotlib settings -------------------------------------------------------
