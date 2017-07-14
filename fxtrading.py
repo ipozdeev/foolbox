@@ -41,7 +41,7 @@ class FXTrading():
         # fill into the past
         position_flags = position_flags.fillna(
             method="bfill",
-            limit=self.settings["holding_period"])
+            limit=self.settings["holding_period"]-1)
 
         # in case of equally-weighted no-leverage portfolio, position weights
         #   are signals divided by the absolute sum thereof
@@ -92,7 +92,7 @@ class FXTrading():
             self.portfolio.roll_over(these_swap_points)
 
             # get liquidation value -----------------------------------------
-            liquidation_v.loc[t] =  self.portfolio.get_liquidation_value(
+            liquidation_v.loc[t] = self.portfolio.get_liquidation_value(
                 prices=these_prices)
 
         return liquidation_v
