@@ -38,6 +38,10 @@ class FXTrading():
         position_flags = self.signals.reindex(index=prices.major_axis)
         # shift by blackout
         position_flags = position_flags.shift(-1*settings["blackout"])
+
+        # Wipe the intruders who have events inside the first holding period
+        position_flags.iloc[:self.settings["holding_period"], :] = np.nan
+
         # fill into the past
         position_flags = position_flags.fillna(
             method="bfill",
