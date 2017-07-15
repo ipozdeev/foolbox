@@ -37,7 +37,7 @@ class FXTrading():
         #   indexed comme il faut, e.g. with business days
         position_flags = self.signals.reindex(index=prices.major_axis)
         # shift by blackout
-        position_flags = position_flags.shift(settings["blackout"])
+        position_flags = position_flags.shift(-1*settings["blackout"])
         # fill into the past
         position_flags = position_flags.fillna(
             method="bfill",
@@ -312,6 +312,9 @@ class FXPosition(object):
         else:
             self.transact(self.end_quantity, prices)
 
+        self.end_quantity = 0
+        self.avg_price = 0
+
     def transact(self, quantity, price):
         """Wrapper around the 'buy()' and 'sell()' methods, recognizing sells
         as transactions with negative quantity. Furthermore, updates the
@@ -391,6 +394,7 @@ class FXPosition(object):
         # Check the end quantity, render position type to None if nothing left
         if self.end_quantity == 0:
             self.position_type = None
+            self.avg_price = 0
 
     def sell(self, quantity, price):
         """Sells 'quantity' units at 'price' price
@@ -446,6 +450,7 @@ class FXPosition(object):
         # Check the end quantity, render position type to None if nothing left
         if self.end_quantity == 0:
             self.position_type = None
+            self.avg_price = 0
 
     def flip(self, quantity, price):
         """Utility method wrapping 'buy()' and 'sell()' which induce a change
