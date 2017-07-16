@@ -1,6 +1,6 @@
 import pandas as pd
 import numpy as np
-import ipdb
+# import ipdb
 
 class FXTrading():
     """
@@ -64,7 +64,7 @@ class FXTrading():
         portfolio = FXPortfolio(positions=positions)
 
         self.position_flags = position_flags
-        self.positions_weights = position_weights
+        self.position_weights = position_weights
         self.actions = actions
         self.portfolio = portfolio
 
@@ -127,13 +127,13 @@ class FXTrading():
         # Convert dataframes to an XlsxWriter Excel object.
         self.signals.to_excel(writer, sheet_name='signals')
         self.position_flags.to_excel(writer, sheet_name='position_flags')
-        self.position_weights.to_excel(writer, sheet_name='position_flags')
+        self.position_weights.to_excel(writer, sheet_name='position_weights')
         self.actions.to_excel(writer, sheet_name='actions')
 
-        self.prices.loc[:,:,"ask"].to_excel(writer, sheet_name='p_ask')
-        self.prices.loc[:,:,"bid"].to_excel(writer, sheet_name='p_bid')
-        self.swap_points.loc[:,:,"ask"].to_excel(writer, sheet_name='_ask')
-        self.swap_points.loc[:,:,"bid"].to_excel(writer, sheet_name='_bid')
+        self.prices.loc["ask",:,:].to_excel(writer, sheet_name='p_ask')
+        self.prices.loc["bid",:,:].to_excel(writer, sheet_name='p_bid')
+        self.swap_points.loc["ask",:,:].to_excel(writer, sheet_name='swop_ask')
+        self.swap_points.loc["bid",:,:].to_excel(writer, sheet_name='swop_bid')
 
         # save and close
         writer.save()
@@ -732,58 +732,28 @@ if __name__ == "__main__":
     from foolbox.utils import *
 
     # Set the output path, input data and sample
-    out_path = data_path + settings["fig_folder"]
-    input_dataset = settings["fx_data"]
-    start_date = settings["sample_start"]
-    end_date = settings["sample_end"]
+    out_path = data_path
+    start_date = pd.to_datetime(settings["sample_start"])
+    add_usd = True
 
-    # Import the FX data
-    with open(data_path+input_dataset, mode="rb") as fname:
-        data_merged_tz = pickle.load(fname)
+    # data
+    prices, swap_points = fetch_the_data(data_path,
+        drop_curs=settings["drop_currencies"],
+        align=True,
+        add_usd=False)
 
-    # Import the all fixing times for the dollar index
-    with open(data_path+"fx_by_tz_sp_fixed.p", mode="rb") as fname:
-        data_all_tz = pickle.load(fname)
+    # some empty frame to prepend the signals with
+    empty_month = pd.DataFrame(
+        index=pd.date_range(
+            start_date-DateOffset(months=1),
+            start_date, freq='B'),
+        columns=prices.minor_axis).drop(start_date, axis=0)
 
-    # Get the individual currenices, spot rates:
-    spot_bid = data_merged_tz["spot_bid"]
-    spot_ask = data_merged_tz["spot_ask"]
-    swap_ask = data_merged_tz["tnswap_ask"]
-    swap_bid = data_merged_tz["tnswap_bid"]
-    # swap_ask = data_all_tz["tnswap_ask"].loc[:,start_date:end_date,"NYC"]
-    # swap_bid = data_all_tz["tnswap_bid"].loc[:,start_date:end_date,"NYC"]
+    # drop redundand stuff
+    prices = prices.loc[:,empty_month.index[0]:,:]
+    swap_points = swap_points.loc[:,empty_month.index[0]:,:]
 
-    # spot_ask_us = data_all_tz["spot_ask"].loc[:,start_date:end_date,"NYC"]
-    # spot_bid_us = data_all_tz["spot_bid"].loc[:,start_date:end_date,"NYC"]
-    # swap_ask_us = data_all_tz["tnswap_ask"].loc[:,start_date:end_date,"NYC"]
-    # swap_bid_us = data_all_tz["tnswap_bid"].loc[:,start_date:end_date,"NYC"]
-
-    # Align and ffill the data, first for tz-aligned countries
-    (spot_bid, spot_ask, swap_bid, swap_ask) = align_and_fillna(
-        (spot_bid, spot_ask, swap_bid, swap_ask),
-        "B", method="ffill")
-
-    # # Now for the dollar index
-    # (spot_bid_us, spot_ask_us, swap_bid_us, swap_ask_us) =\
-    #     align_and_fillna((spot_bid_us, spot_ask_us,
-    #                       swap_bid_us, swap_ask_us),
-    #                      "B", method="ffill")
-    # spot_bid.loc[:,"usd"] = spot_bid_us.drop(settings["drop_currencies"],
-    #     axis=1).mean(axis=1)
-    # spot_ask.loc[:,"usd"] = spot_ask_us.drop(settings["drop_currencies"],
-    #     axis=1).mean(axis=1)
-    # swap_bid.loc[:,"usd"] = swap_bid_us.drop(settings["drop_currencies"],
-    #     axis=1).mean(axis=1)
-    # swap_ask.loc[:,"usd"] = swap_ask_us.drop(settings["drop_currencies"],
-    #     axis=1).mean(axis=1)
-
-    prices = pd.Panel.from_dict(
-        {"bid": spot_bid, "ask": spot_ask},
-        orient="items").drop(settings["drop_currencies"], axis="minor_axis")
-    swap_points = pd.Panel.from_dict(
-        {"bid": swap_bid, "ask": swap_ask},
-        orient="items").drop(settings["drop_currencies"], axis="minor_axis")
-
+    # space for output
     nav_fcast = pd.Panel(
         items=np.arange(1,16),
         major_axis=prices.major_axis,
@@ -791,85 +761,136 @@ if __name__ == "__main__":
     nav_perf = pd.DataFrame(index=prices.major_axis, columns=np.arange(1,16))
 
     # the loop
-    for h in range(3,4):
+    for h in range(1,16):
         # h = 10
-        for p in range(9,10):
-            # p = 9
+        for p in range(1,26):
+            # p = 10
+            print("holding horizon: {}, threshold: {}".format(h,p))
             # Get signals for all countries except for the US
-            policy_fcasts = list()
-            for curr in prices.minor_axis:
-                # Get the predicted change in policy rate
-                tmp_pe = PolicyExpectation.from_pickles(data_path, curr)
-                policy_fcasts.append(
-                    tmp_pe.forecast_policy_change(
-                        lag=h+1+settings["base_blackout"],
-                        threshold=p/100,
-                        avg_impl_over=settings["avg_impl_over"],
-                        avg_refrce_over=settings["avg_refrce_over"],
-                        bday_reindex=True))
+            signals = get_pe_signals(prices.minor_axis,
+                lag=h+1+settings["base_blackout"],
+                threshold=p,
+                data_path=data_path,
+                fomc=False,
+                avg_impl_over=settings["avg_impl_over"],
+                avg_refrce_over=settings["avg_refrce_over"],
+                bday_reindex=True)
 
-            # Put individual predictions into a single dataframe
-            signals = pd.concat(policy_fcasts, join="outer", axis=1)\
-                .loc[start_date:end_date,:]
-            signals = signals.dropna(how="all")
+            if add_usd:
+                signals_usd = get_pe_signals(prices.minor_axis,
+                    lag=h+1+settings["base_blackout"],
+                    threshold=p,
+                    data_path=data_path,
+                    fomc=True,
+                    avg_impl_over=settings["avg_impl_over"],
+                    avg_refrce_over=settings["avg_refrce_over"],
+                    bday_reindex=True)
 
-            # add NA in front of signals
-            add_sig = pd.DataFrame(
-                index=pd.date_range(
-                    signals.index[0]-DateOffset(months=1),
-                    signals.index[0], freq='B'),
-                columns=signals.columns).drop(signals.index[0], axis=0)
-            signals = pd.concat((add_sig, signals), axis=0)
+                signals, signals_usd = signals.align(signals_usd,
+                    axis=0, join="outer")
+                signals = signals.fillna(value=0.0).add(
+                    signals_usd.fillna(value=0.0))
+
+            # trim to start date
+            signals = signals.loc[start_date:,:]
+
+            # add some nan's at the beginning
+            signals = pd.concat((empty_month, signals), axis=0)
 
             trading_settings = {
                 "holding_period": h,
                 "blackout": settings["base_blackout"]}
 
             fxtr = FXTrading(
-                prices=prices.loc[:,signals.index[0]:,:],
-                swap_points=swap_points.loc[:,signals.index[0]:,:]*0.0,
+                prices=prices,
+                swap_points=swap_points,
                 signals=signals,
                 settings=trading_settings)
 
-            this_nav= fxtr.backtest()
-            # fxtr.actions.head(25)
-            # this_nav.plot()
-            # qty.loc["2006-04"].where(qty.loc["2006-04"] > 0.0).count()
-            # this_nav.loc["2006-03":"2006-04"]
-            # fxtr.actions
-            # qty.loc["2006-03"]
+            this_nav = fxtr.backtest()
 
             nav_fcast.loc[h,:,p] = this_nav
 
-        # perfect -----------------------------------------------------------
-        with open(data_path+"events.p", mode="rb") as fname:
-            events = pickle.load(fname)
-        perfect_sig = np.sign(events["joint_cbs"])
-        perfect_sig = perfect_sig.loc[:,prices.minor_axis].dropna(how="all")
-        perfect_sig = perfect_sig.loc[start_date:]
+        # # perfect -----------------------------------------------------------
+        # with open(data_path+"events.p", mode="rb") as fname:
+        #     events = pickle.load(fname)
+        # perfect_sig = np.sign(events["joint_cbs"])
+        # perfect_sig = perfect_sig.loc[:,prices.minor_axis].dropna(how="all")
+        # perfect_sig = perfect_sig.loc[start_date:]
+        #
+        # perfect_sig = perfect_sig.where(signals).dropna(how="all")
+        # if add_usd:
+        #     perfect_sig.loc[:,"usd"] *= -1
+        #
+        # fxtr = FXTrading(
+        #     prices=prices,
+        #     swap_points=swap_points,
+        #     signals=perfect_sig,
+        #     settings=trading_settings)
+        #
+        # this_nav_perf = fxtr.backtest()
+        #
+        # # perfect foresight
+        # nav_perf.loc[:,h] = this_nav_perf
 
-        perfect_sig = perfect_sig.where(signals).dropna(how="all")
+    with open(out_path + "ip_rx.p", mode="wb") as hangar:
+        pickle.dump({"perf": nav_perf, "fcast": nav_fcast}, hangar)
 
-        fxtr = FXTrading(
-            prices=prices,
-            swap_points=swap_points*0.0,
-            signals=perfect_sig,
-            settings=trading_settings)
-
-        this_nav_perf = fxtr.backtest()
-        this_nav_perf.plot()
-
-        # perfect foresight
-        nav_perf.loc[:,h] = this_nav_perf
-
-    # with open(out_path + "output.p", mode="wb") as hangar:
-    #     pickle.dump({"perf": nav_perf, "fcast": nav_fcast}, hangar)
-    #
-    # with open(out_path + "output.p", mode="rb") as hangar:
+    # with open(out_path + "ip_rx_wo_fomc.p", mode="rb") as hangar:
     #     new = pickle.load(hangar)
+    #
+    # from pandas.tseries.offsets import BDay
+    # data = new["fcast"].loc[:,start_date:,:]
+    #
+    # data_flat = data.swapaxes("items", "major_axis").to_frame(
+    #     filter_observations=False).T
+    # data_flat = pd.concat((
+    #     pd.DataFrame(1.0,
+    #         index=[data_flat.index[0]-BDay()],
+    #         columns=data_flat.columns),
+    #     data_flat), axis=0)
+    #
+    # fig, ax = plt.subplots()
+    # data_flat.ffill().plot(ax=ax, color=new_gray)
+    # data_flat.ffill().quantile([0.05,0.95], axis=1).T.plot(ax=ax,
+    #     color='k', linewidth=1.5, linestyle="--")
+    # data_flat.ffill().quantile(0.5, axis=1).plot(ax=ax,
+    #     color='k', linewidth=1.5, linestyle="--")
+    # ax.legend_.remove()
+    #
+    #
+    #
+    # fig, ax = plt.subplots()
+    # for h in data.items:
+    #     data.loc[h,:,:].plot(ax=ax, color=new_gray)
+    # ax.legend_.remove()
+    #
+    #
+    # cmap = plt.cm.get_cmap('bwr')
+    #
+    # import matplotlib
+    # fig, ax = plt.subplots()
+    # for h in data.items:
+    #     data.loc[h,:,:].plot(
+    #         ax=ax,
+    #         color=matplotlib.colors.rgb2hex(cmap(h/15)[:3]))
+    # ax.legend_.remove()
+    #
+    #
+    # data = pd.concat([data.loc[:,:,p] for ])
+    # fxtr.to_excel(out_path + "insights_swap.xlsx")
+    #
+    # ((data_merged_tz["tnswap_ask"]- data_merged_tz["tnswap_bid"]) > 0).sum()
+
+
+
+
 
     # %matplotlib inline
+    # %config InlineBackend.figure_format = "svg"
     # this_nav.plot()
+    # plt.show()
+
     # new = new["fcast"]
     # new.loc[2,"2003-07",1]
     # prices.loc[:,:,"aud"].plot()
