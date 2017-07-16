@@ -1,6 +1,6 @@
 import pandas as pd
 import numpy as np
-# import ipdb
+import ipdb
 
 class FXTrading():
     """
@@ -39,8 +39,8 @@ class FXTrading():
         # shift by blackout
         position_flags = position_flags.shift(-1*settings["blackout"])
 
-        # Wipe the intruders who have events inside the first holding period
-        position_flags.iloc[:self.settings["holding_period"], :] = np.nan
+        # # Wipe the intruders who have events inside the first holding period
+        # position_flags.iloc[:self.settings["holding_period"], :] = np.nan
 
         # fill into the past
         position_flags = position_flags.fillna(
@@ -78,11 +78,19 @@ class FXTrading():
         4) record liquidation value
 
         """
+        # find rows where some action takes plyce: self.actions or
+        #   self.position_flags are not zero
+        good_idx = self.actions.replace(0.0, np.nan).dropna(how="all").index\
+            .union(
+            self.position_flags.replace(0.0, np.nan).dropna(how="all").index)
+
+        # ipdb.set_trace()
+
         # allocate space for liquidation values
         liquidation_v = pd.Series(index=self.position_flags.index)
 
         # loop over time and position weights
-        for t, row in self.actions.iterrows():
+        for t, row in self.actions.loc[good_idx,:].iterrows():
 
             # fetch prices and swap points ----------------------------------
             these_prices = self.prices.loc[:,t,:]
@@ -823,7 +831,7 @@ if __name__ == "__main__":
                 signals=signals,
                 settings=trading_settings)
 
-            this_nav, qty = fxtr.backtest()
+            this_nav= fxtr.backtest()
             # fxtr.actions.head(25)
             # this_nav.plot()
             # qty.loc["2006-04"].where(qty.loc["2006-04"] > 0.0).count()
@@ -876,3 +884,4 @@ if __name__ == "__main__":
     #     color=my_red)
     # fig.tight_layout()
     # fig.savefig(out_path + "nav_perfect.pdf", transparent=True)
+    # this_nav.plot()
