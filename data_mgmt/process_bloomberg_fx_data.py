@@ -93,18 +93,6 @@ for f in fnames:
 # pickle this raw file full of panels
 with open(name_data_by_tz, "wb") as fname:
     pickle.dump(data_by_tz, fname)
-# with open(name_data_by_tz, "rb") as fname:
-#     data_by_tz = pickle.load(fname)
-
-# settlement dates to datetime ----------------------------------------------
-# data_by_tz["1w_settl"] = data_by_tz["1w_settl"].apply(pd.to_datetime)
-
-# tom/next swap points: from pips to units ----------------------------------
-# data_by_tz["1w_ask"] /= 10000
-# data_by_tz["1w_bid"] /= 10000
-# # yen has 100 as pips
-# data_by_tz["1w_ask"].loc["jpy",:,:] *= 100
-# data_by_tz["1w_bid"].loc["jpy",:,:] *= 100
 
 data_by_tz["tnswap_ask"] /= 10000
 data_by_tz["tnswap_bid"] /= 10000
@@ -122,13 +110,6 @@ for tz in data_by_tz["spot_bid"].minor_axis:
     bid_sp_y = data_by_tz["tnswap_bid"].loc[usdxxx,:,tz]
     ask_x_s = data_by_tz["spot_ask"].loc[usdxxx,:,tz]
     bid_x_s = data_by_tz["spot_bid"].loc[usdxxx,:,tz]
-
-    # # ask_x_s.loc["2017-03-31",:]
-    # # bid_sp_y.loc["2017-03-31",:]
-    # # this_bid_direct.loc["2017-03-31",:]
-    #
-    # this_ask_direct = 1/(1/ask_x_s+bid_sp_y) - ask_x_s
-    # this_bid_direct = 1/(1/bid_x_s+ask_sp_y) - bid_x_s
 
     # not cross
     this_ask_direct = 1/(bid_x_s+bid_sp_y) - 1/bid_x_s
@@ -178,29 +159,7 @@ for k,v in data_by_tz.items():
     # save
     data_by_tz_aligned[k] = this_quote_type
 
-# # "fix" sek, dkk, jpy, nok and chf ------------------------------------------
-# # since these are in usdxxx form
-# ask_sp_x = \
-#     1/(1/data_by_tz_aligned["spot_ask"].loc[:,usdxxx] +
-#         data_by_tz_aligned["1w_bid"].loc[:,usdxxx]
-#         )-\
-#         data_by_tz_aligned["spot_ask"].loc[:,usdxxx]
-# bid_sp_x = \
-#     1/(1/data_by_tz_aligned["spot_bid"].loc[:,usdxxx] +
-#         data_by_tz_aligned["1w_ask"].loc[:,usdxxx]
-#         )-\
-#         data_by_tz_aligned["spot_bid"].loc[:,usdxxx]
-#
-# data_by_tz_aligned["1w_ask"].loc[:,usdxxx] = ask_sp_x
-# data_by_tz_aligned["1w_bid"].loc[:,usdxxx] = bid_sp_x
-
-# adjust for negative ba spreads --------------------------------------------
-# idx = (data_by_tz_aligned["1w_ask"] - data_by_tz_aligned["1w_bid"]) < 0
-# data_by_tz_aligned["1w_bid"] = data_by_tz_aligned["1w_bid"].mask(
-#     idx, data_by_tz_aligned["1w_ask"])
-
 idx = (data_by_tz_aligned["tnswap_ask"] - data_by_tz_aligned["tnswap_bid"]) < 0
-idx.sum()
 data_by_tz_aligned["tnswap_bid"] = data_by_tz_aligned["tnswap_bid"].mask(
     idx, data_by_tz_aligned["tnswap_ask"])
 
