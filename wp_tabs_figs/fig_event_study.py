@@ -5,6 +5,8 @@ from scipy.stats import norm
 from foolbox.api import *
 
 import matplotlib.pyplot as plt
+import matplotlib.patches as mpatches
+import matplotlib.lines as mlines
 from matplotlib.ticker import MultipleLocator, FixedLocator, FormatStrFormatter
 
 minorLocator = MultipleLocator(1)
@@ -64,6 +66,8 @@ def fig_event_study(events, ret, direction,
 
     # reindex to delete the missing observarions
     cumsums = cumsums.reindex(index=np.arange(wa,wd+1))
+    cumsum_a = cumsums.iloc[0,:]
+    cumsum_d = cumsums.iloc[-1,:]
 
     # average across event-currency pairs -----------------------------------
     if wght == "equal":
@@ -122,8 +126,17 @@ def fig_event_study(events, ret, direction,
         color=gr_1, alpha=0.5, label="conf. interval")
 
     # final retouche --------------------------------------------------------
-    furbish_plot(ax_individ, set_xlabel=True)
-    furbish_plot(ax_avg)
+    furbish_plot(ax_individ, arrows=True,
+        tot_curs={"a": cumsum_a, "d": cumsum_d})
+
+    furbish_plot(ax_avg, set_xlabel=True, arrows=False)
+    black_line = mlines.Line2D([], [],
+        linewidth=1.5, color='k', label="cross-currency CAR")
+    gray_patch = mpatches.Patch(color=gr_1, label='95% conf. int.')
+    lines = [black_line, gray_patch]
+    labels = [line.get_label() for line in lines]
+    ax_avg.legend(lines, labels, fontsize=12, loc="upper right")
+
     fig_individ.tight_layout()
     fig_avg.tight_layout()
 
@@ -136,9 +149,39 @@ def fig_event_study(events, ret, direction,
 
     return fig_individ, fig_avg
 
-def furbish_plot(ax, set_xlabel=False):
+def furbish_plot(ax, set_xlabel=False, arrows=False, tot_curs=None):
     """
+    f_i
+    ax=f_i.axes[0]
     """
+    # limits ----------------------------------------------------------------
+    xlim = ax.get_xlim()
+    ylim = ax.get_ylim()
+    dylim = ylim[1]-ylim[0]
+    ax.set_xlim((xlim[0]-1.5, xlim[1]+1.5))
+
+    # arrow, text -----------------------------------------------------------
+    if arrows:
+        ax.arrow(x=-1, y=ylim[1]*0.7, dx=-3.3, dy=0,
+            length_includes_head=True,
+            head_width=dylim/30,
+            head_length=0.2,
+            linewidth=2,
+            fc='k', ec='k')
+        ax.text(-1, ylim[1]*0.75, r"hold from x to -1",
+            verticalalignment="bottom", horizontalalignment="right",
+            fontsize=12)
+
+        ax.arrow(x=1, y=ylim[1]*0.7, dx=2.3, dy=0,
+            length_includes_head=True,
+            head_width=dylim/30,
+            head_length=0.2,
+            linewidth=2,
+            fc='k', ec='k')
+        ax.text(1, ylim[1]*0.75, r"hold from 1 to x",
+        verticalalignment="bottom", horizontalalignment="left",
+        fontsize=12)
+
     # zero line -------------------------------------------------------------
     # ax.xaxis.set_ticks(cumsums.dropna().index)
     ax.axhline(y=0, color='k', linestyle='--', linewidth=1.0, alpha=0.75)
@@ -151,9 +194,21 @@ def furbish_plot(ax, set_xlabel=False):
     # grid ------------------------------------------------------------------
     ax.grid(which="both", alpha=0.33, linestyle=":")
 
-    # labels
+    # labels ----------------------------------------------------------------
     if set_xlabel:
         ax.set_xlabel("days after event", fontsize=12)
+
+    # individual currencies -------------------------------------------------
+    ax.set_ylim(ylim)
+    if tot_curs is not None:
+        # ax = f_i.axes[0]
+        for c, p in tot_curs["a"].iteritems():
+            ax.annotate(c, xy=(-10.1, p),
+                horizontalalignment='right', fontsize=12)
+        for c, p in tot_curs["d"].iteritems():
+            ax.annotate(c, xy=(5.1, p),
+                horizontalalignment='left', fontsize=12)
+
 
     return
 
@@ -186,7 +241,7 @@ if __name__ == "__main__":
     # spot returns + drop currencies ----------------------------------------
     with open(data_path + settings["fx_data"], mode='rb') as fname:
         fx = pickle.load(fname)
-    ret = fx["spot_ret"].drop(drop_curs, axis=1, errors="ignore")
+    ret = np.log(fx["spot_mid"].drop(drop_curs,axis=1,errors="ignore")).diff()
 
     # events + drop currencies ----------------------------------------------
     with open(data_path + settings["events_data"], mode='rb') as fname:

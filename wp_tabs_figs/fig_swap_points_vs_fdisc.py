@@ -2,7 +2,8 @@ import pandas as pd
 from pandas.tseries.offsets import DateOffset
 from matplotlib import dates as mdates, ticker
 from foolbox.api import *
-
+from foolbox.utils import remove_outliers
+from foolbox.wp_tabs_figs.wp_settings import *
 # %matplotlib
 
 # colors
@@ -18,24 +19,30 @@ with open(data_path + "data_wmr_dev_m.p", mode='rb') as fname:
     fx_m = pickle.load(fname)
 
 # forward discounts
-fwd_disc_m = fx_m["fwd_disc"]*100
+fwd_disc_m = (np.exp(fx_m["fwd_disc"])-1)*100
 
 # daily
 with open(data_path + "fx_by_tz_aligned_d.p", mode='rb') as fname:
     fx_d = pickle.load(fname)
 
+swap_ask = fx_d["tnswap_ask"]
+swap_bid = fx_d["tnswap_bid"]
+
+swap_ask = remove_outliers(swap_ask, 20).dropna(how="all")
+swap_bid = remove_outliers(swap_bid, 20).dropna(how="all")
+
 # mid quotes
-fwd_disc_d = (fx_d["tnswap_ask"].ffill() + fx_d["tnswap_bid"].ffill())/2
+fwd_disc_d = (swap_ask.ffill() + swap_bid.ffill())/2
 # divide swap points through the spot price to arrive at forward discounts
-fwd_disc_d /= (fx_d["spot_bid"] + fx_d["spot_ask"])/2
+fwd_disc_d /= (fx_d["spot_bid"].ffill() + fx_d["spot_ask"].ffill())/2
 # resample monthly, taking care of missing data, -1 is needed to convert to dr
 fwd_disc_d_m = fwd_disc_d.resample('M').mean()*30*100*-1
 
 # plot ----------------------------------------------------------------------
 # subsample
 curs = ['aud', 'cad', 'chf', 'eur', 'gbp', 'nzd', 'sek']
-s_dt = pd.to_datetime("2000-11-30")
-e_dt = pd.to_datetime("2017-03-31")
+s_dt = pd.to_datetime(settings["sample_start"])
+e_dt = pd.to_datetime(settings["sample_end"])
 
 fwd_disc_d_m = fwd_disc_d_m.loc[s_dt:e_dt,:]
 fwd_disc_m = fwd_disc_m.loc[s_dt:e_dt,:]
