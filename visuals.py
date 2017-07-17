@@ -3,6 +3,8 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.lines as mlines
 
+from foolbox.wp_tabs_figs.wp_settings import *
+
 def broomstick_plot(data, ci=(0.1, 0.9)):
     """Given an input array of data, produces a broomstick plot, with all
     series in gray, the mean of the series in black (along with confidence
@@ -43,7 +45,7 @@ def broomstick_plot(data, ci=(0.1, 0.9)):
     plt.setp(ax.get_xticklabels(), rotation=0, ha="center")
     # Grid
     ax.grid(which="both", alpha=0.33, linestyle=":")
-    ax.plot(data, color=my_gray, lw=0.75, alpha=0.25)
+    ax.plot(data, color=new_gray, lw=0.75, alpha=0.25)
 
     ax.plot(stats["mean"], color="k", lw=2)
     ax.plot(stats[["cb_l", "cb_u"]], color="k", lw=2, linestyle="--")
