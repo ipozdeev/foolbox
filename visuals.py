@@ -3,7 +3,12 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.lines as mlines
 
-from foolbox.wp_tabs_figs.wp_settings import *
+my_red = "#ce3300"
+my_blue = "#2f649e"
+my_gray = "#8c8c8c"
+
+plt.rc("font", family="serif", size=12)
+
 
 def broomstick_plot(data, ci=(0.1, 0.9)):
     """Given an input array of data, produces a broomstick plot, with all
