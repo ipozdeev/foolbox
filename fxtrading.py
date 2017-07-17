@@ -140,6 +140,49 @@ class FXTrading():
 
         return
 
+    def add_junior_signals(self, signals):
+        """Restimate self.position_weights, self.position_flags, and
+         self.actions given a dataframe of signals that do not override the
+         original ones
+
+        Parameters
+        ----------
+        signals: pd.DataFrame
+            of signals junior (i.e. not overriding) to the original ones
+
+        Returns
+        -------
+
+        """
+        # Process the new signals similarly to the old ones
+        signals = signals.replace(0.0, np.nan)
+        position_flags = signals.reindex(index=self.prices.major_axis)
+        # shift by blackout
+        position_flags = position_flags.shift(-1*self.settings["blackout"])
+
+        # fill into the past
+        position_flags = position_flags.fillna(
+            method="bfill",
+            limit=self.settings["holding_period"]-1)
+
+        # Merge with the old position flags
+        self.position_flags = self.position_flags.fillna(position_flags)
+
+        # Adjust the attributes accordingly
+        # in case of equally-weighted no-leverage portfolio, position weights
+        #   are signals divided by the absolute sum thereof
+        # also, make sure that pandas does not sum all nan's to zero
+        row_leverage = np.abs(self.position_flags).apply(axis=1,
+                                                         func=np.nansum)
+        self.position_weights = \
+            self.position_flags.divide(row_leverage, axis=0)
+        # reinstall zeros where nan's are
+        self.position_weights = self.position_weights.fillna(value=0.0)
+
+        # actions are changes in positions: to realize a return on day t, a
+        #   position on t-1 should be opened.
+        self.actions = self.position_weights.diff().shift(-1)
+
 
 class FXPortfolio():
     """
@@ -761,9 +804,9 @@ if __name__ == "__main__":
     nav_perf = pd.DataFrame(index=prices.major_axis, columns=np.arange(1,16))
 
     # the loop
-    for h in range(1,16):
+    for h in range(10,16):
         # h = 10
-        for p in range(1,26):
+        for p in range(10,26):
             # p = 10
             print("holding horizon: {}, threshold: {}".format(h,p))
             # Get signals for all countries except for the US
