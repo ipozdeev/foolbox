@@ -2,10 +2,7 @@ import pandas as pd
 
 import matplotlib.pyplot as plt
 import matplotlib.lines as mlines
-
-my_red = "#ce3300"
-my_blue = "#2f649e"
-my_gray = "#8c8c8c"
+from foolbox.wp_tabs_figs import my_gray
 
 plt.rc("font", family="serif", size=12)
 
