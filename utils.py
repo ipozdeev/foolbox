@@ -2,6 +2,13 @@ import pandas as pd
 import numpy as np
 import pickle
 
+def remove_outliers(data, stds):
+    """
+    """
+    res = data.where(np.abs(data) < data.std()*25)\
+
+    return res
+
 def fetch_the_data(path_to_data, drop_curs=[], align=False, add_usd=False):
     """
     """
@@ -20,10 +27,8 @@ def fetch_the_data(path_to_data, drop_curs=[], align=False, add_usd=False):
     swap_bid = data_merged_tz["tnswap_bid"]
 
     # outliers in swap points
-    swap_ask = swap_ask.where(np.abs(swap_ask) < swap_ask.std()*25)\
-        .dropna(how="all")
-    swap_bid = swap_bid.where(np.abs(swap_bid) < swap_bid.std()*25)\
-        .dropna(how="all")
+    swap_ask = remove_outliers(swap_ask, 50)
+    swap_bid = remove_outliers(swap_bid, 50)
 
     # Align and ffill the data, first for tz-aligned countries
     (spot_bid, spot_ask, swap_bid, swap_ask) = align_and_fillna(

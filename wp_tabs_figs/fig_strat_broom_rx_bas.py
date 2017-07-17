@@ -5,6 +5,7 @@ from matplotlib.ticker import MultipleLocator
 from wp_tabs_figs.wp_settings import settings
 from foolbox.trading import EventTradingStrategy
 from foolbox.utils import *
+from foolbox.visuals import *
 
 """Broomstick plots for swap points- and bid-ask spreads-adjusted returns
 """
@@ -40,8 +41,10 @@ spot_ask = data["spot_ask"][start_date:end_date].drop(["dkk", "jpy", "nok"],
                                                       axis=1)
 swap_ask = data["tnswap_ask"][start_date:end_date].drop(["dkk", "jpy", "nok"],
                                                         axis=1)
+swap_ask = remove_outliers(swap_ask, 50)
 swap_bid = data["tnswap_bid"][start_date:end_date].drop(["dkk", "jpy", "nok"],
                                                         axis=1)
+swap_bid = remove_outliers(swap_bid, 50)
 
 # Construct a pre-set fixing time dollar index
 spot_mid_us = data_usd["spot_mid"].loc[:, :, settings["usd_fixing_time"]]\
@@ -52,8 +55,10 @@ spot_ask_us = data_usd["spot_ask"].loc[:, :, settings["usd_fixing_time"]]\
     .drop(["dkk"], axis=1)[start_date:end_date]
 swap_ask_us = data_usd["tnswap_ask"].loc[:, :, settings["usd_fixing_time"]]\
     .drop(["dkk"], axis=1)[start_date:end_date]
+swap_ask_us = remove_outliers(swap_ask_us, 50)
 swap_bid_us = data_usd["tnswap_bid"].loc[:, :, settings["usd_fixing_time"]]\
     .drop(["dkk"], axis=1)[start_date:end_date]
+swap_bid_us = remove_outliers(swap_bid_us, 50)
 
 # Align and ffill the data, first for tz-aligned countries
 (spot_mid, spot_bid, spot_ask, swap_bid, swap_ask) =\
@@ -88,8 +93,22 @@ cumret_all = ret_all.dropna(how="all").replace(np.nan, 0).cumsum()
 cumret_us = ret_us[start_date:end_date]\
     .dropna(how="all").replace(np.nan, 0).cumsum()
 
+# with open(data_path + "ip_rx_wo_fomc.p", mode="rb") as hangar:
+#     new = pickle.load(hangar)
+#
+# from pandas.tseries.offsets import BDay
+# data = new["fcast"].loc[:,start_date:,:]
+#
+# data_flat = data.swapaxes("items", "major_axis").to_frame(
+#     filter_observations=False).T
+# cumret_all = pd.concat((
+#     pd.DataFrame(1.0,
+#         index=[data_flat.index[0]-BDay()],
+#         columns=data_flat.columns),
+#     data_flat), axis=0)
+
 # Plot the results and save 'em
-fig_all = broomstick_plot(cumret_all)
+fig_all = broomstick_plot(cumret_all.ffill())
 fig_all.savefig(out_path + "broomstick_plot_rx_bas.pdf")
 
 fig_us = broomstick_plot(cumret_us)

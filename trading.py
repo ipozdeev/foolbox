@@ -339,14 +339,15 @@ class EventTradingStrategy(TradingStrategy):
         P = self.prices["actual"].fillna(method="ffill", limit=(h_b-h_a)//2)
 
         # adjust prices -----------------------------------------------------
-        denom = P.shift( (h_b-h_a+1) ) + roll_sum_sp.shift(1)
+        numer = P + roll_sum_sp.shift(1)
+        denom = P.shift( (h_b-h_a+1) )
 
         # recalculate returns -----------------------------------------------
         # these are similar to excess returns in the standard case:
         #   f.shift(1) - s
 
         # align signals with returns
-        new_returns = np.log(P/denom) * self.signals.shift(h_b)
+        new_returns = np.log(numer/denom) * self.signals.shift(h_b)
 
         # return new_returns
 

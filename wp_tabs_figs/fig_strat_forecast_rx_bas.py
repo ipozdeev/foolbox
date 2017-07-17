@@ -56,8 +56,10 @@ spot_ask = data["spot_ask"][start_date:end_date].drop(["dkk", "jpy", "nok"],
 # And swap points
 swap_ask = data["tnswap_ask"][start_date:end_date].drop(["dkk", "jpy", "nok"],
                                                         axis=1)
+swap_ask = remove_outliers(swap_ask, 50)
 swap_bid = data["tnswap_bid"][start_date:end_date].drop(["dkk", "jpy", "nok"],
                                                         axis=1)
+swap_bid = remove_outliers(swap_bid, 50)
 
 # Import the all fixing times for the dollar index
 with open(data_path+"fx_by_tz_sp_fixed.p", mode="rb") as fname:
@@ -72,8 +74,10 @@ us_spot_ask = data_usd["spot_ask"].loc[:, :, settings["usd_fixing_time"]]\
     .drop(["dkk"], axis=1)[start_date:end_date]
 us_swap_ask = data_usd["tnswap_ask"].loc[:, :, settings["usd_fixing_time"]]\
     .drop(["dkk"], axis=1)[start_date:end_date]
+swap_ask_us = remove_outliers(swap_ask_us, 50)
 us_swap_bid = data_usd["tnswap_bid"].loc[:, :, settings["usd_fixing_time"]]\
     .drop(["dkk"], axis=1)[start_date:end_date]
+swap_bid_us = remove_outliers(swap_bid_us, 50)
 
 # Align and ffill the data, first for tz-aligned countries
 (spot_mid, spot_bid, spot_ask, swap_bid, swap_ask) =\
@@ -218,7 +222,7 @@ perfect_consistent.columns = ["pfct"]
 
 
 # Figure 3: plot OIS-availability consistent perfect foresight and real strat
-fig1, ax = plt.subplots(figsize=(8.4, 11.7/3))
+fig1, ax = plt.subplots()
 # Concatenate the data first
 to_plot = pd.concat([perfect_consistent.dropna().cumsum(),
                     fcst_strat.dropna().cumsum()], axis=1).ffill().fillna(0)
@@ -269,7 +273,7 @@ fig1.savefig(out_path +
 
 
 # Figure 4: forecasted on the event axis
-fig2, ax = plt.subplots(figsize=(8.4, 11.7/3))
+fig2, ax = plt.subplots()
 pd.DataFrame(fcst_strat.dropna().values).cumsum().\
     plot(ax=ax, color='k', linewidth=1.5, linestyle="-")
 # Rotate the axis labels
