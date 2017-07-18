@@ -2,9 +2,9 @@ import pandas as pd
 
 import matplotlib.pyplot as plt
 import matplotlib.lines as mlines
-from foolbox.wp_tabs_figs import my_gray
 
 plt.rc("font", family="serif", size=12)
+new_gray = "#8c8c8c"
 
 
 def broomstick_plot(data, ci=(0.1, 0.9)):

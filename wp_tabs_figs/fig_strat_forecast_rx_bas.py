@@ -2,6 +2,7 @@ from foolbox.api import *
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 from matplotlib.ticker import MultipleLocator
+import matplotlib.lines as mlines
 from wp_tabs_figs.wp_settings import settings
 from foolbox.trading import EventTradingStrategy
 from foolbox.utils import *
@@ -74,10 +75,10 @@ us_spot_ask = data_usd["spot_ask"].loc[:, :, settings["usd_fixing_time"]]\
     .drop(["dkk"], axis=1)[start_date:end_date]
 us_swap_ask = data_usd["tnswap_ask"].loc[:, :, settings["usd_fixing_time"]]\
     .drop(["dkk"], axis=1)[start_date:end_date]
-swap_ask_us = remove_outliers(swap_ask_us, 50)
+us_swap_ask = remove_outliers(us_swap_ask, 50)
 us_swap_bid = data_usd["tnswap_bid"].loc[:, :, settings["usd_fixing_time"]]\
     .drop(["dkk"], axis=1)[start_date:end_date]
-swap_bid_us = remove_outliers(swap_bid_us, 50)
+us_swap_bid = remove_outliers(us_swap_bid, 50)
 
 # Align and ffill the data, first for tz-aligned countries
 (spot_mid, spot_bid, spot_ask, swap_bid, swap_ask) =\
@@ -221,7 +222,7 @@ perfect_consistent = pd.concat([pfct_strat_ret, usd_pfct_ret], axis=1)\
 perfect_consistent.columns = ["pfct"]
 
 
-# Figure 3: plot OIS-availability consistent perfect foresight and real strat
+# Figure 1: plot OIS-availability consistent perfect foresight and real strat
 fig1, ax = plt.subplots()
 # Concatenate the data first
 to_plot = pd.concat([perfect_consistent.dropna().cumsum(),
@@ -272,7 +273,7 @@ fig1.savefig(out_path +
              ".pdf")
 
 
-# Figure 4: forecasted on the event axis
+# Figure 2: forecast on the event axis
 fig2, ax = plt.subplots()
 pd.DataFrame(fcst_strat.dropna().values).cumsum().\
     plot(ax=ax, color='k', linewidth=1.5, linestyle="-")
@@ -295,3 +296,10 @@ fig2.savefig(out_path +
              "_rx_bas" +
              "_count" +
              ".pdf")
+
+
+def main():
+    pass
+
+if __name__ == "__main__":
+    main()
