@@ -14,6 +14,7 @@ user_info =\
      "Igor": {"R_USER": "Igor",
               "R_HOME": "c:/Program Files/R/R-3.2.5",
               "gdrive": "C:/Users/Igor/Google Drive/Personal/",
+              "local": "C:/Users/Igor/Documents/HSG/"
               },
      "HSG-Spezial": {"R_USER": "HSG-Spezial",
                      "R_HOME": "c:/Program Files/R/R-3.2.5",
