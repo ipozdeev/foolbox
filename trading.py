@@ -339,8 +339,8 @@ class EventTradingStrategy(TradingStrategy):
         P = self.prices["actual"].fillna(method="ffill", limit=(h_b-h_a)//2)
 
         # adjust prices -----------------------------------------------------
-        numer = P + roll_sum_sp.shift(1)
-        denom = P.shift( (h_b-h_a+1) )
+        numer = P
+        denom = P.shift( (h_b-h_a+1) ) + roll_sum_sp.shift(1)
 
         # recalculate returns -----------------------------------------------
         # these are similar to excess returns in the standard case:
