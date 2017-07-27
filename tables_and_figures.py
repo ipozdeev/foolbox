@@ -578,7 +578,7 @@ def fmb_results(factors, lambdas, alphas, scale=12):
     chi2_stat_sh = alphas.mean().dot(np.linalg.inv(vcv_alphas_sh))\
     .dot(alphas.mean())
     chi2_stat_nw = alphas.mean().dot(np.linalg.inv(vcv_alphas_nw))\
-    .dot(alphas.mean())
+        .dot(alphas.mean())
 
     # Degrees of freedom = # test assets - # of estimated risk premia
     # TODO: think about handling constant in the second stage of FMB
