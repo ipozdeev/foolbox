@@ -124,6 +124,11 @@ def interevent_quantiles(events, df=None):
     df : (optional) pandas.DataFrame
         optional dataframe to concatenate the indicator column to
 
+    Returns
+    -------
+    res : (if df is None) pandas.DataFrame with two columns: event number and
+        quantiles; (if df is not None) df.copy with two columns added
+
     Example
     -------
     pd.set_option("display.max_rows", 20)
@@ -156,9 +161,11 @@ def interevent_quantiles(events, df=None):
         # make sure helper changes
         evts_help = evts_q.copy()
 
+    # concatenate
     res = pd.concat((evts_idx, evts_q), axis=1)
     res.columns = ["_evt", "_q"]
 
+    # patch with two additional columns
     if df is not None:
         df = df.reindex(index=evts_q.index)
         df = pd.concat((df, res), axis=1)
