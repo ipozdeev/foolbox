@@ -101,7 +101,6 @@ def align_and_fillna(data, reindex_freq=None, **kwargs):
 
     return new_data
 
-
 def add_fake_signal(ret, sig):
     """ Add fake series to signal: the median in each row.
     """
@@ -115,3 +114,60 @@ def add_fake_signal(ret, sig):
     r.loc[:,"fake"] = np.nan
 
     return r, s
+
+def interevent_quantiles(events, df=None):
+    """ Split inter-event intervals in two parts.
+    Parameters
+    ----------
+    events : pandas.Series
+        of events; any non-na value counts as separate event
+    df : (optional) pandas.DataFrame
+        optional dataframe to concatenate the indicator column to
+
+    Returns
+    -------
+    res : (if df is None) pandas.DataFrame with two columns: event number and
+        quantiles; (if df is not None) df.copy with two columns added
+
+    Example
+    -------
+    pd.set_option("display.max_rows", 20)
+    import random
+    evts = pd.Series(index=pd.date_range("2000-01-01", periods=100, freq='B'))
+    idx = random.sample(list(evts.index), 20)
+    evts.loc[idx] = 1
+    events = evts.copy()
+    """
+    # leave only 0.0 and nan's
+    evts_q = events.notnull().where(events.notnull())*0
+
+    # remove trailing and leading nans: no info where these periods strat(end)
+    evts_q = evts_q.loc[evts_q.first_valid_index():evts_q.last_valid_index()]
+
+    # index events
+    evts_idx = evts_q.dropna()
+    evts_idx = evts_idx.add(np.arange(1,len(evts_idx)+1))
+    evts_idx = evts_idx.reindex(index=evts_q.index, method="ffill")
+
+    # helper: this will be modified each iteration
+    evts_help = evts_q.copy().astype(float)
+
+    # while there are nan's, forward-fill then backward-fill one cell
+    while evts_q.isnull().sum() > 0:
+        temp_evts = evts_help.replace(0.0, 1.0)
+        evts_q.fillna(temp_evts.fillna(method="ffill", limit=1), inplace=True)
+        temp_evts = evts_help.replace(0.0, 2.0)
+        evts_q.fillna(temp_evts.fillna(method="bfill", limit=1), inplace=True)
+        # make sure helper changes
+        evts_help = evts_q.copy()
+
+    # concatenate
+    res = pd.concat((evts_idx, evts_q), axis=1)
+    res.columns = ["_evt", "_q"]
+
+    # patch with two additional columns
+    if df is not None:
+        df = df.reindex(index=evts_q.index)
+        df = pd.concat((df, res), axis=1)
+
+    return (res if df is None else df)

@@ -320,7 +320,7 @@ class EventStudy():
                 data=np.arange(len(self.events)), index=events_batch)
 
             # pivot this batch
-            bef, aft, _, _ = self.pivot_for_event_study(
+            bef, aft, _ = self.pivot_for_event_study(
                 boot_from, events_batch, self.window)
 
             # calculate cumsum + cross-sectional mean
