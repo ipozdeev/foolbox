@@ -728,13 +728,16 @@ class PolicyExpectation():
 
         return pe
 
-def into_currency(data, new_cur):
+def into_currency(data, new_cur, counter_cur="usd"):
     """
     Parameters
     ----------
     data :
         expressed in USD per unit
     """
+    if new_cur == counter_cur:
+        return data
+
     # re-express everything in units of new_cur
     new_data = data.drop([new_cur], axis=1).subtract(
         data[new_cur], axis="index")
