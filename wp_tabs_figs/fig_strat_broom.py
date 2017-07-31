@@ -3,6 +3,7 @@ import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 from matplotlib.ticker import MultipleLocator
 from wp_tabs_figs.wp_settings import settings
+from foolbox.visuals import *
 
 """Plots returns of a universe of strategies aiming to predict policy rates
 changes, for different holding horizons and threshold levels.
@@ -32,7 +33,7 @@ spot_mid = data["spot_mid"][start_date:end_date].drop(["dkk", "jpy", "nok"],
 rx = np.log(spot_mid/spot_mid.shift(1))
 
 # Import the all fixing times for the dollar index
-with open(data_path+"fx_by_tz_d.p", mode="rb") as fname:
+with open(data_path+"fx_by_tz_sp_fixed.p", mode="rb") as fname:
     data_all_fix = pickle.load(fname)
 
 # Construct a pre-set fixing time dollar index
@@ -54,5 +55,5 @@ aggr = btest["aggr"]
 cumret = aggr.dropna(how="all").replace(np.nan, 0).cumsum()
 
 # Plot the results and save 'em
-fig = broomstick_plot(cumret)
+fig = broomstick_plot(cumret * 100)
 fig.savefig(out_path + "broomstick_plot_spot.pdf")

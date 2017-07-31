@@ -165,6 +165,7 @@ plt.setp(ax.get_xticklabels(), rotation=0, ha="center")
 # Polish the layout
 ax.grid(which="both", alpha=0.33, linestyle=":")
 ax.set_xlabel("date", visible=True)
+ax.set_ylabel("cumulative unrealized p&l in usd", visible=True)
 ax.legend_.remove()
 
 # Add some descriptives
@@ -212,6 +213,7 @@ ax.xaxis.set_minor_locator(MultipleLocator(25))
 # Polish the layout
 ax.grid(which="both", alpha=0.33, linestyle=":")
 ax.set_xlabel("event number", visible=True)
+ax.set_ylabel("cumulative unrealized p&l in usd", visible=True)
 ax.legend_.remove()
 
 fig2.tight_layout()

@@ -90,6 +90,18 @@ us_swap_bid = remove_outliers(us_swap_bid, 50)
                       us_swap_bid, us_swap_ask),
                      "B", method="ffill")
 
+# TODO: check the spot-based strategy for consistency, otherwise uncomment
+# TODO: the stuff below for the same result by setting costs and swaps to zero
+# spot_bid = spot_mid
+# spot_ask = spot_mid
+# swap_bid *= 0
+# swap_ask *= 0
+#
+# us_spot_bid = us_spot_mid
+# us_spot_ask = us_spot_mid
+# us_swap_bid *= 0
+# us_swap_ask *= 0
+
 
 # Get signals for all countries except for the US
 policy_fcasts = list()
@@ -139,7 +151,7 @@ us_strat = EventTradingStrategy(
                          index=us_spot_mid.index,
                          columns=us_spot_mid.columns))
 
-# Adjust for spreads
+# Adjust for spreadsa
 us_strat_bas_adj = us_strat.bas_adjusted().roll_adjusted(
     {"bid": us_swap_bid, "ask": us_swap_ask})
 
@@ -218,15 +230,15 @@ usd_pfct_ret.columns = ["usd"]
 
 # Combine with all countries
 perfect_consistent = pd.concat([pfct_strat_ret, usd_pfct_ret], axis=1)\
-    .mean(axis=1).to_frame()
+    .sum(axis=1).to_frame()
 perfect_consistent.columns = ["pfct"]
 
 
 # Figure 1: plot OIS-availability consistent perfect foresight and real strat
 fig1, ax = plt.subplots()
 # Concatenate the data first
-to_plot = pd.concat([perfect_consistent.dropna().cumsum(),
-                    fcst_strat.dropna().cumsum()], axis=1).ffill().fillna(0)
+to_plot = pd.concat([perfect_consistent.dropna().cumsum()*100,
+                    fcst_strat.dropna().cumsum()*100], axis=1).ffill().fillna(0)
 to_plot.columns = ["pfct", "fcst"]
 
 # Plot it
@@ -243,6 +255,7 @@ ax.xaxis.set_minor_locator(minor_locator)
 # Polish the layout
 ax.grid(which="both", alpha=0.33, linestyle=":")
 ax.set_xlabel("date", visible=True)
+ax.set_ylabel("cumulative return in percent", visible=True)
 ax.legend_.remove()
 
 # Add some descriptives
@@ -275,7 +288,7 @@ fig1.savefig(out_path +
 
 # Figure 2: forecast on the event axis
 fig2, ax = plt.subplots()
-pd.DataFrame(fcst_strat.dropna().values).cumsum().\
+pd.DataFrame(100*fcst_strat.dropna().values).cumsum().\
     plot(ax=ax, color='k', linewidth=1.5, linestyle="-")
 # Rotate the axis labels
 plt.setp(ax.get_xticklabels(), rotation=0, ha="center")
@@ -287,6 +300,7 @@ ax.xaxis.set_minor_locator(MultipleLocator(25))
 # Polish the layout
 ax.grid(which="both", alpha=0.33, linestyle=":")
 ax.set_xlabel("event number", visible=True)
+ax.set_ylabel("cumulative return in percent", visible=True)
 ax.legend_.remove()
 
 fig2.tight_layout()

@@ -4,6 +4,7 @@ import matplotlib.dates as mdates
 from matplotlib.ticker import MultipleLocator
 import matplotlib.lines as mlines
 from wp_tabs_figs.wp_settings import settings
+from foolbox.utils import *
 
 """Plots returns to strategy based on monetary ploicy action forecasts along
 with prediction-data-availability-consistent prefect foresight.
@@ -38,6 +39,7 @@ with open(data_path+input_dataset, mode="rb") as fname:
 # Get the individual currenices
 spot_mid = data["spot_mid"][start_date:end_date].drop(["dkk", "jpy", "nok"],
                                                       axis=1)
+(spot_mid, ) = align_and_fillna((spot_mid, ), "B", method="ffill")
 rx = np.log(spot_mid/spot_mid.shift(1))
 
 # Import the all fixing times for the dollar index
@@ -47,6 +49,7 @@ with open(data_path+"fx_by_tz_d.p", mode="rb") as fname:
 # Construct a pre-set fixing time dollar index
 data_usd = data_all_fix["spot_mid"].loc[:, :, settings["usd_fixing_time"]]\
     .drop(["dkk"], axis=1)
+(data_usd, ) = align_and_fillna((data_usd, ), "B", method="ffill")
 rx_usd = -np.log(data_usd/data_usd.shift(1))[start_date:end_date].mean(axis=1)
 
 # Add it to the data
@@ -92,6 +95,7 @@ ax.xaxis.set_minor_locator(minor_locator)
 # Polish the layout
 ax.grid(which="both", alpha=0.33, linestyle=":")
 ax.set_xlabel("date", visible=True)
+ax.set_ylabel("cumulative return", visible=True)
 ax.legend_.remove()
 
 # Add some descriptives
@@ -136,6 +140,7 @@ ax.xaxis.set_minor_locator(MultipleLocator(25))
 # Polish the layout
 ax.grid(which="both", alpha=0.33, linestyle=":")
 ax.set_xlabel("event number", visible=True)
+ax.set_ylabel("cumulative return", visible=True)
 ax.legend_.remove()
 
 fig4.tight_layout()
