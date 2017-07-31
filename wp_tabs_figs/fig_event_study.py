@@ -137,6 +137,10 @@ def fig_event_study(events, ret, direction,
     labels = [line.get_label() for line in lines]
     ax_avg.legend(lines, labels, fontsize=12, loc="upper right")
 
+    # y-label
+    ax_individ.yaxis.set_ylabel("return, in percent")
+    ax_avg.yaxis.set_ylabel("return, in percent")
+
     fig_individ.tight_layout()
     fig_avg.tight_layout()
 
