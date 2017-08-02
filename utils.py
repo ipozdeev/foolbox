@@ -5,7 +5,7 @@ import pickle
 def remove_outliers(data, stds):
     """
     """
-    res = data.where(np.abs(data) < data.std()*25)\
+    res = data.where(np.abs(data) < data.std()*25)
 
     return res
 
@@ -119,25 +119,37 @@ def interevent_quantiles(events, df=None):
     """ Split inter-event intervals in two parts.
     Parameters
     ----------
-    events : pandas.Series
+    events : pandas.Series or pandas.DataFrame
         of events; any non-na value counts as separate event
     df : (optional) pandas.DataFrame
         optional dataframe to concatenate the indicator column to
 
     Returns
     -------
-    res : (if df is None) pandas.DataFrame with two columns: event number and
-        quantiles; (if df is not None) df.copy with two columns added
+    res : (if df is None) pandas.DataFrame with new columns: event number and
+        quantiles for each column of `events` (if more than one); (if df is
+        not None) df.copy with new columns added
 
     Example
     -------
     pd.set_option("display.max_rows", 20)
     import random
-    evts = pd.Series(index=pd.date_range("2000-01-01", periods=100, freq='B'))
+    evts = pd.DataFrame(index=range(100), columns=["one","two"])
     idx = random.sample(list(evts.index), 20)
     evts.loc[idx] = 1
     events = evts.copy()
+    interevent_quantiles(events, events)
     """
+    # recursion
+    if isinstance(events, pd.DataFrame):
+        res = interevent_quantiles(
+            events=events.iloc[:,1:].squeeze(),
+            df=interevent_quantiles(events.iloc[:,0], df))
+        return res
+
+    # name
+    evt_name = "evt" if events.name is None else events.name
+
     # leave only 0.0 and nan's
     evts_q = events.notnull().where(events.notnull())*0
 
@@ -163,7 +175,7 @@ def interevent_quantiles(events, df=None):
 
     # concatenate
     res = pd.concat((evts_idx, evts_q), axis=1)
-    res.columns = ["_evt", "_q"]
+    res.columns = ["_evt_" + p + evt_name for p in ["num_", "q_"]]
 
     # patch with two additional columns
     if df is not None:
