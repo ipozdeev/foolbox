@@ -5,7 +5,7 @@ import pickle
 def remove_outliers(data, stds):
     """
     """
-    res = data.where(np.abs(data) < data.std()*25)\
+    res = data.where(np.abs(data) < data.std()*stds)\
 
     return res
 
@@ -171,3 +171,85 @@ def interevent_quantiles(events, df=None):
         df = pd.concat((df, res), axis=1)
 
     return (res if df is None else df)
+
+
+def interevent_qcut(data_to_slice, events, n_quantiles):
+    """Given a dataframe of data assigns each data point to an interevent
+    quantile.
+
+
+    Parameters
+    ----------
+    data_to_slice: pd.DataFrame
+        with data to classify by interevent quantile
+    events: pd.DataFrame
+        of events according to whuch the data is to be classified
+    n_quantiles: int
+        number of quantiles within each interevent period
+
+    Returns
+    -------
+    out: pd.DataFrame
+
+
+    """
+    data = data_to_slice.copy()
+
+    # Make sure events do not contain NaNs
+    if events.isnull().any()[0]:
+        raise ValueError("A NaN found in events, ain't going no further")
+
+    # Locate first and last event dates
+    evt_first = events.index[0]
+    evt_last = events.index[-1]
+
+    # Sample the data between the first and last events
+    data = data.loc[evt_first:evt_last, :]
+
+    # Span events by data, get event number for each day
+    events_spanned = events.reindex(data.index)
+    event_number = events_spanned.expanding().count()
+
+    # Add event number and classification columns for further groupby
+    data["evt_num"] = event_number
+    data["evt_q"] = np.nan
+
+    # Take a subsample between first and last events only contingent on both
+    # data and events
+    data = data.loc[data.evt_num > 0]
+    events = events.loc[data.index[0]: data.index[-1]]
+
+    # Output has the same layout as data
+    out = pd.DataFrame(index=data.index, columns=data.columns)
+
+    # Take the event days as a separate case and drop them from the data
+    announcement_days = data.loc[events.index]
+    announcement_days["evt_q"] = "event"
+
+    # Drop the announcement days
+    data = data.drop(announcement_days.index, axis=0)
+
+    # Make quantile labels
+    quantile_labels = ["q" + str(q+1) for q in range(n_quantiles)]
+
+    for evt_num, df in data.groupby(["evt_num"]):
+        df["day_count"] = df["evt_num"].expanding().count()
+        df["evt_q"] = pd.qcut(df["day_count"], n_quantiles, quantile_labels)
+        out.loc[df.index, :] = df.loc[:, data.columns]
+
+    # Plug in the announcement days
+    out.loc[announcement_days.index, data.columns] = announcement_days
+
+    return out.drop(["evt_num"], axis=1)
+
+
+
+
+
+
+
+
+
+
+
+
