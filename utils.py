@@ -115,7 +115,7 @@ def add_fake_signal(ret, sig):
 
     return r, s
 
-def interevent_quantiles(events, df=None):
+def interevent_quantiles(events, max_fill=None, df=None):
     """ Split inter-event intervals in two parts.
     Parameters
     ----------
@@ -133,19 +133,27 @@ def interevent_quantiles(events, df=None):
     Example
     -------
     pd.set_option("display.max_rows", 20)
-    import random
-    evts = pd.DataFrame(index=range(100), columns=["one","two"])
-    idx = random.sample(list(evts.index), 20)
-    evts.loc[idx] = 1
-    events = evts.copy()
-    interevent_quantiles(events, events)
+    data = pd.DataFrame(14.9, index=range(20), columns=["data",])
+    events = pd.DataFrame(index=range(20), columns=["woof","meow"])
+    events.iloc[[2,10,14], 0] = 1
+    events.iloc[[5,10,15], 1] = 1
+    events = events.iloc[:,[0]]
+    %timeit interevent_quantiles(events, max_fill=None, df=data)
+    %timeit -n 100 interevent_qcut(data, events.dropna(), 2)
     """
+    events = events.squeeze()
+
     # recursion
     if isinstance(events, pd.DataFrame):
         res = interevent_quantiles(
             events=events.iloc[:,1:].squeeze(),
-            df=interevent_quantiles(events.iloc[:,0], df))
+            max_fill=max_fill,
+            df=interevent_quantiles(events.iloc[:,0], max_fill, df))
         return res
+
+    # no limit on the amount filled by default
+    if max_fill is None:
+        max_fill = 1e05
 
     # name
     evt_name = "evt" if events.name is None else events.name
@@ -153,33 +161,46 @@ def interevent_quantiles(events, df=None):
     # leave only 0.0 and nan's
     evts_q = events.notnull().where(events.notnull())*0
 
-    # remove trailing and leading nans: no info where these periods strat(end)
+    # remove trailing and leading nans: no info where these periods start(end)
     evts_q = evts_q.loc[evts_q.first_valid_index():evts_q.last_valid_index()]
 
     # index events
-    evts_idx = evts_q.dropna()
-    evts_idx = evts_idx.add(np.arange(1,len(evts_idx)+1))
-    evts_idx = evts_idx.reindex(index=evts_q.index, method="ffill")
+    # evts_idx = evts_q.dropna()
+    # evts_idx = evts_idx.add(np.arange(1,len(evts_idx)+1))
+    # evts_idx = evts_idx.reindex(index=evts_q.index, method="ffill")
+    evts_idx = evts_q.expanding().count()
 
     # helper: this will be modified each iteration
     evts_help = evts_q.copy().astype(float)
 
     # while there are nan's, forward-fill then backward-fill one cell
+    cnt = 1
     while evts_q.isnull().sum() > 0:
+
         temp_evts = evts_help.replace(0.0, 1.0)
         evts_q.fillna(temp_evts.fillna(method="ffill", limit=1), inplace=True)
         temp_evts = evts_help.replace(0.0, 2.0)
         evts_q.fillna(temp_evts.fillna(method="bfill", limit=1), inplace=True)
+
         # make sure helper changes
         evts_help = evts_q.copy()
+
+        cnt += 1
+
+        # break if more than a certain amount
+        if cnt > max_fill:
+            break
 
     # concatenate
     res = pd.concat((evts_idx, evts_q), axis=1)
     res.columns = ["_evt_" + p + evt_name for p in ["num_", "q_"]]
 
+    # keep original index
+    res = res.reindex(index=events.index)
+
     # patch with two additional columns
     if df is not None:
-        df = df.reindex(index=evts_q.index)
+        # df = df.reindex(index=evts_q.index)
         df = pd.concat((df, res), axis=1)
 
     return (res if df is None else df)
@@ -203,13 +224,37 @@ def interevent_qcut(data_to_slice, events, n_quantiles):
     -------
     out: pd.DataFrame
 
-
+    Example
+    -------
+    pd.set_option("display.max_rows", 20)
+    data_to_slice = pd.DataFrame(14.9, index=range(20), columns=["woof"])
+    events = pd.DataFrame(index=range(20), columns=["one",])
+    events.iloc[[2,10,14], 0] = 1
+    events.iloc[[5,10,15], 1] = 1
+    interevent_qcut(data_to_slice,events.dropna(),n_quantiles=3)
     """
+    # assert isinstance(events, pd.DataFrame)
+    #
+    # # recursion if multiple events columns
+    # if events.shape[1] > 1:
+    #     res = interevent_qcut(
+    #         data_to_slice=interevent_qcut(
+    #             data_to_slice, events.iloc[:,[0]], n_quantiles),
+    #         events=events.iloc[:,1:],
+    #         n_quantiles=n_quantiles)
+    #     return res
+
+    # store name
+    col_name = "evt_q"
+
     data = data_to_slice.copy()
 
     # Make sure events do not contain NaNs
     if events.isnull().any()[0]:
         raise ValueError("A NaN found in events, ain't going no further")
+    # if events.isnull().sum()[0] > 0:
+    #     warnings.warn("There are missing values in data! Will drop.")
+    #     events = events.dropna()
 
     # Locate first and last event dates
     evt_first = events.index[0]
@@ -224,7 +269,7 @@ def interevent_qcut(data_to_slice, events, n_quantiles):
 
     # Add event number and classification columns for further groupby
     data["evt_num"] = event_number
-    data["evt_q"] = np.nan
+    data[col_name] = np.nan
 
     # Take a subsample between first and last events only contingent on both
     # data and events
@@ -236,7 +281,7 @@ def interevent_qcut(data_to_slice, events, n_quantiles):
 
     # Take the event days as a separate case and drop them from the data
     announcement_days = data.loc[events.index]
-    announcement_days["evt_q"] = "event"
+    announcement_days[col_name] = "event"
 
     # Drop the announcement days
     data = data.drop(announcement_days.index, axis=0)
@@ -246,7 +291,7 @@ def interevent_qcut(data_to_slice, events, n_quantiles):
 
     for evt_num, df in data.groupby(["evt_num"]):
         df["day_count"] = df["evt_num"].expanding().count()
-        df["evt_q"] = pd.qcut(df["day_count"], n_quantiles, quantile_labels)
+        df[col_name] = pd.qcut(df["day_count"], n_quantiles, quantile_labels)
         out.loc[df.index, :] = df.loc[:, data.columns]
 
     # Plug in the announcement days
