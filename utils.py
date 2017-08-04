@@ -141,9 +141,10 @@ def interevent_quantiles(events, max_fill=None, df=None):
     %timeit interevent_quantiles(events, max_fill=None, df=data)
     %timeit -n 100 interevent_qcut(data, events.dropna(), 2)
     """
+    # ensure no 1-columns dataframes enter
     events = events.squeeze()
 
-    # recursion
+    # recursion, if `events` have more than 1 column
     if isinstance(events, pd.DataFrame):
         res = interevent_quantiles(
             events=events.iloc[:,1:].squeeze(),
@@ -298,3 +299,70 @@ def interevent_qcut(data_to_slice, events, n_quantiles):
     out.loc[announcement_days.index, data.columns] = announcement_days
 
     return out.drop(["evt_num"], axis=1)
+
+import pandas as pd
+
+def parse_bloomberg_excel(filename, colnames_sheet, data_sheets):
+    """
+
+    Returns
+    -------
+    this_data : pandas.DataFrame
+        of data
+    """
+    if isinstance(data_sheets, str):
+        data_sheets = [data_sheets,]
+
+    # converter for date
+    def converter(x):
+        try:
+            res = pd.to_datetime(x)
+        except:
+            res = pd.NaT
+        return res
+
+    # read in
+    data_dict_full = pd.read_excel(filename,
+        sheetname=data_sheets+[colnames_sheet,],
+        header=0)
+
+    # column names on separate sheet
+    colnames = data_dict_full[colnames_sheet].columns
+
+    # take just on sheet with data
+    data_dict = {k: data_dict_full[k] for k in data_sheets}
+
+    # loop over sheetnames
+    all_data = dict()
+
+    for s in data_sheets:
+        data_df = data_dict[s]
+        # loop over triplets, map dates, extract
+        new_data_df = []
+        for p in range((data_df.shape[1]+1)//3):
+            # this triplet
+            this_piece = data_df.iloc[1:,p*3:(p+1)*3-1]
+            # map date
+            this_piece.iloc[:,0] = this_piece.iloc[:,0].map(converter)
+            # extract date as index
+            this_piece = this_piece.set_index(this_piece.columns[0])
+            # rename
+            this_piece.columns = [colnames[p]]
+            # store
+            new_data_df += [this_piece.dropna()]
+
+        # concat
+        all_data[s] = pd.concat(new_data_df, axis=1, join="outer")
+
+    return all_data
+
+if __name__ == "__main__":
+    from foolbox.api import *
+    fname = data_path + "ois_2000_2017_d.xlsx"
+    lol = parse_bloomberg_excel(
+        filename=fname,
+        colnames_sheet="tenor",
+        data_sheets=["aud","cad","chf","gbp","nzd","sek","usd","eur"])
+
+    lol = pd.Panel.from_dict(all_data, orient="minor")
+    instrument = lol.loc["1M",:,:]
