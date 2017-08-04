@@ -365,4 +365,4 @@ if __name__ == "__main__":
         data_sheets=["aud","cad","chf","gbp","nzd","sek","usd","eur"])
 
     lol = pd.Panel.from_dict(all_data, orient="minor")
-    instrument = lol.loc["1M",:,:]
+    instr = lol.loc["1M",:,:]
