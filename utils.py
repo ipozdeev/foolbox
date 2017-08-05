@@ -115,59 +115,93 @@ def add_fake_signal(ret, sig):
 
     return r, s
 
-def interevent_quantiles(events, df=None):
+def interevent_quantiles(events, max_fill=None, df=None):
     """ Split inter-event intervals in two parts.
     Parameters
     ----------
-    events : pandas.Series
+    events : pandas.Series or pandas.DataFrame
         of events; any non-na value counts as separate event
     df : (optional) pandas.DataFrame
         optional dataframe to concatenate the indicator column to
 
     Returns
     -------
-    res : (if df is None) pandas.DataFrame with two columns: event number and
-        quantiles; (if df is not None) df.copy with two columns added
+    res : (if df is None) pandas.DataFrame with new columns: event number and
+        quantiles for each column of `events` (if more than one); (if df is
+        not None) df.copy with new columns added
 
     Example
     -------
     pd.set_option("display.max_rows", 20)
-    import random
-    evts = pd.Series(index=pd.date_range("2000-01-01", periods=100, freq='B'))
-    idx = random.sample(list(evts.index), 20)
-    evts.loc[idx] = 1
-    events = evts.copy()
+    data = pd.DataFrame(14.9, index=range(20), columns=["data",])
+    events = pd.DataFrame(index=range(20), columns=["woof","meow"])
+    events.iloc[[2,10,14], 0] = 1
+    events.iloc[[5,10,15], 1] = 1
+    events = events.iloc[:,[0]]
+    %timeit interevent_quantiles(events, max_fill=None, df=data)
+    %timeit -n 100 interevent_qcut(data, events.dropna(), 2)
     """
+    # ensure no 1-columns dataframes enter
+    events = events.squeeze()
+
+    # recursion, if `events` have more than 1 column
+    if isinstance(events, pd.DataFrame):
+        res = interevent_quantiles(
+            events=events.iloc[:,1:].squeeze(),
+            max_fill=max_fill,
+            df=interevent_quantiles(events.iloc[:,0], max_fill, df))
+        return res
+
+    # no limit on the amount filled by default
+    if max_fill is None:
+        max_fill = 1e05
+
+    # name
+    evt_name = "evt" if events.name is None else events.name
+
     # leave only 0.0 and nan's
     evts_q = events.notnull().where(events.notnull())*0
 
-    # remove trailing and leading nans: no info where these periods strat(end)
+    # remove trailing and leading nans: no info where these periods start(end)
     evts_q = evts_q.loc[evts_q.first_valid_index():evts_q.last_valid_index()]
 
     # index events
-    evts_idx = evts_q.dropna()
-    evts_idx = evts_idx.add(np.arange(1,len(evts_idx)+1))
-    evts_idx = evts_idx.reindex(index=evts_q.index, method="ffill")
+    # evts_idx = evts_q.dropna()
+    # evts_idx = evts_idx.add(np.arange(1,len(evts_idx)+1))
+    # evts_idx = evts_idx.reindex(index=evts_q.index, method="ffill")
+    evts_idx = evts_q.expanding().count()
 
     # helper: this will be modified each iteration
     evts_help = evts_q.copy().astype(float)
 
     # while there are nan's, forward-fill then backward-fill one cell
+    cnt = 1
     while evts_q.isnull().sum() > 0:
+
         temp_evts = evts_help.replace(0.0, 1.0)
         evts_q.fillna(temp_evts.fillna(method="ffill", limit=1), inplace=True)
         temp_evts = evts_help.replace(0.0, 2.0)
         evts_q.fillna(temp_evts.fillna(method="bfill", limit=1), inplace=True)
+
         # make sure helper changes
         evts_help = evts_q.copy()
 
+        cnt += 1
+
+        # break if more than a certain amount
+        if cnt > max_fill:
+            break
+
     # concatenate
     res = pd.concat((evts_idx, evts_q), axis=1)
-    res.columns = ["_evt", "_q"]
+    res.columns = ["_evt_" + p + evt_name for p in ["num_", "q_"]]
+
+    # keep original index
+    res = res.reindex(index=events.index)
 
     # patch with two additional columns
     if df is not None:
-        df = df.reindex(index=evts_q.index)
+        # df = df.reindex(index=evts_q.index)
         df = pd.concat((df, res), axis=1)
 
     return (res if df is None else df)
@@ -191,13 +225,37 @@ def interevent_qcut(data_to_slice, events, n_quantiles):
     -------
     out: pd.DataFrame
 
-
+    Example
+    -------
+    pd.set_option("display.max_rows", 20)
+    data_to_slice = pd.DataFrame(14.9, index=range(20), columns=["woof"])
+    events = pd.DataFrame(index=range(20), columns=["one",])
+    events.iloc[[2,10,14], 0] = 1
+    events.iloc[[5,10,15], 1] = 1
+    interevent_qcut(data_to_slice,events.dropna(),n_quantiles=3)
     """
+    # assert isinstance(events, pd.DataFrame)
+    #
+    # # recursion if multiple events columns
+    # if events.shape[1] > 1:
+    #     res = interevent_qcut(
+    #         data_to_slice=interevent_qcut(
+    #             data_to_slice, events.iloc[:,[0]], n_quantiles),
+    #         events=events.iloc[:,1:],
+    #         n_quantiles=n_quantiles)
+    #     return res
+
+    # store name
+    col_name = "evt_q"
+
     data = data_to_slice.copy()
 
     # Make sure events do not contain NaNs
     if events.isnull().any()[0]:
         raise ValueError("A NaN found in events, ain't going no further")
+    # if events.isnull().sum()[0] > 0:
+    #     warnings.warn("There are missing values in data! Will drop.")
+    #     events = events.dropna()
 
     # Locate first and last event dates
     evt_first = events.index[0]
@@ -212,7 +270,7 @@ def interevent_qcut(data_to_slice, events, n_quantiles):
 
     # Add event number and classification columns for further groupby
     data["evt_num"] = event_number
-    data["evt_q"] = np.nan
+    data[col_name] = np.nan
 
     # Take a subsample between first and last events only contingent on both
     # data and events
@@ -224,7 +282,7 @@ def interevent_qcut(data_to_slice, events, n_quantiles):
 
     # Take the event days as a separate case and drop them from the data
     announcement_days = data.loc[events.index]
-    announcement_days["evt_q"] = "event"
+    announcement_days[col_name] = "event"
 
     # Drop the announcement days
     data = data.drop(announcement_days.index, axis=0)
@@ -234,7 +292,7 @@ def interevent_qcut(data_to_slice, events, n_quantiles):
 
     for evt_num, df in data.groupby(["evt_num"]):
         df["day_count"] = df["evt_num"].expanding().count()
-        df["evt_q"] = pd.qcut(df["day_count"], n_quantiles, quantile_labels)
+        df[col_name] = pd.qcut(df["day_count"], n_quantiles, quantile_labels)
         out.loc[df.index, :] = df.loc[:, data.columns]
 
     # Plug in the announcement days
@@ -242,55 +300,69 @@ def interevent_qcut(data_to_slice, events, n_quantiles):
 
     return out.drop(["evt_num"], axis=1)
 
+import pandas as pd
 
-def parse_bloomberg_excel(filename, data_sheet, colnames_sheet):
+def parse_bloomberg_excel(filename, colnames_sheet, data_sheets):
     """
-    filename = fname_1w_settl
+
     Returns
     -------
-    this_data : dict
-        with "NYC", "LON", "TOK" as keys, pandas.DataFrames as values
+    this_data : pandas.DataFrame
+        of data
     """
-    colnames = pd.read_excel(filename, sheetname=colnames_sheet, header=0)
-    colnames = colnames.columns
+    if isinstance(data_sheets, str):
+        data_sheets = [data_sheets,]
 
-    N = len(colnames)
+    # converter for date
+    def converter(x):
+        try:
+            res = pd.to_datetime(x)
+        except:
+            res = pd.NaT
+        return res
 
-    converters = {}
-    for p in range(N):
-        converters[p*3] = tt(x) #lambda x: pd.to_datetime(x)
+    # read in
+    data_dict_full = pd.read_excel(filename,
+        sheetname=data_sheets+[colnames_sheet,],
+        header=0)
 
-    # s = "NYC"
-    data = pd.read_excel(
-        io=filename,
-        sheetname=data_sheet,
-        skiprows=2,
-        header=None,
-        converters=converters)
+    # column names on separate sheet
+    colnames = data_dict_full[colnames_sheet].columns
 
-    # take every third third column: these are the values
-    data = [data.ix[:,(p*3):(p*3+1)].dropna() for p in range(N)]
+    # take just on sheet with data
+    data_dict = {k: data_dict_full[k] for k in data_sheets}
 
-    # pop dates as index
-    for p in range(N):
-        data[p].index = data[p].pop(p*3)
+    # loop over sheetnames
+    all_data = dict()
 
-    # `data` is a list -> concat to a df
-    data = pd.concat(data, axis=1, ignore_index=False)
+    for s in data_sheets:
+        data_df = data_dict[s]
+        # loop over triplets, map dates, extract
+        new_data_df = []
+        for p in range((data_df.shape[1]+1)//3):
+            # this triplet
+            this_piece = data_df.iloc[1:,p*3:(p+1)*3-1]
+            # map date
+            this_piece.iloc[:,0] = this_piece.iloc[:,0].map(converter)
+            # extract date as index
+            this_piece = this_piece.set_index(this_piece.columns[0])
+            # rename
+            this_piece.columns = [colnames[p]]
+            # store
+            new_data_df += [this_piece.dropna()]
 
-    # columns are iso letters
-    data.columns = colnames
+        # concat
+        all_data[s] = pd.concat(new_data_df, axis=1, join="outer")
 
-    return data
+    return all_data
 
+if __name__ == "__main__":
+    from foolbox.api import *
+    fname = data_path + "ois_2000_2017_d.xlsx"
+    lol = parse_bloomberg_excel(
+        filename=fname,
+        colnames_sheet="tenor",
+        data_sheets=["aud","cad","chf","gbp","nzd","sek","usd","eur"])
 
-def tt(x):
-    try:
-        pd.to_datetime(x)
-    except ValueError:
-        pass
-
-
-
-
-
+    lol = pd.Panel.from_dict(all_data, orient="minor")
+    instr = lol.loc["1M",:,:]
