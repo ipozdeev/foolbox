@@ -243,11 +243,52 @@ def interevent_qcut(data_to_slice, events, n_quantiles):
     return out.drop(["evt_num"], axis=1)
 
 
+def parse_bloomberg_excel(filename, data_sheet, colnames_sheet):
+    """
+    filename = fname_1w_settl
+    Returns
+    -------
+    this_data : dict
+        with "NYC", "LON", "TOK" as keys, pandas.DataFrames as values
+    """
+    colnames = pd.read_excel(filename, sheetname=colnames_sheet, header=0)
+    colnames = colnames.columns
+
+    N = len(colnames)
+
+    converters = {}
+    for p in range(N):
+        converters[p*3] = tt(x) #lambda x: pd.to_datetime(x)
+
+    # s = "NYC"
+    data = pd.read_excel(
+        io=filename,
+        sheetname=data_sheet,
+        skiprows=2,
+        header=None,
+        converters=converters)
+
+    # take every third third column: these are the values
+    data = [data.ix[:,(p*3):(p*3+1)].dropna() for p in range(N)]
+
+    # pop dates as index
+    for p in range(N):
+        data[p].index = data[p].pop(p*3)
+
+    # `data` is a list -> concat to a df
+    data = pd.concat(data, axis=1, ignore_index=False)
+
+    # columns are iso letters
+    data.columns = colnames
+
+    return data
 
 
-
-
-
+def tt(x):
+    try:
+        pd.to_datetime(x)
+    except ValueError:
+        pass
 
 
 
