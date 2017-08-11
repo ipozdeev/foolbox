@@ -1,11 +1,13 @@
 import pandas as pd
+from pandas.tseries.offsets import *
 import numpy as np
 import pickle
+
 
 def remove_outliers(data, stds):
     """
     """
-    res = data.where(np.abs(data) < data.std()*stds)\
+    res = data.where(np.abs(data) < data.std()*stds)
 
     return res
 
@@ -356,13 +358,165 @@ def parse_bloomberg_excel(filename, colnames_sheet, data_sheets):
 
     return all_data
 
-if __name__ == "__main__":
-    from foolbox.api import *
-    fname = data_path + "ois_2000_2017_d.xlsx"
-    lol = parse_bloomberg_excel(
-        filename=fname,
-        colnames_sheet="tenor",
-        data_sheets=["aud","cad","chf","gbp","nzd","sek","usd","eur"])
 
-    lol = pd.Panel.from_dict(all_data, orient="minor")
-    instr = lol.loc["1M",:,:]
+def compute_floating_leg_return(trade_dates, returns, maturity, settings):
+    """
+
+    Parameters
+    ----------
+    trade_dates: pd.tseries.index.DatetimeIndex
+        with trade dates of OIS contracts (dates when the fixed leg is quoted)
+    returns: pd.Series
+        of returns on the underlying overnight (or tom/next) rate
+    maturity: pd.tseries.offsets.DateOffset
+        specifying maturity of the contract. For example DateOffset(months=1)
+        corresponds to the maturity of one month
+    settings: dict
+        specifying contract's conventions
+
+    The dictionary should look like:
+
+        {"start_date": 2,
+         "fixing_lag": 1,
+         "day_count_float": 360,
+         "date_rolling": "modified following"}
+
+    The items in the dictionary are:
+    start_date: int
+        number of business days until the first accrual of floating rate
+    fixing_lag: int
+        number of periods to shift returns _*forward*_ that is
+        if the underlyig rate is reported with one period lag, today's rate on
+        the floating leg is determined tomorrow. The value is negative if
+        today's rate is determined yesterday
+    day_count_float: int
+        360 or 365 corresponding to Act/360 and Act/365 day count conventions
+    date_rolling: str
+        specifying date rolling convention if the end date of the contract is
+        not a business day. Typical conventions are: "previous", "following",
+        and "modified following". Currently only the latter two are implemented
+
+
+    Returns
+    -------
+    out: dict
+        with two dataframe and series as items. Key 'dates' contains dataframe
+        of start and end dates for each realized return for a swap traded on
+        date in trade dates. Key 'ret' contains the realized return
+
+    """
+    # Prepare the output structures
+    out_dates = pd.DataFrame(index=trade_dates, columns=["start", "end"],
+                             dtype="datetime64[ns]")
+    out_returns = pd.Series(index=trade_dates, name=returns.name)
+
+    # Prepare the data and get a shrothand notation for settings
+    returns = returns.shift(-settings["fixing_lag"])  # publication or t/n lag
+    day_count = settings["day_count_float"]
+
+    # Start the main lOOp
+    for date in trade_dates:
+        # Set the start date - the first date of accrued floating interest
+        # TODO: there's pandas.tseries.holiday, with holiday calendars...
+        start_date = date + BDay(settings["start_date"])
+
+        # End date
+        end_date = start_date + maturity
+
+        # Handle the date rolling if end_date is not a business day
+        # TODO: relegate date rolling to a separate function to avoid clutter?
+        if settings["date_rolling"] == "previous":
+            # Roll to the previous business day
+            end_date -= BDay(0)
+
+        elif settings["date_rolling"] == "following":
+            # Roll to the next business day
+            end_date += BDay(0)
+
+        elif settings["date_rolling"] == "modified following":
+            # Try to roll forward
+            tmp_end_date = end_date + BDay(0)
+
+            # If the date is in the following month roll backwards instead
+            if tmp_end_date.month == end_date.month:
+                end_date += BDay(0)
+            else:
+                end_date -= BDay(0)
+
+        else:
+            raise NotImplementedError("{} date rolling is not supported"
+                                      .format(settings["date_rolling"]))
+
+        # Append the output dates
+        out_dates.loc[date, "start"] = start_date
+        out_dates.loc[date, "end"] = end_date
+
+        # Append returns, if the end date has already happened
+        if end_date <= returns.index[-1]:
+            # Reindex to calendar day, carrying rates forward over non b-days
+            tmp_ret = returns.reindex(
+                pd.DatetimeIndex(start=start_date, end=end_date, freq="D"),
+                method="ffill")
+
+            # Compute the cumulative floating leg return over the period
+            out_returns.loc[date] = \
+                100 * (day_count / tmp_ret.size) * \
+                ((1 + tmp_ret / day_count / 100).prod() - 1)
+
+    # Populate the output
+    out = {"dates": out_dates, "ret": out_returns}
+
+    return out
+
+if __name__ == "__main__":
+    # from foolbox.api import *
+    # fname = data_path + "ois_2000_2017_d.xlsx"
+    # lol = parse_bloomberg_excel(
+    #     filename=fname,
+    #     colnames_sheet="tenor",
+    #     data_sheets=["aud","cad","chf","gbp","nzd","sek","usd","eur"])
+    #
+    # lol = pd.Panel.from_dict(all_data, orient="minor")
+    # instr = lol.loc["1M",:,:]
+    from foolbox.api import *
+
+    # Get the data
+    with open(data_path + "ois_bloomberg.p", mode="rb") as halupa:
+        ois_data = pickle.load(halupa)
+
+    test_data = ois_data["eur"]["2000":"2006"]
+
+    # Trade dates of one-month ois
+    trade_dates = test_data["1M"].dropna().index
+    # Return of the underlying floating rate
+    returns = test_data["ON"].dropna()
+
+    # Maturity is one month
+    maturity = DateOffset(months=1)
+
+    settings = {"start_date": 2,
+                "fixing_lag": 0,
+                "day_count_float": 360,
+                "date_rolling": "modified following"}
+
+    realized_ret_data = \
+        compute_floating_leg_return(trade_dates, returns, maturity, settings)
+
+    # Concatenate the results
+    res = pd.concat([test_data["1M"], realized_ret_data["dates"],
+                     realized_ret_data["ret"]], join="inner", axis=1)
+    res.columns = ["fixed", "start", "end", "realized"]
+
+    # Print something
+    print(res.head(22))
+
+    # Plot something
+    to_plot = res[["fixed", "realized"]].dropna()
+    to_plot.plot()
+    plt.show()
+
+    # Test the unbiasedness
+    diff = \
+        (to_plot.fixed - to_plot.realized).to_frame(name="d").astype("float")
+
+    print(taf.descriptives(diff, 1))
