@@ -302,8 +302,6 @@ def interevent_qcut(data_to_slice, events, n_quantiles):
 
     return out.drop(["evt_num"], axis=1)
 
-import pandas as pd
-
 def parse_bloomberg_excel(filename, colnames_sheet, data_sheets):
     """
 
@@ -416,6 +414,7 @@ def compute_floating_leg_return(trade_dates, returns, maturity, settings):
 
     # Start the main lOOp
     for date in trade_dates:
+        # date = trade_dates[0]
         # Set the start date - the first date of accrued floating interest
         # TODO: there's pandas.tseries.holiday, with holiday calendars...
         start_date = date + BDay(settings["start_date"])
