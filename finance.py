@@ -2,7 +2,7 @@ import pandas as pd
 import numpy as np
 import itertools as itools
 from pandas.tseries.offsets import DateOffset, MonthBegin, MonthEnd, \
-    relativedelta
+    relativedelta, BDay
 from sklearn.metrics import confusion_matrix
 import matplotlib.pyplot as plt
 from foolbox.utils import *
@@ -683,12 +683,16 @@ class PolicyExpectation():
 
 
     @classmethod
-    def from_pickles(cls, data_path, currency, s_dt="1990", use_ffut=False):
+    def from_pickles(cls, data_path, currency, s_dt="1990",
+        impl_rates_pickle="implied_rates"):
         """
         Parameters
         ----------
         currency : str
             lowercase 3-letter, e.g. "gbp"
+        impl_rates_pickle : str
+            name of the pickle file: "implied_rates", "implied_rates_ffut" or
+            "implied_rates_bloomberg"
         Returns
         -------
         pe : PolicyExpectation()
@@ -709,18 +713,12 @@ class PolicyExpectation():
         with open(data_path + "overnight_rates.p", mode='rb') as hangar:
             overnight_rates = pickle.load(hangar)
 
-        # for the USA, possible to use fed funds futures
-        if use_ffut:
-            impl_rates_name = "implied_rates_ffut.p"
-        else:
-            impl_rates_name = "implied_rates.p"
-
         # implied rates
-        with open(data_path + impl_rates_name, mode='rb') as hangar:
+        with open(data_path + impl_rates_pickle, mode='rb') as hangar:
             implied_rates = pickle.load(hangar)
 
         # init class, manually insert policy expectation
-        pe = PolicyExpectation(
+        pe = cls(
             meetings=meetings,
             reference_rate=overnight_rates.loc[s_dt:,currency])
 
@@ -1203,8 +1201,310 @@ def get_pe_signals(currencies, lag, threshold, data_path, fomc=False,
     return signals
 
 
+class OIS():
+    """
+    """
+    def __init__(self, start_offset, fixing_lag, day_roll, maturity,
+        day_cnt_flt, day_cnt_fix=None):
+        """
+        start_offset : int
+            number of business days until the first accrual of floating rate
+        fixing_lag : int
+            number of periods to shift returns _*forward*_, that is, if the
+            underlyig rate is reported with one period lag, today's rate on
+            the floating leg is determined tomorrow. The value is negative if
+            today's rate is determined yesterday
+        day_cnt_flt : int
+            360 or 365 corresponding to Act/360 and Act/365 day count
+            conventions
+        day_cnt_fix : int
+            same
+        day_roll : str
+            specifying date rolling convention if the end date of the contract
+            is not a business day. Typical conventions are: "previous",
+            "following", and "modified following". Currently only the latter
+            two are implemented
+        maturity : pandas.tseries.offsets.DateOffset
+            maturity, e.g. DateOffset(months=1)
+        """
+        self.start_offset = start_offset
+        self.fixing_lag = fixing_lag
+        self.day_roll = day_roll
+        self.maturity = maturity
+
+        # day count: is float always = fixed?
+        self.day_cnt_flt = day_cnt_flt
+        if day_cnt_fix is None:
+            day_cnt_fix = day_cnt_flt
+        self.day_cnt_fix = day_cnt_fix
+
+        self._quote_dt = None
+        self._start_dt = None
+        self._end_dt = None
+
+    # start date ------------------------------------------------------------
+    @property
+    def start_dt(self):
+        if self._start_dt is None:
+            raise ValueError("Define start date first!")
+        return self._start_dt
+
+    @start_dt.setter
+    def start_dt(self, value):
+        # set start date as is
+        self._start_dt = pd.to_datetime(value)
+        # set end date by adding maturity to start date and rolling to b/day
+        #   TODO: offsetting by 1 day necessary?
+        self._end_dt = self.roll_day(
+            self._start_dt + self.maturity - DateOffset(days=1),
+            convention=self.day_roll,
+            b_day=None)
+        # number of days
+        self.calculation_period = (self.end_dt - self.start_dt).days + 1
+
+    # end date --------------------------------------------------------------
+    @property
+    def end_dt(self):
+        if self._end_dt is None:
+            raise ValueError("Define start date first!")
+        return self._end_dt
+
+    # quote date ------------------------------------------------------------
+    @property
+    def quote_dt(self):
+        if self._quote_dt is None:
+            raise ValueError("Define start date first!")
+        return self._quote_dt
+
+    @quote_dt.setter
+    def quote_dt(self, value):
+        # set quote date as is
+        self._quote_dt = pd.to_datetime(value)
+
+        # envoke start_dt setter
+        self.start_dt = self.roll_day(self._quote_dt + self.start_offset,
+            convention=self.day_roll,
+            b_day=None)
+
+    @staticmethod
+    def roll_day(dt, convention, b_day=None):
+        """Offset `dt` making sure that the result is a business day.
+        """
+        if b_day is None:
+            b_day = BDay
+
+        # try to adjust to the working day
+        if convention == "previous":
+            # Roll to the previous business day
+            res = dt - b_day(0)
+
+        elif convention == "following":
+            # Roll to the next business day
+            res = dt + b_day(0)
+
+        elif convention == "modified following":
+            # Try to roll forward
+            tmp_dt = dt + b_day(0)
+
+            # If the dt is in the following month roll backwards instead
+            if tmp_dt.month == dt.month:
+                res = dt + b_day(0)
+            else:
+                res = dt - b_day(0)
+
+        else:
+            raise NotImplementedError(
+                "{} date rolling is not supported".format(convention))
+
+        return res
+
+    def get_return_of_floating(self, on_rate, until_dt=None):
+        """Calculate return on the floating leg.
+
+        Parameters
+        ----------
+        on_rate : pandas.Series
+            of overnight rates, in percent p.a.
+        until_dt : str/date
+            date to use instead of `self.end_dt` because... reasons!
+        """
+        if until_dt is None:
+            until_dt = self.end_dt
+
+        # publication or t/n lag
+        on_rate = on_rate.copy().shift(-self.fixing_lag)
+
+        # Append returns, if the end date has already happened
+        if until_dt > on_rate.last_valid_index():
+            return np.nan
+
+        # Reindex to calendar day, carrying rates forward over non b-days
+        # NB: watch over missing values in the data: here is the last chance
+        #   to keep them as is
+        tmp_ret = on_rate.reindex(
+            pd.DatetimeIndex(start=self.start_dt, end=until_dt, freq="D"))
+
+        # Compute the cumulative floating leg return over the period
+        res = self.cumprod_with_mult(tmp_ret / self.day_cnt_flt / 100)
+
+        # annualize etc.
+        res = 100 * (self.day_cnt_flt / tmp_ret.size) * res
+
+        return res
+
+    @staticmethod
+    def cumprod_with_ffill(series):
+        """Calculate cumulative product using standard formula for OIS.
+
+        Non-trading days are accounted for by forward-filling the rate series
+        and performing the multiplication.
+        """
+        res = (series+1).ffill().prod() - 1
+
+        return res
+
+    @staticmethod
+    def cumprod_with_mult(series):
+        """Calculate cumulative product using ffill for OIS.
+
+        Non-trading days are accounted for by multiplying the rate on the last
+        trading day by the number of subsequent non-trading days (plus one).
+        """
+        # ffill to arrive at series with consecutive missing values ffilled
+        series_ffilled = series.ffill()
+
+        # count consecutive repeating occurrences
+        cnt = series.expanding().count()
+
+        # multiply rates with the amount of consecutive occurrences
+        series_grouped = series_ffilled.groupby(cnt).sum()
+
+        # this is to be cumprod'ed
+        res = (1+series_grouped).prod() - 1
+
+        return res
+
+    def get_return_on_fixed(swap_rate, until_dt=None):
+        """Calculate return on the fixed leg over the lifetime of OIS.
+        """
+        if until_dt is None:
+            until_dt = self.end_dt
+
+        # number of days the rate is cumulated
+        d = (until_dt - self.start_dt).days + 1
+
+        # apply day count
+        res = swap_rate / 100 / self.day_cnt_fix
+
+    def get_implied_rate(self, on_rate, event_dt, swap_rate):
+        """
+        """
+        # number of days between: for the US case, there is rate accumulation
+        #   on the event day
+        days_until = (event_dt - self.start_dt).days - self.fixing_lag
+        days_since = self.calculation_period - days_until
+
+        # part prior to event
+        cumprod_before = on_rate.shift(-self.fixing_lag).loc[event_dt]
+
+        # expected part after event
+        cumprod_after = (
+            (1+swap_rate / 100 / self.day_cnt_fix * self.calculation_period) /
+            (1+cumprod_before / 100 / self.day_cnt_flt)**days_until)**(
+                1/days_since) - 1
+
+        # annualize etc.
+        res = cumprod_after * self.day_cnt_flt * 100
+
+        return res
+
+    @staticmethod
+    def implied_rate_formula(rate_before, swap_rate, days_until, days_after):
+        """
+        Parameters
+        ----------
+        rate_before : float
+            rate prevailing before the possible change, in frac of 1 per period
+        swap_rate : float
+            swap rate, in frac of 1 per period
+        days_until : int
+            days before the possible change when `rate_before` applies
+        days_after : int
+            days after the possible change when the new rate applies
+        """
+        res = (
+            (1+swap_rate*days_until)/(1+rate_before)**(days_until)
+            )**(1/(days_after))-1
+
+        return res
+
+    @classmethod
+    def EUR(cls, maturity):
+        """Return OIS class instance with euro specifications.
+        """
+        start_offset = BDay(2)
+        fixing_lag = 0
+        day_cnt_flt = 360
+        day_roll = "modified following"
+
+        return cls(
+            start_offset=start_offset,
+            fixing_lag=fixing_lag,
+            day_cnt_flt=day_cnt_flt,
+            day_roll=day_roll,
+            maturity=maturity)
+
+    @classmethod
+    def USD(cls, maturity):
+        """Return OIS class instance with euro specifications.
+        """
+        start_offset = BDay(2)
+        fixing_lag = 1
+        day_cnt_flt = 360
+        day_roll = "modified following"
+
+        return cls(
+            start_offset=start_offset,
+            fixing_lag=fixing_lag,
+            day_cnt_flt=day_cnt_flt,
+            day_roll=day_roll,
+            maturity=maturity)
+
+
 if __name__  == "__main__":
-    pass
+
+    with open(data_path + "ois_bloomberg.p", mode="rb") as hangar:
+        ois_data = pickle.load(hangar)
+
+    test_data = ois_data["eur"]["2002-04":"2002-05"].loc[:,"1M"]
+    on_rate = ois_data["eur"]["2002-03":"2002-06"].loc[:,"ON"]
+
+    ois_eur = OIS.EUR(maturity=DateOffset(months=1))
+
+    ois_eur.quote_dt = test_data.index[10]
+    ois_eur.start_dt
+    ois_eur.end_dt
+
+    ois_eur.get_return_of_floating(on_rate=on_rate)
+
+    with open(data_path + "events.p", mode="rb") as hangar:
+        events_data = pickle.load(hangar)
+
+    us_events = events_data["fomc"].loc[:,"change"]
+    event_dt = us_events.loc["2002-05"].index[0]
+
+    ois_eur.get_implied_rate(on_rate=on_rate, event_dt=event_dt,
+        swap_rate=test_data.loc[ois_eur.quote_dt])
+
+    ois_eur.get_implied_rate
+
+    ((on_rate.loc[ois_eur.start_dt:ois_eur.end_dt]/360/100+1).reindex(
+        index=pd.date_range(ois_eur.start_dt,ois_eur.end_dt,freq='D')).\
+        ffill().prod()-1)/len(
+            pd.date_range(ois_eur.start_dt,ois_eur.end_dt,freq='D'))*360*100
+    realized_ret_data["ret"].loc[test_data.index[0]:]
+
+
     # from foolbox.data_mgmt import set_credentials
     #
     # # data ------------------------------------------------------------------
@@ -1244,8 +1544,8 @@ if __name__  == "__main__":
     #         benchmark = overnight_rates.loc[:,cur]
     #         meetings = many_meetings[cur].dropna()
     #
-    #         pe = PolicyExpectation.from_money_market(
-    #             meetings=meetings/100,
+    #         pe = PolicyExpectation.from_money_market
+    #             meetings=meetings/100
     #             instrument=instrument/100,
     #             benchmark=benchmark/100,
     #             tau=tau)
@@ -1269,7 +1569,7 @@ if __name__  == "__main__":
     # f, ax = plt.subplots()
     # policy_diff.plot(ax=ax, color='r', linestyle="none", marker='.')
     # ax.set_ylim([-2.5, 1.0])
-    # both.plot(ax=ax, color='k', linestyle="none", marker='o',
+    # both.plot(ax=ax, color='k', linestyle="none", marker='o'test_data,
     #     alpha=0.33)
     #
     #
