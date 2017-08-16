@@ -32,6 +32,50 @@ class PolicyExpectation():
         self.instrument = instrument
         self.reference_rate = reference_rate
 
+    @classmethod
+    def from_ois_new(cls, ois, meetings, ois_rates, on_rates):
+        """
+        """
+        rate_expectation = ois_rates.copy()*np.nan
+
+        for t in rate_expectation.index:
+            # break if out of range
+            if t >= meetings.last_valid_index():
+                break
+
+            # continue if too early
+            if t < meetings.first_valid_index() - ois.maturity + BDay():
+                continue
+
+            # find two meeting dates: the previous, whose rate will serve as
+            #   reference rate, and the next, which will possibly set a new
+            #   rate
+            # previous
+            prev_meet = \
+                meetings.index[meetings.index.get_loc(t, method="ffill")]
+
+            # next closest
+            nx_meet = \
+                meetings.index[meetings.index.get_loc(t, method="bfill")]
+
+            # set quote date of ois to this t
+            ois.quote_dt = t
+
+            # extract implied rate
+            rate_expectation.loc[t] = ois.get_implied_rate(
+                on_rate=on_rates.loc[t],
+                event_dt=nx_meet,
+                swap_rate=ois_rates.loc[t]))
+
+        this_pe = PolicyExpectation(
+            meetings=meetings,
+            instrument=ois_rates,
+            reference_rate=on_rates)
+
+        this_pe.rate_expectation = rate_expectation
+
+        return pe
+
 
     @classmethod
     def from_funds_futures(cls, meetings, funds_futures):
@@ -1354,7 +1398,7 @@ class OIS():
 
     @staticmethod
     def cumprod_with_ffill(series):
-        """Calculate cumulative product using standard formula for OIS.
+        """Calculate cumulative product using ffill for OIS.
 
         Non-trading days are accounted for by forward-filling the rate series
         and performing the multiplication.
@@ -1365,7 +1409,7 @@ class OIS():
 
     @staticmethod
     def cumprod_with_mult(series):
-        """Calculate cumulative product using ffill for OIS.
+        """Calculate cumulative product using standard formula for OIS.
 
         Non-trading days are accounted for by multiplying the rate on the last
         trading day by the number of subsequent non-trading days (plus one).
