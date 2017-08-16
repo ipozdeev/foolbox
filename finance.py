@@ -39,6 +39,7 @@ class PolicyExpectation():
         rate_expectation = ois_rates.copy()*np.nan
 
         for t in rate_expectation.index:
+            # t = rate_expectation.index[0]
             # break if out of range
             if t >= meetings.last_valid_index():
                 break
@@ -51,8 +52,8 @@ class PolicyExpectation():
             #   reference rate, and the next, which will possibly set a new
             #   rate
             # previous
-            prev_meet = \
-                meetings.index[meetings.index.get_loc(t, method="ffill")]
+            # prev_meet = \
+            #     meetings.index[meetings.index.get_loc(t, method="ffill")]
 
             # next closest
             nx_meet = \
@@ -63,9 +64,9 @@ class PolicyExpectation():
 
             # extract implied rate
             rate_expectation.loc[t] = ois.get_implied_rate(
-                on_rate=on_rates.loc[t],
+                on_rate=on_rates,
                 event_dt=nx_meet,
-                swap_rate=ois_rates.loc[t]))
+                swap_rate=ois_rates.loc[t])
 
         this_pe = PolicyExpectation(
             meetings=meetings,
@@ -75,7 +76,6 @@ class PolicyExpectation():
         this_pe.rate_expectation = rate_expectation
 
         return pe
-
 
     @classmethod
     def from_funds_futures(cls, meetings, funds_futures):
@@ -724,7 +724,6 @@ class PolicyExpectation():
             xy=(0.5, 0.1), xycoords='axes fraction')
 
         return
-
 
     @classmethod
     def from_pickles(cls, data_path, currency, s_dt="1990",
@@ -1520,10 +1519,10 @@ if __name__  == "__main__":
     with open(data_path + "ois_bloomberg.p", mode="rb") as hangar:
         ois_data = pickle.load(hangar)
 
-    test_data = ois_data["eur"]["2002-04":"2002-05"].loc[:,"1M"]
-    on_rate = ois_data["eur"]["2002-03":"2002-06"].loc[:,"ON"]
+    test_data = ois_data["usd"]["2000-11":].loc[:,"1M"].astype(np.float)
+    on_rate = ois_data["usd"]["2000-11":].loc[:,"ON"].astype(np.float)
 
-    ois_eur = OIS.EUR(maturity=DateOffset(months=1))
+    ois_eur = OIS.USD(maturity=DateOffset(months=1))
 
     ois_eur.quote_dt = test_data.index[10]
     ois_eur.start_dt
@@ -1534,8 +1533,16 @@ if __name__  == "__main__":
     with open(data_path + "events.p", mode="rb") as hangar:
         events_data = pickle.load(hangar)
 
-    us_events = events_data["fomc"].loc[:,"change"]
+    us_events = events_data["fomc"].loc[:,["change"]]
     event_dt = us_events.loc["2002-05"].index[0]
+
+    evt, ois_data = us_events.loc["2000-11":].align(test_data.loc["2000-11":],
+        axis=0, join="outer")
+    ois_rates, on_rates = test_data.align(on_rate, axis=0, join="outer")
+    pe = PolicyExpectation.from_ois_new(ois=ois_eur,
+        meetings=us_events.loc["2000-11":],
+        ois_rates=ois_rates.loc["2000-11":].squeeze(),
+        on_rates=on_rates.loc["2000-11":].squeeze())
 
     ois_eur.get_implied_rate(on_rate=on_rate, event_dt=event_dt,
         swap_rate=test_data.loc[ois_eur.quote_dt])
