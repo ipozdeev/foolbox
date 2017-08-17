@@ -6,14 +6,14 @@ from pandas.tseries.offsets import DateOffset, MonthBegin, MonthEnd, \
 from sklearn.metrics import confusion_matrix
 import matplotlib.pyplot as plt
 from foolbox.utils import *
-from foolbox.trading import EventTradingStrategy
-
+# from foolbox.trading import EventTradingStrategy
 import itertools
 
 from matplotlib.ticker import MultipleLocator
 import pickle
 from foolbox.portfolio_construction import multiple_timing
-# import ipdb
+from foolbox.api import *
+import ipdb
 
 my_red = "#ce3300"
 my_blue = "#2f649e"
@@ -40,27 +40,24 @@ class PolicyExpectation():
 
         for t in rate_expectation.index:
             # t = rate_expectation.index[0]
-            # break if out of range
-            if t >= meetings.last_valid_index():
-                break
-
-            # continue if too early
-            if t < meetings.first_valid_index() - ois.maturity + BDay():
-                continue
-
-            # find two meeting dates: the previous, whose rate will serve as
-            #   reference rate, and the next, which will possibly set a new
-            #   rate
-            # previous
-            # prev_meet = \
-            #     meetings.index[meetings.index.get_loc(t, method="ffill")]
-
-            # next closest
-            nx_meet = \
-                meetings.index[meetings.index.get_loc(t, method="bfill")]
+            # print(t)
+            # if t > pd.to_datetime("2017-03-13"):
+            #     ipdb.set_trace()
 
             # set quote date of ois to this t
             ois.quote_dt = t
+
+            # break if out of range
+            if ois.start_dt >= meetings.last_valid_index():
+                break
+
+            # next closest meeting to ois's effective date
+            nx_meet = meetings.index[
+                meetings.index.get_loc(ois.start_dt, method="bfill")]
+
+            # continue if maturity is earlier than next meeting
+            if ois.end_dt < nx_meet:
+                continue
 
             # extract implied rate
             rate_expectation.loc[t] = ois.get_implied_rate(
@@ -1519,42 +1516,36 @@ if __name__  == "__main__":
     with open(data_path + "ois_bloomberg.p", mode="rb") as hangar:
         ois_data = pickle.load(hangar)
 
-    test_data = ois_data["usd"]["2000-11":].loc[:,"1M"].astype(np.float)
-    on_rate = ois_data["usd"]["2000-11":].loc[:,"ON"].astype(np.float)
+    ois_rates = ois_data["usd"]["2000-11":].loc[:,"1M"].astype(np.float)
+    on_rates = ois_data["usd"]["2000-11":].loc[:,"ON"].astype(np.float)
 
-    ois_eur = OIS.USD(maturity=DateOffset(months=1))
+    ois_rates, on_rates = ois_rates.loc[
+        ois_rates.first_valid_index():ois_rates.last_valid_index()].align(
+            on_rates, axis=0, join="left")
 
-    ois_eur.quote_dt = test_data.index[10]
-    ois_eur.start_dt
-    ois_eur.end_dt
+    # (ois_rates.isnull() | on_rates.isnull())\
+    #     .where(ois_rates.isnull() | on_rates.isnull()).dropna()
+    # on_rates.isnull().where(on_rates.isnull()).dropna()
+    #
+    # on_rates.shape
+    # ois_rates.shape
 
-    ois_eur.get_return_of_floating(on_rate=on_rate)
-
+    # events
     with open(data_path + "events.p", mode="rb") as hangar:
         events_data = pickle.load(hangar)
 
-    us_events = events_data["fomc"].loc[:,["change"]]
-    event_dt = us_events.loc["2002-05"].index[0]
+    meetings = events_data["fomc"].loc["2001-11":,["change"]]
 
-    evt, ois_data = us_events.loc["2000-11":].align(test_data.loc["2000-11":],
-        axis=0, join="outer")
-    ois_rates, on_rates = test_data.align(on_rate, axis=0, join="outer")
-    pe = PolicyExpectation.from_ois_new(ois=ois_eur,
-        meetings=us_events.loc["2000-11":],
-        ois_rates=ois_rates.loc["2000-11":].squeeze(),
-        on_rates=on_rates.loc["2000-11":].squeeze())
+    # OIS class
+    ois = OIS.USD(maturity=DateOffset(months=1))
 
-    ois_eur.get_implied_rate(on_rate=on_rate, event_dt=event_dt,
+    pe = PolicyExpectation.from_ois_new(ois=ois,
+        meetings=meetings,
+        ois_rates=ois_rates,
+        on_rates=on_rates)
+
+    ois_eur.get_implied_rate(on_rate=on_rates, event_dt=event_dt,
         swap_rate=test_data.loc[ois_eur.quote_dt])
-
-    ois_eur.get_implied_rate
-
-    ((on_rate.loc[ois_eur.start_dt:ois_eur.end_dt]/360/100+1).reindex(
-        index=pd.date_range(ois_eur.start_dt,ois_eur.end_dt,freq='D')).\
-        ffill().prod()-1)/len(
-            pd.date_range(ois_eur.start_dt,ois_eur.end_dt,freq='D'))*360*100
-    realized_ret_data["ret"].loc[test_data.index[0]:]
-
 
     # from foolbox.data_mgmt import set_credentials
     #
