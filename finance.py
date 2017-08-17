@@ -33,9 +33,12 @@ class PolicyExpectation():
         self.reference_rate = reference_rate
 
     @classmethod
-    def from_ois_new(cls, ois, meetings, ois_rates, on_rates):
+    def from_ois_new(cls, ois, meetings, ois_rates, on_rates, **kwargs):
         """
         """
+        # calculate rate until
+        rates_until = ois.get_rates_until(on_rates, meetings, **kwargs)
+
         rate_expectation = ois_rates.copy()*np.nan
 
         for t in rate_expectation.index:
@@ -61,9 +64,9 @@ class PolicyExpectation():
 
             # extract implied rate
             rate_expectation.loc[t] = ois.get_implied_rate(
-                on_rate=on_rates,
                 event_dt=nx_meet,
-                swap_rate=ois_rates.loc[t])
+                swap_rate=ois_rates.loc[t],
+                rate_until=rates_until.loc[t])
 
         this_pe = PolicyExpectation(
             meetings=meetings,
@@ -72,7 +75,7 @@ class PolicyExpectation():
 
         this_pe.rate_expectation = rate_expectation
 
-        return pe
+        return this_pe
 
     @classmethod
     def from_funds_futures(cls, meetings, funds_futures):
@@ -1245,7 +1248,7 @@ class OIS():
     """
     """
     def __init__(self, start_offset, fixing_lag, day_roll, maturity,
-        day_cnt_flt, day_cnt_fix=None):
+        day_cnt_flt, new_rate_lag, day_cnt_fix=None):
         """
         start_offset : int
             number of business days until the first accrual of floating rate
@@ -1271,6 +1274,7 @@ class OIS():
         self.fixing_lag = fixing_lag
         self.day_roll = day_roll
         self.maturity = maturity
+        self.new_rate_lag = new_rate_lag
 
         # day count: is float always = fixed?
         self.day_cnt_flt = day_cnt_flt
@@ -1313,7 +1317,7 @@ class OIS():
     @property
     def quote_dt(self):
         if self._quote_dt is None:
-            raise ValueError("Define start date first!")
+            raise ValueError("Define quote date first!")
         return self._quote_dt
 
     @quote_dt.setter
@@ -1424,37 +1428,69 @@ class OIS():
 
         return res
 
-    def get_return_on_fixed(swap_rate, until_dt=None):
+    def get_return_on_fixed(self, swap_rate):
         """Calculate return on the fixed leg over the lifetime of OIS.
-        """
-        if until_dt is None:
-            until_dt = self.end_dt
 
-        # number of days the rate is cumulated
-        d = (until_dt - self.start_dt).days + 1
-
-        # apply day count
-        res = swap_rate / 100 / self.day_cnt_fix
-
-    def get_implied_rate(self, on_rate, event_dt, swap_rate):
+        Parameters
+        ----------
+        swap_rate : float
+            in percent per year
         """
+        res = 1 + swap_rate / 100 / self.day_cnt_fix * self.calculation_period
+
+        return res
+
+    def get_implied_rate(self, event_dt, swap_rate, rate_until):
         """
-        # number of days between: for the US case, there is rate accumulation
-        #   on the event day
-        days_until = (event_dt - self.start_dt).days - self.fixing_lag
+        Parameters
+        ----------
+        on_rate : pandas.Series
+            containing rates around `event_dt`
+        rate_until : float
+            rate to prevail before event; default is to take correct today's
+        """
+        # number of days between: for the US case, the new rate is effective
+        #   one day after announcement, and also there is one day fixing lag
+        days_until = (event_dt - self.start_dt).days - self.fixing_lag + \
+            self.new_rate_lag
         days_since = self.calculation_period - days_until
 
-        # part prior to event
-        cumprod_before = on_rate.shift(-self.fixing_lag).loc[event_dt]
+        # part prior to event -----------------------------------------------
+        # cumulative rate before the new rate will be introduced
+        cumprod_until = (1+rate_until / 100 / self.day_cnt_flt)**days_until
 
-        # expected part after event
-        cumprod_after = (
-            (1+swap_rate / 100 / self.day_cnt_fix * self.calculation_period) /
-            (1+cumprod_before / 100 / self.day_cnt_flt)**days_until)**(
-                1/days_since) - 1
+        # expected part after event -----------------------------------------
+        cumprod_after = (self.get_return_on_fixed(swap_rate) / cumprod_until)
+
+        # implied daily rate after event
+        res = cumprod_after**(1/days_since) - 1
 
         # annualize etc.
-        res = cumprod_after * self.day_cnt_flt * 100
+        res *= (self.day_cnt_flt * 100)
+
+        return res
+
+    def get_rates_until(self, on_rate, meetings, method="average"):
+        """
+        """
+        on_rate = on_rate.copy() / 100
+
+        # if not specified, take the fixing rate at `self.quote_dt`
+        if method == "last":
+            res = on_rate.shift(-self.fixing_lag)
+        elif method == "average":
+            # expanding geometric average starting from events
+            # ipdb.set_trace()
+            res = on_rate * np.nan
+            for t in list(meetings.index)[::-1] + list(on_rate.index[[0]]):
+                to_fill_with = np.exp(
+                    np.log(1 + on_rate.shift(-self.new_rate_lag).loc[t:])\
+                        .expanding().mean())
+                res.fillna(to_fill_with.shift(self.new_rate_lag), inplace=True)
+
+            res -= 1.0
+
+        res *= 100
 
         return res
 
@@ -1482,6 +1518,8 @@ class OIS():
     def EUR(cls, maturity):
         """Return OIS class instance with euro specifications.
         """
+        return
+
         start_offset = BDay(2)
         fixing_lag = 0
         day_cnt_flt = 360
@@ -1502,11 +1540,13 @@ class OIS():
         fixing_lag = 1
         day_cnt_flt = 360
         day_roll = "modified following"
+        new_rate_lag = 1
 
         return cls(
             start_offset=start_offset,
             fixing_lag=fixing_lag,
             day_cnt_flt=day_cnt_flt,
+            new_rate_lag = new_rate_lag,
             day_roll=day_roll,
             maturity=maturity)
 
@@ -1534,15 +1574,35 @@ if __name__  == "__main__":
     with open(data_path + "events.p", mode="rb") as hangar:
         events_data = pickle.load(hangar)
 
-    meetings = events_data["fomc"].loc["2001-11":,["change"]]
+    meetings = events_data["fomc"].loc[ois_rates.index[0]:,:]
+    meetings.columns = ["rate_level", "rate_change"]
 
     # OIS class
     ois = OIS.USD(maturity=DateOffset(months=1))
+
+    rate_until = ois.get_rates_until(on_rates, meetings, method="average")
 
     pe = PolicyExpectation.from_ois_new(ois=ois,
         meetings=meetings,
         ois_rates=ois_rates,
         on_rates=on_rates)
+
+    pe.rate_expectation.plot()
+
+    on_rates.loc["2001-01"]
+
+    meetings["rate_change"].where(meetings["rate_change"] < 0).dropna()
+    (meetings["rate_change"] < 0).loc[pe.rate_expectation.index].sum()
+
+    pe.rate_expectation.shift(10).where(meetings["rate_change"] < 0).dropna()
+
+    pe.assess_forecast_quality(
+        lag=10,
+        threshold=0.10,
+        avg_impl_over=1,
+        avg_refrce_over=1,
+        bday_reindex=True)
+    pe.error_plot(avg_over=10)
 
     ois_eur.get_implied_rate(on_rate=on_rates, event_dt=event_dt,
         swap_rate=test_data.loc[ois_eur.quote_dt])
