@@ -46,7 +46,7 @@ class PolicyExpectation():
             # t = rate_expectation.index[0]
             # print(t)
             # if t > pd.to_datetime("2017-03-13"):
-            ipdb.set_trace()
+            # ipdb.set_trace()
 
             # set quote date of ois to this t
             ois.quote_dt = t
@@ -1246,33 +1246,46 @@ def get_pe_signals(currencies, lag, threshold, data_path, fomc=False,
 
 
 class OIS():
-    """
+    """Perform basic operations with OIS.
+
+    Keeps all information relevant for an OIS: maturity, offsets, conventions
+    etc. Methods allow to calculate floating and fixed leg return, rate
+    implied before event etc. Construction of the class is easiest
+    performed through usage of `.from_iso` factory.
+
+    Parameters
+    ----------
+    start_offset : int
+        number of business days until the first accrual of floating rate
+    fixing_lag : int
+        number of periods to shift returns _*forward*_, that is, if the
+        underlying rate is reported with one period lag, today's rate on
+        the floating leg is determined tomorrow. The value is negative if
+        today's rate is determined yesterday (as with CHF)
+    day_roll : str
+        specifying date rolling convention if the end date of the contract
+        is not a business day. Typical conventions are: "previous",
+        "following", and "modified following". Currently only the latter
+        two are implemented
+    maturity : pandas.tseries.offsets.DateOffset
+        maturity, e.g. DateOffset(months=1)
+    day_cnt_flt : int
+        360 or 365 corresponding to Act/360 and Act/365 day count
+        conventions for the floating leg
+    day_cnt_fix : int
+        360 or 365 corresponding to Act/360 and Act/365 day count
+        conventions for the fixed leg; by default equals `day_cnt_flt`
+    b_day : pandas.tseries.offsets.DateOffset
+        business day (usually related to a calendar), e.g. BDay()
     """
     def __init__(self, start_offset, fixing_lag, day_roll, maturity,
         day_cnt_flt, new_rate_lag, day_cnt_fix=None, b_day=None):
         """
-        start_offset : int
-            number of business days until the first accrual of floating rate
-        fixing_lag : int
-            number of periods to shift returns _*forward*_, that is, if the
-            underlying rate is reported with one period lag, today's rate on
-            the floating leg is determined tomorrow. The value is negative if
-            today's rate is determined yesterday (as with CHF)
-        day_cnt_flt : int
-            360 or 365 corresponding to Act/360 and Act/365 day count
-            conventions
-        day_cnt_fix : int
-            same
-        day_roll : str
-            specifying date rolling convention if the end date of the contract
-            is not a business day. Typical conventions are: "previous",
-            "following", and "modified following". Currently only the latter
-            two are implemented
-        maturity : pandas.tseries.offsets.DateOffset
-            maturity, e.g. DateOffset(months=1)
         """
         if b_day is None:
             b_day = BDay()
+        if day_cnt_fix is None:
+            day_cnt_fix = day_cnt_flt
 
         self.b_day = b_day
         self.start_offset = start_offset
@@ -1283,10 +1296,9 @@ class OIS():
 
         # day count: is float always = fixed?
         self.day_cnt_flt = day_cnt_flt
-        if day_cnt_fix is None:
-            day_cnt_fix = day_cnt_flt
         self.day_cnt_fix = day_cnt_fix
 
+        # properties to be set later
         self._quote_dt = None
         self._start_dt = None
         self._end_dt = None
@@ -1300,28 +1312,41 @@ class OIS():
 
     @start_dt.setter
     def start_dt(self, value):
+        """Set start_dt.
+
+        Sets start date to the provided value, then calculates end date by
+        adding maturity to start date, then creates a sequence of business
+        days from start to end dates, then for each of these days calcualtes
+        the number of subsequent days over which the rate will stay the same,
+        finally, calculates the lifetime of OIS.
+
+        Parameters
+        ----------
+        value : str/np.datetime64
+            date to use as start date
+        """
         # set start date as is
         self._start_dt = pd.to_datetime(value)
+
         # set end date by adding maturity to start date and rolling to b/day
         #   TODO: offsetting by 1 day necessary?
         self._end_dt = self.roll_day(
             self._start_dt + self.maturity,
             convention=self.day_roll,
             b_day=self.b_day) - self.b_day*(1)
-        # calculation period
+
+        # calculation period: range of business days from start to end dates
         self.calculation_period = pd.date_range(self._start_dt, self._end_dt,
             freq=self.b_day*(1))
-        # days to multiply rate with
+
+        # number of days to multiply rate with: uses function from utils.py
         self.rate_multiplicators = pd.Series(
             index=self.calculation_period,
             data=self.calculation_period.map(
                 lambda x: next_days_same_rate(x, b_day=self.b_day*(1))))
+
         # calculation period length
         self.lifetime = self.rate_multiplicators.sum()
-
-        # _start_dt = "2001-12-04"
-        # _end_dt = "2002-01-02"
-        # b_day = BDay()
 
     # end date --------------------------------------------------------------
     @property
@@ -1339,6 +1364,11 @@ class OIS():
 
     @quote_dt.setter
     def quote_dt(self, value):
+        """Set quote date.
+
+        Sets quote date, then sets start date as T+`self.start_offset`. In
+        doing so calls to the setter of start date.
+        """
         # set quote date as is
         self._quote_dt = pd.to_datetime(value)
 
@@ -1351,6 +1381,23 @@ class OIS():
     @staticmethod
     def roll_day(dt, convention, b_day=None):
         """Offset `dt` making sure that the result is a business day.
+
+        Parameters
+        ----------
+        dt : np.datetime64
+            date to offset
+        day_roll : str
+            specifying date rolling convention if the end date of the contract
+            is not a business day. Typical conventions are: "previous",
+            "following", and "modified following". Currently only the latter
+            two are implemented
+        b_day : pandas.tseries.offsets.DateOffset
+            business day (usually related to a calendar), e.g. BDay()
+
+        Returns
+        -------
+        res : np.datetime64
+            offset date
         """
         if b_day is None:
             b_day = BDay()
@@ -1383,11 +1430,12 @@ class OIS():
     def get_return_of_floating(self, on_rate, dt_since=None, dt_until=None):
         """Calculate return on the floating leg.
 
+        Using the rule to multiply rates
         Parameters
         ----------
         on_rate : float/pandas.Series
-            overnight rate (will be broadcasted) of series thereof,
-            in percent p.a.
+            overnight rate (in which case will be broadcasted) or series
+            thereof, in percent p.a.
         dt_until : str/date
             date to use instead of `self.end_dt` because... reasons!
         """
@@ -1563,22 +1611,73 @@ class OIS():
         return res
 
     @classmethod
-    def EUR(cls, maturity):
-        """Return OIS class instance with euro specifications.
-        """
-        return
+    def from_iso(cls, iso, maturity):
+        """Return OIS class instance with specifications of currency `iso`."""
+        # calendars
+        calendars = {
+            "usd": CustomBusinessDay(calendar=USTradingCalendar()),
+        }
 
-        start_offset = BDay(2)
-        fixing_lag = 0
-        day_cnt_flt = 360
-        day_roll = "modified following"
+        all_settings = {
+            "aud": {"start_offset": 1,
+                    "fixing_lag": 0,
+                    "day_cnt_flt": 365,
+                    "day_roll": "modified following",
+                    "new_rate_lag": 1},
 
-        return cls(
-            start_offset=start_offset,
-            fixing_lag=fixing_lag,
-            day_cnt_flt=day_cnt_flt,
-            day_roll=day_roll,
-            maturity=maturity)
+            "cad": {"start_offset": 0,
+                    "fixing_lag": 1,
+                    "day_cnt_flt": 365,
+                    "day_roll": "modified following",
+                    "new_rate_lag": 0},
+
+            "chf": {"start_offset": 2,
+                    "fixing_lag": -1,
+                    "day_cnt_flt": 360,
+                    "day_roll": "modified following",
+                    "new_rate_lag": 0},
+
+            "eur": {"start_offset": 2,
+                    "fixing_lag": 0,
+                    "day_cnt_flt": 360,
+                    "day_roll": "modified following",
+                    "new_rate_lag": 1},
+
+            "gbp": {"start_offset": 0,
+                    "fixing_lag": 0,
+                    "day_cnt_flt": 365,
+                    "day_roll": "modified following",
+                    "new_rate_lag": 1},
+
+            "jpy": {"start_offset": 2,
+                    "fixing_lag": 1,
+                    "day_cnt_flt": 365,
+                    "day_roll": "modified following"},
+
+            "nzd": {"start_offset": 2,
+                    "fixing_lag": 0,
+                    "day_cnt_flt": 365,
+                    "day_roll": "modified following",
+                    "new_rate_lag": 0},
+
+            "sek": {"start_offset": 2,
+                    "fixing_lag": -1,
+                    "day_cnt_flt": 360,
+                    "day_roll": "modified following",
+                    "new_rate_lag": 1},
+
+            "usd": {"start_offset": 2,
+                    "fixing_lag": 1,
+                    "day_cnt_flt": 360,
+                    "day_roll": "modified following",
+                    "new_rate_lag": 1}
+        }
+
+        this_setting = all_settings[iso]
+        this_setting.update({"maturity": maturity})
+        this_setting.update({"b_day": calendars.get(iso)})
+
+        return cls(**this_setting)
 
     @classmethod
     def USD(cls, maturity):
@@ -1604,11 +1703,15 @@ class OIS():
 
 if __name__  == "__main__":
 
+    cur = "nzd"
+    ois = OIS.from_iso(cur, maturity=DateOffset(months=1))
+    # ois.quote_dt = "2011-03-13"
+
     with open(data_path + "ois_bloomberg.p", mode="rb") as hangar:
         ois_data = pickle.load(hangar)
 
-    ois_rates = ois_data["usd"]["2000-11":].loc[:,"1M"].astype(np.float)
-    on_rates = ois_data["usd"]["2000-11":].loc[:,"ON"].astype(np.float)
+    ois_rates = ois_data[cur]["2000-11":].loc[:,"1M"].astype(np.float)
+    on_rates = ois_data[cur]["2000-11":].loc[:,"ON"].astype(np.float)
 
     ois_rates, on_rates = ois_rates.loc[
         ois_rates.first_valid_index():ois_rates.last_valid_index()].align(
@@ -1627,11 +1730,11 @@ if __name__  == "__main__":
     with open(data_path + "events.p", mode="rb") as hangar:
         events_data = pickle.load(hangar)
 
-    meetings = events_data["fomc"].loc[ois_rates.index[0]:,:]
-    meetings.columns = ["rate_level", "rate_change"]
+    meetings = events_data["joint_cbs"][cur].dropna().to_frame("rate_change")
+    # meetings.columns = ["rate_level", "rate_change"]
 
     # OIS class
-    ois = OIS.USD(maturity=DateOffset(months=1))
+    # ois = OIS.USD(maturity=DateOffset(months=1))
     # ois.quote_dt = "2016-12-02"
     # ois.get_implied_rate(
     #     event_dt="2016-12-14",
@@ -1657,8 +1760,8 @@ if __name__  == "__main__":
     pe.assess_forecast_quality(
         lag=10,
         threshold=0.10,
-        avg_impl_over=1,
-        avg_refrce_over=1,
+        avg_impl_over=5,
+        avg_refrce_over=5,
         bday_reindex=True)
     pe.error_plot(avg_over=10)
 
