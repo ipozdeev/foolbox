@@ -1,5 +1,9 @@
 import pandas as pd
 from pandas.tseries.offsets import *
+from pandas.tseries.holiday import AbstractHolidayCalendar, Holiday, \
+    nearest_workday, USMartinLutherKingJr, USPresidentsDay, GoodFriday, \
+    USMemorialDay, USLaborDay, USThanksgivingDay
+
 import numpy as np
 import pickle
 
@@ -536,7 +540,9 @@ if __name__ == "__main__":
         }
 
     test_currencies = ["aud", "cad", "chf", "eur", "gbp", "nzd", "sek", "usd"]
-    test_maturity = "6M"  # corresponds to column names in ois_data dataframes
+    test_maturity = "1M"  # corresponds to column names in ois_data dataframes
+
+    diffs = dict()
     for curr in test_currencies:
         # Select the data
         test_curr = curr
@@ -566,15 +572,50 @@ if __name__ == "__main__":
         res.columns = ["fixed", "start", "end", "realized"]
 
         # Print something
-        print(curr, res.head(22))
+        # print(curr, res.head(22))
 
         # Plot fixed vs realized float
         to_plot = res[["fixed", "realized"]].dropna()
-        to_plot.plot(title=test_curr + "_" + test_maturity)
+        # to_plot.plot(title=test_curr + "_" + test_maturity)
+
+        diffs[curr] = (to_plot.fixed - to_plot.realized).astype("float")
+
     plt.show()
 
     # Test the unbiasedness
     diff = \
         (to_plot.fixed - to_plot.realized).to_frame(name="d").astype("float")
 
+    lol = pd.DataFrame.from_dict(diffs)
+    taf.descriptives(lol, 1)
+
     # print(taf.descriptives(diff, 1))
+
+def next_days_same_rate(dt, b_day=None):
+    """
+    dt : str/np.datetime64
+    """
+    if b_day is None:
+        b_day = BDay()
+
+    dt = pd.to_datetime(dt)
+
+    next_b_day = dt + b_day
+
+    res = (next_b_day - dt).days
+
+    return res
+
+class USTradingCalendar(AbstractHolidayCalendar):
+    rules = [
+        Holiday('NewYearsDay', month=1, day=1, observance=nearest_workday),
+        USMartinLutherKingJr,
+        USPresidentsDay,
+        GoodFriday,
+        USMemorialDay,
+        Holiday('USIndependenceDay', month=7, day=4,
+            observance=nearest_workday),
+        USLaborDay,
+        USThanksgivingDay,
+        Holiday('Christmas', month=12, day=25, observance=nearest_workday)
+    ]
