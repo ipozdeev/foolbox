@@ -1253,8 +1253,18 @@ class OIS():
     implied before event etc. Construction of the class is easiest
     performed through usage of `.from_iso` factory.
 
+    To each contract, there is quote date, start (=effective) date and end
+    date. Quote date is when the OIS price (=OIS rate) is negotiated and
+    reported. Start date is usually determined as T+2 and corresponds to the
+    first date when the floating rate is fixed (accrues) for the first time.
+    End date is the last date when the floating rate is fixed, and is usually
+    determined as the last trading date before T+2+maturity.
+
     Parameters
     ----------
+    b_day : pandas.tseries.offsets.DateOffset
+        business day (usually related to a calendar), e.g. BDay(); this will
+        influence all business day-related date offsets
     start_offset : int
         number of business days until the first accrual of floating rate
     fixing_lag : int
@@ -1268,15 +1278,16 @@ class OIS():
         "following", and "modified following". Currently only the latter
         two are implemented
     maturity : pandas.tseries.offsets.DateOffset
-        maturity, e.g. DateOffset(months=1)
+        maturity of the contract, e.g. DateOffset(months=1)
     day_cnt_flt : int
         360 or 365 corresponding to Act/360 and Act/365 day count
         conventions for the floating leg
     day_cnt_fix : int
         360 or 365 corresponding to Act/360 and Act/365 day count
         conventions for the fixed leg; by default equals `day_cnt_flt`
-    b_day : pandas.tseries.offsets.DateOffset
-        business day (usually related to a calendar), e.g. BDay()
+    new_rate_lag : int
+        lag with which newly announced rates (usually on monetary policy
+        meetings) become effective; this impacts calculation of implied rates
     """
     def __init__(self, start_offset, fixing_lag, day_roll, maturity,
         day_cnt_flt, new_rate_lag, day_cnt_fix=None, b_day=None):
@@ -1312,11 +1323,11 @@ class OIS():
 
     @start_dt.setter
     def start_dt(self, value):
-        """Set start_dt.
+        """Set start date `start_dt`.
 
         Sets start date to the provided value, then calculates end date by
         adding maturity to start date, then creates a sequence of business
-        days from start to end dates, then for each of these days calcualtes
+        days from start to end dates, then for each of these days calculates
         the number of subsequent days over which the rate will stay the same,
         finally, calculates the lifetime of OIS.
 
@@ -1386,7 +1397,7 @@ class OIS():
         ----------
         dt : np.datetime64
             date to offset
-        day_roll : str
+        convention : str
             specifying date rolling convention if the end date of the contract
             is not a business day. Typical conventions are: "previous",
             "following", and "modified following". Currently only the latter
@@ -1430,14 +1441,25 @@ class OIS():
     def get_return_of_floating(self, on_rate, dt_since=None, dt_until=None):
         """Calculate return on the floating leg.
 
-        Using the rule to multiply rates
+        The payoff of the floating leg is determined as the cumproduct of the
+        underlying rate. For days followed by K non-business days, the rate on
+        that day is multiplied by (K+1): for example, the 0.35% p.a. rate on
+        Friday will contribute (1+0.35/100/365*3) to the floating leg payoff.
+
         Parameters
         ----------
         on_rate : float/pandas.Series
-            overnight rate (in which case will be broadcasted) or series
-            thereof, in percent p.a.
+            overnight rate (in which case will be broadcasted over the
+            calcualtion period) or series thereof, in percent p.a.
+        dt_since : str/date
+            date to use instead of `self.start_dt` because... reasons!
         dt_until : str/date
             date to use instead of `self.end_dt` because... reasons!
+
+        Returns
+        -------
+        res : float
+            cumulative payoff, in frac of 1, not annualized
         """
         if np.isnan(on_rate):
             return np.nan
@@ -1447,17 +1469,20 @@ class OIS():
         if dt_since is None:
             dt_since = self.start_dt
 
+        # three possible data types for on_rate: float, NDFrame and anythg else
         # if float, convert to pd.Series
         if isinstance(on_rate, (np.floating, float)):
             on_rate_series = pd.Series(on_rate, index=self.calculation_period)
         elif isinstance(on_rate, pd.core.generic.NDFrame):
-            # publication or t/n lag
+            # for the series case, need to shift by the fixing lag
             on_rate_series = on_rate.copy().shift(self.fixing_lag)
         else:
             return np.nan
 
-        # Append returns, if the end date has already happened
-        if dt_until > on_rate_series.last_valid_index():
+        # return nan if the end date has already happened
+        if dt_until not in on_rate_series.index:
+            return np.nan
+        if dt_since not in on_rate_series.index:
             return np.nan
 
         # Reindex to calendar day, carrying rates forward over non b-days
@@ -1524,7 +1549,16 @@ class OIS():
         return res
 
     def get_implied_rate(self, event_dt, swap_rate, rate_until):
-        """
+        """Calculate the rate expected to prevail after `event_dt`.
+
+        First, given `rate_until`, calculates the more or less sure part of
+        the total floating leg payoff that will have accrued until the new
+        rate enters the floating leg for the first time
+        (at `event_dt`+`self.fixing_lag`+`self.new_rate_lag`). Then, divides
+        the sure payoff of the fixed leg through this to arrive at the
+        expected floating leg payoff that will have accrued after the new rate
+        is in place.
+
         Parameters
         ----------
         event_dt : str/numpy.datetime64
@@ -1567,16 +1601,31 @@ class OIS():
         return res
 
     def get_rates_until(self, on_rate, meetings, method="average"):
-        """
+        """Calculate rates to be considered as prevailing until next meeting.
+
+        Parameters
+        ----------
+        on_rate : pandas.Series
+            of underlying rates
+        meetings : pandas.Series/pandas.DataFrame
+            of meetings; only index matters, values can be whatever
+        method : str
+            "average" to calcualte the prevailing rate as geometric avg since
+            the last meeting;
+
+        Returns
+        -------
+        res : float
+            rate, in percent p.a.
         """
         on_rate = on_rate.copy() / 100
 
-        # if not specified, take the fixing rate at `self.quote_dt`
+        # with this method, take the fixing rate at `self.quote_dt`
         if method == "last":
             res = on_rate.shift(self.fixing_lag)
+
         elif method == "average":
             # expanding geometric average starting from events
-            # ipdb.set_trace()
             res = on_rate * np.nan
             for t in list(meetings.index)[::-1] + list(on_rate.index[[0]]):
                 to_fill_with = np.exp(
@@ -1586,7 +1635,18 @@ class OIS():
 
             res -= 1.0
 
+        else:
+            raise ValueError(
+                "Method not implemented: choose 'average' or 'last'")
+
         res *= 100
+
+        return res
+
+    def annualize(self, value, relates_to_float=True):
+        """Annualize and multiply by 100."""
+        res = value * \
+            (self.day_cnt_flt if relates_to_float else self.day_cnt_fix) * 100
 
         return res
 
