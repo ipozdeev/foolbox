@@ -138,18 +138,8 @@ def fig_event_study(events, ret, direction,
     ax_avg.legend(lines, labels, fontsize=12, loc="upper right")
 
     # y-label
-    ax_individ.yaxis.set_ylabel("return, in percent")
-    ax_avg.yaxis.set_ylabel("return, in percent")
-
-    fig_individ.tight_layout()
-    fig_avg.tight_layout()
-
-    fig_individ.savefig(
-        out_path+"xxxusd_before_"+direction+"_weighted_indiv.pdf",
-        bbox_inches="tight")
-    fig_avg.savefig(
-        out_path+"xxxusd_before_"+direction+"_weighted_avg.pdf",
-        bbox_inches="tight")
+    ax_individ.set_ylabel("cumulative return, in percent")
+    ax_avg.set_ylabel("cumulative return, in percent")
 
     return fig_individ, fig_avg
 
@@ -162,7 +152,7 @@ def furbish_plot(ax, set_xlabel=False, arrows=False, tot_curs=None):
     xlim = ax.get_xlim()
     ylim = ax.get_ylim()
     dylim = ylim[1]-ylim[0]
-    ax.set_xlim((xlim[0]-1.5, xlim[1]+1.5))
+    ax.set_xlim((xlim[0]-1.75, xlim[1]+1.75))
 
     # arrow, text -----------------------------------------------------------
     if arrows:
@@ -172,9 +162,18 @@ def furbish_plot(ax, set_xlabel=False, arrows=False, tot_curs=None):
             head_length=0.2,
             linewidth=2,
             fc='k', ec='k')
+        # ax.arrow(x=-1, y=ylim[0]+0.1, dx=-3.3, dy=0,
+        #     length_includes_head=True,
+        #     head_width=dylim/30,
+        #     head_length=0.2,
+        #     linewidth=2,
+        #     fc='k', ec='k')
         ax.text(-1, ylim[1]*0.75, r"hold from x to -1",
             verticalalignment="bottom", horizontalalignment="right",
             fontsize=12)
+        # ax.text(-1, ylim[0]+0.15, r"hold from x to -1",
+        #     verticalalignment="bottom", horizontalalignment="right",
+        #     fontsize=12)
 
         ax.arrow(x=1, y=ylim[1]*0.7, dx=2.3, dy=0,
             length_includes_head=True,
@@ -182,9 +181,18 @@ def furbish_plot(ax, set_xlabel=False, arrows=False, tot_curs=None):
             head_length=0.2,
             linewidth=2,
             fc='k', ec='k')
+        # ax.arrow(x=1, y=ylim[0]+0.1, dx=2.3, dy=0,
+        #     length_includes_head=True,
+        #     head_width=dylim/30,
+        #     head_length=0.2,
+        #     linewidth=2,
+        #     fc='k', ec='k')
         ax.text(1, ylim[1]*0.75, r"hold from 1 to x",
-        verticalalignment="bottom", horizontalalignment="left",
-        fontsize=12)
+            verticalalignment="bottom", horizontalalignment="left",
+            fontsize=12)
+        # ax.text(1, ylim[0]+0.15, r"hold from 1 to x",
+        #     verticalalignment="bottom", horizontalalignment="left",
+        #     fontsize=12)
 
     # zero line -------------------------------------------------------------
     # ax.xaxis.set_ticks(cumsums.dropna().index)
@@ -206,13 +214,27 @@ def furbish_plot(ax, set_xlabel=False, arrows=False, tot_curs=None):
     ax.set_ylim(ylim)
     if tot_curs is not None:
         # ax = f_i.axes[0]
-        for c, p in tot_curs["a"].iteritems():
-            ax.annotate(c, xy=(-10.1, p),
-                horizontalalignment='right', fontsize=12)
-        for c, p in tot_curs["d"].iteritems():
-            ax.annotate(c, xy=(5.1, p),
-                horizontalalignment='left', fontsize=12)
+        # sort in descending order
+        tot_curs["a"] = tot_curs["a"].sort_values(ascending=False)
+        tot_curs["d"] = tot_curs["d"].sort_values(ascending=False)
 
+        cnt = 0
+        for c, p in tot_curs["a"].iteritems():
+            this_x_pos = -10.1 - 0.6*(cnt % 2)
+            ax.annotate(c, xy=(this_x_pos, p),
+                horizontalalignment='right',
+                verticalalignment='center',
+                fontsize=12)
+            cnt += 1
+
+        cnt = 0
+        for c, p in tot_curs["d"].iteritems():
+            this_x_pos = 5.1 + 0.6*(cnt % 2)
+            ax.annotate(c, xy=(this_x_pos, p),
+                horizontalalignment='left',
+                verticalalignment='center',
+                fontsize=12)
+            cnt += 1
 
     return
 
@@ -253,16 +275,27 @@ if __name__ == "__main__":
     events_perf = events["joint_cbs"].drop(drop_curs, axis=1, errors="ignore")
     events_perf = events_perf.loc[s_dt:e_dt]
 
-    # events: forecast ------------------------------------------------------
-    events_fcast = events_perf.drop(["nok",], axis=1)*np.nan
-    for cur in events_fcast.columns:
-        # cur = "sek"
-        pe = PolicyExpectation.from_pickles(data_path, cur)
-        events_fcast.loc[:,cur] = pe.forecast_policy_change(
-            lag=lag,
-            threshold=settings["base_threshold"],
-            avg_impl_over=settings["avg_impl_over"],
-            avg_refrce_over=settings["avg_refrce_over"])
+    # # events: forecast ------------------------------------------------------
+    # events_fcast = events_perf.drop(["nok",], axis=1)*np.nan
+    # for cur in events_fcast.columns:
+    #     # cur = "sek"
+    #     pe = PolicyExpectation.from_pickles(data_path, cur)
+    #     events_fcast.loc[:,cur] = pe.forecast_policy_change(
+    #         lag=lag,
+    #         threshold=settings["base_threshold"],
+    #         avg_impl_over=settings["avg_impl_over"],
+    #         avg_refrce_over=settings["avg_refrce_over"])
+
+    # fomc ------------------------------------------------------------------
+    with open(data_path + "fx_by_tz_sp_fixed.p", mode='rb') as fname:
+        fx_all = pickle.load(fname)
+    ret_fomc = np.log(fx_all["spot_mid"].loc[:,:,"NYC"]\
+        .drop(drop_curs,axis=1,errors="ignore")).diff()
+
+    fomc = events["joint_cbs"].loc[:,"usd"]
+    fomc = pd.concat([fomc,]*events_perf.shape[1], axis=1)
+    fomc.columns = events_perf.columns
+    fomc = fomc.loc[s_dt:e_dt]
 
     # event study -----------------------------------------------------------
     f_i, f_a = fig_event_study(events_perf, ret,
@@ -271,6 +304,23 @@ if __name__ == "__main__":
         ci_width=0.95,
         window=window)
 
+    # fomc ------------------------------------------------------------------
+    f_i, f_a = fig_event_study(fomc, ret_fomc,
+        direction=direction,
+        wght="by_event",
+        ci_width=0.95,
+        window=window)
+
+    # save ------------------------------------------------------------------
+    f_i.tight_layout()
+    f_a.tight_layout()
+
+    f_i.savefig(
+        out_path+"xxxusd_before_"+direction+"_weighted_indiv.pdf",
+        bbox_inches="tight")
+    f_a.savefig(
+        out_path+"xxxusd_before_"+direction+"_weighted_avg.pdf",
+        bbox_inches="tight")
 
 
 
