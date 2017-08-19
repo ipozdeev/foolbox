@@ -14,7 +14,7 @@ import pickle
 from foolbox.portfolio_construction import multiple_timing
 from foolbox.api import *
 from scipy.optimize import fsolve
-import ipdb
+# import ipdb
 
 my_red = "#ce3300"
 my_blue = "#2f649e"
@@ -728,7 +728,7 @@ class PolicyExpectation():
 
     @classmethod
     def from_pickles(cls, data_path, currency, s_dt="1990",
-        impl_rates_pickle="implied_rates"):
+        impl_rates_pickle="implied_rates.p"):
         """
         Parameters
         ----------
@@ -1676,6 +1676,14 @@ class OIS():
         # calendars
         calendars = {
             "usd": CustomBusinessDay(calendar=USTradingCalendar()),
+            "aud": CustomBusinessDay(calendar=USTradingCalendar()),
+            "cad": CustomBusinessDay(calendar=USTradingCalendar()),
+            "chf": CustomBusinessDay(calendar=USTradingCalendar()),
+            "eur": CustomBusinessDay(calendar=USTradingCalendar()),
+            "gbp": CustomBusinessDay(calendar=USTradingCalendar()),
+            "jpy": CustomBusinessDay(calendar=USTradingCalendar()),
+            "nzd": CustomBusinessDay(calendar=USTradingCalendar()),
+            "sek": CustomBusinessDay(calendar=USTradingCalendar())
         }
 
         all_settings = {
@@ -1739,94 +1747,116 @@ class OIS():
 
         return cls(**this_setting)
 
-    @classmethod
-    def USD(cls, maturity):
-        """Return OIS class instance with euro specifications.
-        """
-        us_b_day = CustomBusinessDay(calendar=USTradingCalendar())
-
-        start_offset = 2
-        fixing_lag = 1
-        day_cnt_flt = 360
-        day_roll = "modified following"
-        new_rate_lag = 1
-
-        return cls(
-            start_offset=start_offset,
-            fixing_lag=fixing_lag,
-            day_cnt_flt=day_cnt_flt,
-            new_rate_lag = new_rate_lag,
-            day_roll=day_roll,
-            b_day=us_b_day,
-            maturity=maturity)
-
 
 if __name__  == "__main__":
 
-    cur = "nzd"
-    ois = OIS.from_iso(cur, maturity=DateOffset(months=1))
-    # ois.quote_dt = "2011-03-13"
-
+    # ois data
     with open(data_path + "ois_bloomberg.p", mode="rb") as hangar:
         ois_data = pickle.load(hangar)
-
-    ois_rates = ois_data[cur]["2000-11":].loc[:,"1M"].astype(np.float)
-    on_rates = ois_data[cur]["2000-11":].loc[:,"ON"].astype(np.float)
-
-    ois_rates, on_rates = ois_rates.loc[
-        ois_rates.first_valid_index():ois_rates.last_valid_index()].align(
-            on_rates, axis=0, join="left")
-
-    # ois.calculation_period
-
-    # (ois_rates.isnull() | on_rates.isnull())\
-    #     .where(ois_rates.isnull() | on_rates.isnull()).dropna()
-    # on_rates.isnull().where(on_rates.isnull()).dropna()
-    #
-    # on_rates.shape
-    # ois_rates.shape
-
     # events
     with open(data_path + "events.p", mode="rb") as hangar:
         events_data = pickle.load(hangar)
+    events_lvl = events_data["joint_cbs_lvl"]
+    events_chg = events_data["joint_cbs"]
 
-    meetings = events_data["joint_cbs"][cur].dropna().to_frame("rate_change")
-    # meetings.columns = ["rate_level", "rate_change"]
+    # space for implied rates
+    implied_rates = dict()
 
-    # OIS class
-    # ois = OIS.USD(maturity=DateOffset(months=1))
-    # ois.quote_dt = "2016-12-02"
-    # ois.get_implied_rate(
-    #     event_dt="2016-12-14",
-    #     swap_rate=ois_rates.loc["2016-12-02"],
-    #     rate_until=on_rates.loc["2016-12-01"])
+    for c in ois_data.keys():
+        # c = "gbp"
+        print(c)
 
-    rates_until = ois.get_rates_until(on_rates, meetings, method="average")
+        # OIS
+        ois = OIS.from_iso(c, maturity=DateOffset(months=1))
 
-    pe = PolicyExpectation.from_ois_new(ois=ois,
-        meetings=meetings,
-        ois_rates=ois_rates,
-        on_rates=on_rates)
+        # this event, to frame + rename
+        this_evt = pd.concat((events_lvl[c], events_chg[c]), axis=1)
+        this_evt = this_evt.dropna()
+        this_evt.columns = ["rate_level", "rate_change"]
 
-    pe.rate_expectation.plot()
+        # this ois
+        this_ois = ois_data[c].loc[:,"1M"].astype(np.float)
 
-    on_rates.loc["2001-01"]
+        # this overnight
+        this_on = ois_data[c].loc[:,"ON"].astype(np.float)
 
-    meetings["rate_change"].where(meetings["rate_change"] < 0).dropna()
-    (meetings["rate_change"] < 0).loc[pe.rate_expectation.index].sum()
+        # align
+        this_ois, this_on = this_ois.loc[
+            this_ois.first_valid_index():this_ois.last_valid_index()].align(
+                this_on, axis=0, join="left")
 
-    pe.rate_expectation.shift(10).where(meetings["rate_change"] < 0).dropna()
+        # rates expected to prevale before meetings
+        rates_until = ois.get_rates_until(this_on, this_evt,
+            method="average")
 
-    pe.assess_forecast_quality(
-        lag=10,
-        threshold=0.10,
-        avg_impl_over=5,
-        avg_refrce_over=5,
-        bday_reindex=True)
-    pe.error_plot(avg_over=10)
+        pe = PolicyExpectation.from_ois_new(ois=ois,
+            meetings=this_evt,
+            ois_rates=this_ois,
+            on_rates=this_on)
 
-    ois_eur.get_implied_rate(on_rate=on_rates, event_dt=event_dt,
-        swap_rate=test_data.loc[ois_eur.quote_dt])
+        # store
+        this_ir = pe.rate_expectation.copy()
+        this_ir.name = c
+        implied_rates[c] = pe.rate_expectation
+
+    implied_rates = pd.DataFrame.from_dict(implied_rates)
+
+    with open(data_path + "implied_rates_bloomberg_1m.p", mode="wb") as hangar:
+        pickle.dump(implied_rates, hangar)
+
+    # with open(data_path + "implied_rates_bloomberg_1m.p", mode="rb") as hangar:
+    #     lol = pickle.load(hangar)
+    #
+    # fig, ax = plt.subplots()
+    # lol.usd.plot(ax=ax, color='r')
+    # ois_data["usd"].loc[:,"ON"].plot(ax=ax, color='b')
+
+    # cur = "usd"
+    # ois = OIS.from_iso(cur, maturity=DateOffset(weeks=1))
+    #
+    # with open(data_path + "ois_bloomberg.p", mode="rb") as hangar:
+    #     ois_data = pickle.load(hangar)
+    #
+    # ois_rates = ois_data[cur]["2000-11":].loc[:,"1W"].astype(np.float)
+    # on_rates = ois_data[cur]["2000-11":].loc[:,"ON"].astype(np.float)
+    #
+    # ois_rates, on_rates = ois_rates.loc[
+    #     ois_rates.first_valid_index():ois_rates.last_valid_index()].align(
+    #         on_rates, axis=0, join="left")
+    #
+    # # events
+    # with open(data_path + "events.p", mode="rb") as hangar:
+    #     events_data = pickle.load(hangar)
+    #
+    # meetings = events_data["joint_cbs"][cur].dropna().to_frame("rate_change")
+    #
+    # rates_until = ois.get_rates_until(on_rates, meetings, method="average")
+    #
+    # pe = PolicyExpectation.from_ois_new(ois=ois,
+    #     meetings=meetings,
+    #     ois_rates=ois_rates,
+    #     on_rates=on_rates)
+    #
+    # pe.rate_expectation.plot()
+    #
+    # on_rates.loc["2001-01"]
+    #
+    # meetings["rate_change"].where(meetings["rate_change"] < 0).dropna()
+    # (meetings["rate_change"] < 0).loc[pe.rate_expectation.index].sum()
+    #
+    # pe.rate_expectation.shift(10).where(meetings["rate_change"] < 0).dropna()
+    #
+    # pe.rate_expectation.shape
+    # pe.assess_forecast_quality(
+    #     lag=10,
+    #     threshold=0.10,
+    #     avg_impl_over=5,
+    #     avg_refrce_over=5,
+    #     bday_reindex=True)
+    # pe.error_plot(avg_over=3)
+    #
+    # ois_eur.get_implied_rate(on_rate=on_rates, event_dt=event_dt,
+    #     swap_rate=test_data.loc[ois_eur.quote_dt])
 
     # from foolbox.data_mgmt import set_credentials
     #
