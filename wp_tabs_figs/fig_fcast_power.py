@@ -39,7 +39,8 @@ def fig_error_plots(settings):
 
         # policy expectation
         pe = PolicyExpectation.from_pickles(data_path, cur,
-            settings["sample_start"])
+            settings["sample_start"],
+            impl_rates_pickle="implied_rates_from_1m.p")
 
         plot_one((this_ax_rho, this_ax_cmx), pe, settings)
 
@@ -51,7 +52,8 @@ def fig_error_plots(settings):
 
     # add fed funds futures -------------------------------------------------
     pe = PolicyExpectation.from_pickles(data_path, "usd",
-        pe.rate_expectation.first_valid_index(), use_ffut=True)
+        pe.rate_expectation.first_valid_index(),
+        impl_rates_pickle="implied_rates_ffut.p")
     # select panel of array
     this_ax_rho = ax_rho.flatten()[cnt]
     this_ax_cmx = ax_cmx.flatten()[cnt]
@@ -147,7 +149,23 @@ if __name__ == "__main__":
         ".pdf", bbox_inches="tight")
 
 
+with open(data_path + "implied_rates.p", mode='rb') as hangar:
+    old = pickle.load(hangar)
+with open(data_path + "implied_rates_bloomberg_1m.p", mode='rb') as hangar:
+    new = pickle.load(hangar)
 
+ir = pd.concat((old.sek, new.sek), axis=1)
+
+
+sek_pe_old = pe.from_pickles(data_path, "sek",
+    impl_rates_pickle="implied_rates.p")
+sek_pe_new = pe.from_pickles(data_path, "sek",
+    impl_rates_pickle="implied_rates_bloomberg_1m.p")
+
+ir = pd.concat((sek_pe_old.rate_expectation, sek_pe_new.rate_expectation),
+    axis=1)
+
+ir.dropna(how="all").to_clipboard()
 
 # s_dt = settings["sample_start"]
 # e_dt = settings["sample_end"]
