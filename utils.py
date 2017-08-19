@@ -340,10 +340,12 @@ def parse_bloomberg_excel(filename, colnames_sheet, data_sheets):
     all_data = dict()
 
     for s in data_sheets:
+        # s = "sek"
         data_df = data_dict[s]
         # loop over triplets, map dates, extract
         new_data_df = []
         for p in range((data_df.shape[1]+1)//3):
+            # p = 0
             # this triplet
             this_piece = data_df.iloc[1:,p*3:(p+1)*3-1]
             # map date
@@ -352,14 +354,15 @@ def parse_bloomberg_excel(filename, colnames_sheet, data_sheets):
             this_piece = this_piece.set_index(this_piece.columns[0])
             # rename
             this_piece.columns = [colnames[p]]
+            this_piece.index.name = "date"
             # store
-            new_data_df += [this_piece.dropna()]
+            new_data_df += [this_piece.dropna(),]
 
         # concat
         all_data[s] = pd.concat(new_data_df, axis=1, join="outer")
 
     return all_data
-
+    
 
 def compute_floating_leg_return(trade_dates, returns, maturity, settings):
     """
