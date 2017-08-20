@@ -332,6 +332,8 @@ joint_events = list()
 joint_events_lvl = list()
 # Loop over the data, dropping comment columns, and unscheduled meetings
 for cb, data in cb_data.items():
+    if cb == "resources":
+        continue
     data = data.drop(["comments"], axis=1)      # drop comments
     data = data[data.scheduled]                 # drop unscheduled meetings
     data = data.drop(["scheduled"], axis=1)     # drop the redundant variable
@@ -342,9 +344,9 @@ for cb, data in cb_data.items():
         data = data.drop(data[chf_eur_peg_start:chf_eur_peg_end].index, axis=0)
 
     # Save changes separately for joint events
-    change = data.change
+    change = data.change.astype(float).round(4)
     change.name = cb
-    rate = data.rate
+    rate = data.rate.astype(float).round(4)
     rate.name = cb
 
     # Append the outputs
