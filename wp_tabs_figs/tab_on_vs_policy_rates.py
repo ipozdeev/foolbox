@@ -2,12 +2,14 @@ import pandas as pd
 from matplotlib.ticker import FixedLocator
 from matplotlib import lines as mlines, patches as mpatches
 import seaborn as sns
+plt.rcParams["axes.edgecolor"] = new_gray
+plt.rcParams["axes.linewidth"]  = 2.0
 
 from foolbox.api import *
 from foolbox.RegressionModel import light_ols
 from foolbox.wp_tabs_figs.wp_settings import *
 
-def fig_implied_rates_unbiasedness(tgt_rate_diff, on_rate_diff):
+def fig_implied_rates_unbiasedness(tgt_rate_diff, on_rate_diff, ols_eq=False):
     """
     """
     # rename, just in case
@@ -21,7 +23,7 @@ def fig_implied_rates_unbiasedness(tgt_rate_diff, on_rate_diff):
     unq_tgt_change = sorted(data_to_boxplot["tgt"].unique())
 
     # start figure
-    fig, ax = plt.subplots()
+    fig, ax = plt.subplots(figsize=(8.27,8.27))
 
     # boxplots --------------------------------------------------------------
     bp = sns.boxplot(data=data_to_boxplot, x="tgt", y="on",
@@ -72,12 +74,32 @@ def fig_implied_rates_unbiasedness(tgt_rate_diff, on_rate_diff):
         label=r"($\alpha=0$, $\beta=1$) points")
     gray_patch = mpatches.Patch(color=new_gray, label="number of cases")
 
-    ax.legend(handles=[solid_line, gray_patch], loc='upper right',
-        bbox_to_anchor=(0.35, 0.9), fontsize=12)
+    lg = ax.legend(handles=[solid_line, gray_patch], loc='upper right',
+        bbox_to_anchor=(0.375, 0.95), fontsize=12, frameon=True)
+    lg.get_frame().set_facecolor('w')
+    lg.get_frame().set_alpha(1.0)
 
-    return fig
+    if ols_eq:
+        this_b, _, _ = light_ols(y, x, add_constant=True, ts=True)
+
+        tex_message = \
+            r"$\widehat{{\Delta i}} = {:3.2f} + {:3.2f} \Delta r_{{tgt}}$"
+
+        ax.annotate(tex_message.format(*this_b, tgt="tgt"),
+            xy=(0.175, 0.7),
+            horizontalalignment='center',
+            verticalalignment='center',
+            bbox=dict(facecolor='w', alpha=1.0, edgecolor='w'),
+            xycoords='axes fraction',
+            fontsize=12)
+
+    ax.set_title(c.upper())
+
+    return fig, ax
 
 if __name__ == "__main__":
+
+    out_path = set_credentials.set_path("ois_project/figs/")
 
     # data ------------------------------------------------------------------
     # overnight rates
@@ -93,6 +115,7 @@ if __name__ == "__main__":
         events_data = pickle.load(hangar)
 
     tgt_rate_changes = events_data["joint_cbs"].astype(float)
+    tgt_rate_changes = tgt_rate_changes.drop("nok", axis=1)
 
     # # lag settings
     # all_settings = {
@@ -111,7 +134,7 @@ if __name__ == "__main__":
     se = dict()
 
     for c in tgt_rate_changes.columns:
-        # c = "usd"
+        # c = "eur"
         this_ois = OIS.from_iso(c, DateOffset(months=1))
 
         this_tgt_rate_change = tgt_rate_changes.loc[:, c].dropna()
@@ -123,11 +146,24 @@ if __name__ == "__main__":
             this_on_rate_avg.shift(-10).loc[this_tgt_rate_change.index] -
             this_on_rate_avg.shift(5).loc[this_tgt_rate_change.index])
 
+        fig, ax = fig_implied_rates_unbiasedness(this_tgt_rate_change,
+            this_on_rate_diff, ols_eq=True)
+
+        fig.tight_layout()
+        fig.savefig(out_path + "unbias_" + c + ".png",
+            dpi=120)
+
         # regression
         y0 = this_on_rate_diff.rename("on")
         x0 = this_tgt_rate_change.rename("tgt")
 
         this_b, _, this_se = light_ols(y0, x0, add_constant=True, ts=True)
-
         coef[c] = this_b
         se[c] = this_se
+
+    coef = pd.DataFrame.from_dict(coef)
+    coef.index = ["alpha", "beta"]
+    se = pd.DataFrame.from_dict(se)
+    se.index = ["alpha", "beta"]
+
+    this_tgt_rate_change.unique()
