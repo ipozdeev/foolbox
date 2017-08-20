@@ -165,5 +165,3 @@ if __name__ == "__main__":
     coef.index = ["alpha", "beta"]
     se = pd.DataFrame.from_dict(se)
     se.index = ["alpha", "beta"]
-
-    this_tgt_rate_change.unique()
