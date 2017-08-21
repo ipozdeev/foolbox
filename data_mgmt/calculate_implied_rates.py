@@ -68,10 +68,8 @@ if __name__ == "__main__":
 
     events_data = events_data["joint_cbs"]
 
-    calculate_implied_rates(ois_data, on_data, events_data)
-
-    with open(data_path + "implied_rates_from_1m.p", mode="rb") as hangar:
-        implied_rates = pickle.load(hangar)
+    calculate_implied_rates(ois_data.drop(["jpy", "dkk"], axis=1), on_data,
+        events_data)
 
 
 # # data --------------------------------------------------------------------
