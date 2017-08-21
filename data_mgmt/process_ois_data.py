@@ -53,8 +53,14 @@ def fetch_bloomberg_ois_data(data_path=None):
     with open(data_path + pickle_name, mode="wb") as fname:
         pickle.dump(ois_data, fname)
 
-def merge_ois_data(datastream_pkl=None, bloomberg_pkl=None, maturity='1M'):
+def merge_ois_data(datastream_pkl=None, bloomberg_pkl=None, maturity='1M',
+    priority="itb"):
     """
+    Parameters
+    ----------
+    priority : str
+        of 3 letter: 'i' for ICAP, 't' for Thomson Reuters and 'b' for Bloomi;
+        the order that the letters obey determines the priority
     """
     if datastream_pkl is None:
         data_path = set_credentials.set_path("research_data/fx_and_events/")
@@ -77,16 +83,22 @@ def merge_ois_data(datastream_pkl=None, bloomberg_pkl=None, maturity='1M'):
         [p.loc[:,maturity].to_frame(c) for c, p in ois_bloomberg.items()],
         axis=1)
 
-    # reindex bloomberg data (thsi is given highest priority) to be able to
-    #   fillna
-    new_data = ois_bl.reindex(
-        index=ois_bl.index.union(ois_ds_icap.index.union(ois_ds_tr.index)))
+    # collect into dictionary to be able to prioritize
+    all_three = {
+        'i': ois_ds_icap,
+        't': ois_ds_tr,
+        'b': ois_bl}
 
-    # fill with icap data
-    new_data.fillna(ois_ds_icap, inplace=True)
+    # reindex data (according to what is given highest priority)
+    priority = list(priority)
 
-    # fill with thomson reuters data
-    new_data.fillna(ois_ds_tr, inplace=True)
+    new_idx = ois_bl.index.union(ois_ds_icap.index.union(ois_ds_tr.index))
+    new_col = \
+        ois_bl.columns.union(ois_ds_icap.columns.union(ois_ds_tr.columns))
+
+    new_data = all_three[priority[0]].reindex(index=new_idx, columns=new_col)\
+            .fillna(all_three[priority[1]])\
+            .fillna(all_three[priority[2]])
 
     # dropna
     new_data.dropna(how="all", inplace=True)
@@ -100,4 +112,4 @@ def merge_ois_data(datastream_pkl=None, bloomberg_pkl=None, maturity='1M'):
 
 if __name__ == "__main__":
     fetch_bloomberg_ois_data(data_path=data_path)
-    merge_ois_data()
+    merge_ois_data(priority="bit")
