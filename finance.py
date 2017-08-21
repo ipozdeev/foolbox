@@ -1676,14 +1676,14 @@ class OIS():
         # calendars
         calendars = {
             "usd": CustomBusinessDay(calendar=USTradingCalendar()),
-            "aud": CustomBusinessDay(calendar=USTradingCalendar()),
+            "aud": BDay(),
             "cad": CustomBusinessDay(calendar=USTradingCalendar()),
-            "chf": CustomBusinessDay(calendar=USTradingCalendar()),
-            "eur": CustomBusinessDay(calendar=USTradingCalendar()),
-            "gbp": CustomBusinessDay(calendar=USTradingCalendar()),
-            "jpy": CustomBusinessDay(calendar=USTradingCalendar()),
-            "nzd": CustomBusinessDay(calendar=USTradingCalendar()),
-            "sek": CustomBusinessDay(calendar=USTradingCalendar())
+            "chf": BDay(),
+            "eur": BDay(),
+            "gbp": BDay(),
+            "jpy": BDay(),
+            "nzd": BDay(),
+            "sek": BDay()
         }
 
         all_settings = {
