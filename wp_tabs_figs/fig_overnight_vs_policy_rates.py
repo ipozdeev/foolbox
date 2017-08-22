@@ -2,6 +2,7 @@ import pandas as pd
 from matplotlib.ticker import FixedLocator
 from matplotlib import lines as mlines, patches as mpatches
 import seaborn as sns
+from foolbox.wp_tabs_figs.wp_settings import *
 plt.rcParams["axes.edgecolor"] = new_gray
 plt.rcParams["axes.linewidth"]  = 2.0
 
@@ -26,14 +27,14 @@ def fig_implied_rates_unbiasedness(tgt_rate_diff, on_rate_diff, ols_eq=False):
     fig, ax = plt.subplots(figsize=(8.27,8.27))
 
     # boxplots --------------------------------------------------------------
-    bp = sns.boxplot(data=data_to_boxplot, x="tgt", y="on",
-        color=new_blue, saturation=.9, fliersize=4, ax=ax)
+    bp = sns.boxplot(data=data_to_boxplot, x="tgt", y="on", linewidth=1.5,
+        color=new_blue, saturation=.9, fliersize=3, width=0.4, ax=ax)
 
     # plot bisector-like points ---------------------------------------------
     # (45 degree line showing unbiasedness)
     for p in range(len(unq_tgt_change)):
-        ax.scatter(p, unq_tgt_change[p], marker='o',
-            color=new_red, edgecolor='k', s=90)
+        ax.scatter(p, unq_tgt_change[p], marker='D',
+            color=new_red, edgecolor='k', s=65)
 
     # number of cases -------------------------------------------------------
     # in a gray box below
@@ -42,7 +43,7 @@ def fig_implied_rates_unbiasedness(tgt_rate_diff, on_rate_diff, ols_eq=False):
 
     cnt = 0
     for p, q in data_to_boxplot.groupby("tgt"):
-        ax.annotate(str(q.on.count()), xy=(cnt, ylim[0]),
+        ax.annotate(str(q.on.count()), xy=(cnt, ylim[0] + np.diff(ylim)[0]/25),
             fontsize=12, bbox=dict(facecolor=new_gray, edgecolor='k'),
             horizontalalignment='center', verticalalignment='center')
         cnt += 1
@@ -70,7 +71,7 @@ def fig_implied_rates_unbiasedness(tgt_rate_diff, on_rate_diff, ols_eq=False):
 
     # legend
     solid_line = mlines.Line2D([], [], color=new_red, linestyle="none",
-        marker='o', markersize=10,
+        marker='D', markersize=8,
         label=r"($\alpha=0$, $\beta=1$) points")
     gray_patch = mpatches.Patch(color=new_gray, label="number of cases")
 
@@ -134,7 +135,7 @@ if __name__ == "__main__":
     se = dict()
 
     for c in tgt_rate_changes.columns:
-        # c = "eur"
+        # c = "usd"
         this_ois = OIS.from_iso(c, DateOffset(months=1))
 
         this_tgt_rate_change = tgt_rate_changes.loc[:, c].dropna()
@@ -146,8 +147,10 @@ if __name__ == "__main__":
             this_on_rate_avg.shift(-10).loc[this_tgt_rate_change.index] -
             this_on_rate_avg.shift(5).loc[this_tgt_rate_change.index])
 
-        fig, ax = fig_implied_rates_unbiasedness(this_tgt_rate_change,
-            this_on_rate_diff, ols_eq=True)
+        fig, ax = fig_implied_rates_unbiasedness(
+            tgt_rate_diff=this_tgt_rate_change,
+            on_rate_diff=this_on_rate_diff,
+            ols_eq=True)
 
         fig.tight_layout()
         fig.savefig(out_path + "unbias_" + c + ".png",
@@ -161,7 +164,7 @@ if __name__ == "__main__":
         coef[c] = this_b
         se[c] = this_se
 
-    coef = pd.DataFrame.from_dict(coef)
-    coef.index = ["alpha", "beta"]
-    se = pd.DataFrame.from_dict(se)
-    se.index = ["alpha", "beta"]
+    # coef = pd.DataFrame.from_dict(coef)
+    # coef.index = ["alpha", "beta"]
+    # se = pd.DataFrame.from_dict(se)
+    # se.index = ["alpha", "beta"]
