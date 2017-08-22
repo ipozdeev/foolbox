@@ -1,19 +1,21 @@
 import pandas as pd
 import numpy as np
 import itertools as itools
+from sklearn.metrics import confusion_matrix
 from pandas.tseries.offsets import DateOffset, MonthBegin, MonthEnd, \
     relativedelta, BDay
-from sklearn.metrics import confusion_matrix
-import matplotlib.pyplot as plt
-from foolbox.utils import *
-# from foolbox.trading import EventTradingStrategy
-import itertools
-
-from matplotlib.ticker import MultipleLocator
 import pickle
+
+import matplotlib.pyplot as plt
+from matplotlib.ticker import MultipleLocator
+
+from scipy.optimize import fsolve
+
+from foolbox.utils import *
+from foolbox.bankcalendars import *
 from foolbox.portfolio_construction import multiple_timing
 from foolbox.api import *
-from scipy.optimize import fsolve
+
 # import ipdb
 
 my_red = "#ce3300"
@@ -1461,9 +1463,6 @@ class OIS():
         res : float
             cumulative payoff, in frac of 1, not annualized
         """
-        if np.isnan(on_rate):
-            return np.nan
-
         if dt_until is None:
             dt_until = self.end_dt
         if dt_since is None:
@@ -1472,10 +1471,13 @@ class OIS():
         # three possible data types for on_rate: float, NDFrame and anythg else
         # if float, convert to pd.Series
         if isinstance(on_rate, (np.floating, float)):
+            if np.isnan(on_rate):
+                return np.nan
             on_rate_series = pd.Series(on_rate, index=self.calculation_period)
         elif isinstance(on_rate, pd.core.generic.NDFrame):
-            # for the series case, need to shift by the fixing lag
-            on_rate_series = on_rate.copy().shift(self.fixing_lag)
+            # for the series case, need to ffill if missing and shift by the
+            #   fixing lag
+            on_rate_series = on_rate.shift(self.fixing_lag).ffill()
         else:
             return np.nan
 
@@ -1488,8 +1490,7 @@ class OIS():
         # Reindex to calendar day, carrying rates forward over non b-days
         # NB: watch over missing values in the data: here is the last chance
         #   to keep them as is
-        tmp_ret = on_rate_series.reindex(index=self.calculation_period,
-            method="ffill")
+        tmp_ret = on_rate_series.reindex(index=self.calculation_period)
 
         # deannualize etc.
         tmp_ret /= (100 * self.day_cnt_flt)
@@ -1676,14 +1677,14 @@ class OIS():
         # calendars
         calendars = {
             "usd": CustomBusinessDay(calendar=USTradingCalendar()),
-            "aud": BDay(),
+            "aud": CustomBusinessDay(calendar=AustraliaTradingCalendar()),
             "cad": CustomBusinessDay(calendar=USTradingCalendar()),
             "chf": BDay(),
             "eur": BDay(),
-            "gbp": BDay(),
+            "gbp": CustomBusinessDay(calendar=UKTradingCalendar()),
             "jpy": BDay(),
             "nzd": BDay(),
-            "sek": BDay()
+            "sek": CustomBusinessDay(calendar=SwedenTradingCalendar())
         }
 
         all_settings = {
@@ -1763,7 +1764,7 @@ if __name__  == "__main__":
     implied_rates = dict()
 
     for c in ois_data.keys():
-        # c = "gbp"
+        # c = "usd"
         print(c)
 
         # OIS
@@ -1803,6 +1804,7 @@ if __name__  == "__main__":
 
     with open(data_path + "implied_rates_bloomberg_1m.p", mode="wb") as hangar:
         pickle.dump(implied_rates, hangar)
+
 
     # with open(data_path + "implied_rates_bloomberg_1m.p", mode="rb") as hangar:
     #     lol = pickle.load(hangar)
