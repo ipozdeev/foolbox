@@ -7,7 +7,7 @@ plt.rcParams["axes.edgecolor"] = new_gray
 plt.rcParams["axes.linewidth"]  = 2.0
 
 from foolbox.api import *
-from foolbox.RegressionModel import light_ols
+from foolbox.linear_models import PureOls
 from foolbox.wp_tabs_figs.wp_settings import *
 
 def fig_implied_rates_unbiasedness(tgt_rate_diff, on_rate_diff, ols_eq=False):
@@ -160,11 +160,19 @@ if __name__ == "__main__":
         y0 = this_on_rate_diff.rename("on")
         x0 = this_tgt_rate_change.rename("tgt")
 
-        this_b, _, this_se = light_ols(y0, x0, add_constant=True, ts=True)
-        coef[c] = this_b
-        se[c] = this_se
+        mod = PureOls(y0*100, x0*100, add_constant=True)
+        diagnostics = mod.get_diagnostics(HAC=True)
 
-    # coef = pd.DataFrame.from_dict(coef)
-    # coef.index = ["alpha", "beta"]
-    # se = pd.DataFrame.from_dict(se)
-    # se.index = ["alpha", "beta"]
+        coef[c] = diagnostics.loc["coef"]
+        se[c] = diagnostics.loc["se"]
+
+    coef = pd.DataFrame.from_dict(coef)
+    coef.index = ["alpha", "beta"]
+    se = pd.DataFrame.from_dict(se)
+    se.index = ["alpha", "beta"]
+
+    out_path = set_credentials.set_path("../projects/ois/tex/tabs/",
+        which="local")
+    to_better_latex(coef, se, fmt_coef="{:3.2f}", fmt_tstat="{:3.2f}",
+        buf=out_path+"tab_overnight_vs_policy_rates.tex",
+        column_format="l"+"W"*len(se.columns))
