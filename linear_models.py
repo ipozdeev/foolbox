@@ -1,7 +1,17 @@
 import pandas as pd
 import numpy as np
 import statsmodels.api as sm
-# import ipdb
+
+import rpy2.robjects as robj
+from rpy2.robjects.packages import importr
+from rpy2.robjects import Formula
+
+from rpy2.robjects import pandas2ri
+pandas2ri.activate()
+
+from rpy2.robjects import numpy2ri
+numpy2ri.activate()
+
 
 class Regression():
     """
@@ -80,9 +90,49 @@ class PureOls(Regression):
 
         return coef
 
-    def get_diagnostics(self):
+    def get_diagnostics(self, HAC=True):
         """
         """
+        if HAC:
+            rdata = pandas2ri.py2ri(pd.concat((self.y, self.X), axis=1))
+
+            # import lm and base
+            lm = robj.r['lm']
+            base = importr('base')
+
+            # write down formula: y ~ x
+            fmla = Formula(self.Y_names[0] + " ~ . - 1")
+
+            env = fmla.environment
+            env["rdata"] = rdata
+
+            # fit model
+            f = lm(fmla, data = rdata)
+
+            # extract coefficients
+            coef = pd.Series(f.rx2('coefficients'), index=self.X_names)
+
+            # implementation of Newey-West (1997)
+            nw = importr("sandwich")
+
+            # errors
+            vcv = nw.NeweyWest(f)
+            #vcv = nw.vcovHAC(f)
+
+            # fetch coefficients from model output
+            se = pd.Series(np.sqrt(np.diag(vcv)), index=self.X_names)
+
+            # tstat
+            tstat = coef / se
+
+            # concat and transpose
+            res = pd.DataFrame.from_dict({
+                "coef": coef,
+                "se": se,
+                "tstat": tstat}).T
+
+            return res
+
         if not hasattr(self, "eps"):
             _ = self.get_residuals()
 
@@ -191,8 +241,8 @@ class DynamicOLS():
             # ipdb.set_trace()
             roll_cov_yx = yx.groupby(**self.kwargs).cov()
             # TODO: [:,x.name] probably?
-            b = roll_cov_yx[y.name][:,:,x.name]/\
-                roll_cov_yx[x.name][:,:,x.name]
+            b = roll_cov_yx[y.name][:,x.name]/\
+                roll_cov_yx[x.name][:,x.name]
             # add name to `b`
             b.name = y.name
             # calculate alpha
