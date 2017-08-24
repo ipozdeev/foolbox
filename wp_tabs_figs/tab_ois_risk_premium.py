@@ -132,16 +132,3 @@ if __name__ == "__main__":
         fmt_coef="{:3.2f}", fmt_tstat="{:3.2f}",
         buf=out_path+"tex/tabs/tab_ois_risk_premium.tex",
         column_format="l"+"W"*len(rp_se.columns))
-
-    ois_data = pd.Panel.from_dict(ois_data, orient="minor")
-    ois_data = ois_data.loc[order,:,:]
-    ois_data.dropna(axis="major_axis", how="all")
-
-    taus = []
-    for p in ois_data.minor_axis:
-        for q in ois_data.items:
-            taus += [np.datetime64(ois_data.loc[q,:,p].first_valid_index())]
-
-    np.median(np.array(taus))
-
-    [np.datetime64(p) for p in taus]
