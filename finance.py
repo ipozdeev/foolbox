@@ -1679,11 +1679,11 @@ class OIS():
             "usd": CustomBusinessDay(calendar=USTradingCalendar()),
             "aud": CustomBusinessDay(calendar=AustraliaTradingCalendar()),
             "cad": CustomBusinessDay(calendar=USTradingCalendar()),
-            "chf": BDay(),
-            "eur": BDay(),
+            "chf": CustomBusinessDay(calendar=SwitzerlandTradingCalendar()),
+            "eur": CustomBusinessDay(calendar=EuropeTradingCalendar()),
             "gbp": CustomBusinessDay(calendar=UKTradingCalendar()),
             "jpy": BDay(),
-            "nzd": BDay(),
+            "nzd": CustomBusinessDay(calendar=NewZealandTradingCalendar()),
             "sek": CustomBusinessDay(calendar=SwedenTradingCalendar())
         }
 
