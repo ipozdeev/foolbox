@@ -1,5 +1,5 @@
 from foolbox.api import *
-from foolbox.utils import parse_bloomberg_excel
+from foolbox.data_mgmt.parse_bloomberg_excel import *
 
 def fetch_datastream_ois_data(data_path=None):
     """
@@ -54,7 +54,7 @@ def fetch_bloomberg_ois_data(data_path=None):
         pickle.dump(ois_data, fname)
 
 def merge_ois_data(datastream_pkl=None, bloomberg_pkl=None, maturity='1M',
-    priority="itb"):
+    priority="bit"):
     """
     Parameters
     ----------
