@@ -1678,7 +1678,7 @@ class OIS():
         calendars = {
             "usd": CustomBusinessDay(calendar=USTradingCalendar()),
             "aud": CustomBusinessDay(calendar=AustraliaTradingCalendar()),
-            "cad": CustomBusinessDay(calendar=USTradingCalendar()),
+            "cad": CustomBusinessDay(calendar=CanadaTradingCalendar()),
             "chf": CustomBusinessDay(calendar=SwitzerlandTradingCalendar()),
             "eur": CustomBusinessDay(calendar=EuropeTradingCalendar()),
             "gbp": CustomBusinessDay(calendar=UKTradingCalendar()),
