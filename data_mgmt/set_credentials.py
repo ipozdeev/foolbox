@@ -7,20 +7,29 @@ import os
 
 # Default dictionary specifying R and Google Drive paths for each user
 user_info =\
-    {"borisenko": {"R_USER": "borisenko",
-                   "R_HOME": "c:/R/R-3.2.5",
-                   "gdrive": "C:/Users/borisenko/GoogleDrive/"
-                   },
-     "Igor": {"R_USER": "Igor",
-              "R_HOME": "c:/Program Files/R/R-3.2.5",
-              "gdrive": "C:/Users/Igor/Google Drive/Personal/",
-              "local": "C:/Users/Igor/Documents/HSG/"
-              },
-     "HSG-Spezial": {"R_USER": "HSG-Spezial",
-                     "R_HOME": "c:/Program Files/R/R-3.2.5",
-                     "gdrive": "C:/Users/HSG-Spezial/Google Drive/Personal/",
-                     "local": "D:/Personal/"
-                     }
+    {"borisenko": {
+        "R_USER": "borisenko",
+        "R_HOME": "c:/R/R-3.2.5",
+        "gdrive": "C:/Users/borisenko/GoogleDrive/"
+        },
+     "Igor": {
+        "R_USER": "Igor",
+        "R_HOME": "c:/Program Files/R/R-3.2.5",
+        "gdrive": "C:/Users/Igor/Google Drive/Personal/",
+        "local": "C:/Users/Igor/Documents/HSG/"
+        },
+     "HSG-Spezial": {
+        "R_USER": "HSG-Spezial",
+        "R_HOME": "c:/Program Files/R/R-3.2.5",
+        "gdrive": "C:/Users/HSG-Spezial/Google Drive/Personal/",
+        "local": "D:/Personal/"
+        },
+    "pozdeev": {
+        "R_USER": "pozdeev",
+        "R_HOME": "c:/Program Files/R/R-3.2.5",
+        "gdrive": "C:/Users/pozdeev/Google Drive/Personal/",
+        "local": "c:/Users/pozdeev/documents/hsg/"
+        }
      }
 
 
