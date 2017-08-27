@@ -111,5 +111,6 @@ def merge_ois_data(datastream_pkl=None, bloomberg_pkl=None, maturity='1M',
 
 
 if __name__ == "__main__":
+    fetch_datastream_ois_data(data_path=data_path)
     fetch_bloomberg_ois_data(data_path=data_path)
     merge_ois_data(priority="bit")
