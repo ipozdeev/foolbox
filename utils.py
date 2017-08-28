@@ -537,7 +537,8 @@ if __name__ == "__main__":
         }
 
     test_currencies = ["aud", "cad", "chf", "eur", "gbp", "nzd", "sek", "usd"]
-    test_maturity = "6M"  # corresponds to column names in ois_data dataframes
+    test_currencies = ["usd"]
+    test_maturity = "1Y"  # corresponds to column names in ois_data dataframes
     for curr in test_currencies:
         # Select the data
         test_curr = curr
@@ -567,15 +568,15 @@ if __name__ == "__main__":
         res.columns = ["fixed", "start", "end", "realized"]
 
         # Print something
-        print(curr, res.head(22))
+        #print(curr, res.head(22))
 
         # Plot fixed vs realized float
         to_plot = res[["fixed", "realized"]].dropna()
         to_plot.plot(title=test_curr + "_" + test_maturity)
-    plt.show()
+    #plt.show()
 
     # Test the unbiasedness
-    diff = \
-        (to_plot.fixed - to_plot.realized).to_frame(name="d").astype("float")
+        diff = \
+            (to_plot.fixed - to_plot.realized).to_frame(name="d").astype("float")
 
-    # print(taf.descriptives(diff, 1))
+        print(test_curr, taf.descriptives(diff, 1))
