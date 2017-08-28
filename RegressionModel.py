@@ -242,7 +242,7 @@ def light_ols(y, X, add_constant=False, ts=False):
         covmat = reg_mod.s2*np.linalg.inv(reg_mod.X.T.dot(reg_mod.X))
         se = np.sqrt(np.diag(covmat))
         t = b/se
-        res = (b, R2, t)
+        res = (b, R2, se)
     else:
         res = (b, R2)
 
@@ -253,6 +253,7 @@ class DynamicOLS():
     """
     def __init__(self, method, y0, x0, **kwargs):
         """
+        If `y0` and `x0` have names, the names must be different!
         """
         self.method = method
         self.kwargs = kwargs

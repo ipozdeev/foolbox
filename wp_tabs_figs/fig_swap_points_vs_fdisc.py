@@ -6,11 +6,6 @@ from foolbox.utils import remove_outliers
 from foolbox.wp_tabs_figs.wp_settings import *
 # %matplotlib
 
-# colors
-new_gray = "#8c8c8c"
-new_red = "#ce3300"
-new_blue = "#2f649e"
-
 out_path = set_credentials.set_path("foresight_saga/tex/figs/", which="local")
 
 # data ----------------------------------------------------------------------
@@ -34,7 +29,9 @@ swap_bid = remove_outliers(swap_bid, 20).dropna(how="all")
 # mid quotes
 fwd_disc_d = (swap_ask.ffill() + swap_bid.ffill())/2
 # divide swap points through the spot price to arrive at forward discounts
-fwd_disc_d /= (fx_d["spot_bid"].ffill() + fx_d["spot_ask"].ffill())/2
+fwd_disc_d = fwd_disc_d.divide(
+    (fx_d["spot_bid"].ffill() + fx_d["spot_ask"].ffill())/2,
+    axis=1)
 # resample monthly, taking care of missing data, -1 is needed to convert to dr
 fwd_disc_d_m = fwd_disc_d.resample('M').mean()*30*100*-1
 
@@ -48,7 +45,7 @@ fwd_disc_d_m = fwd_disc_d_m.loc[s_dt:e_dt,:]
 fwd_disc_m = fwd_disc_m.loc[s_dt:e_dt,:]
 
 # subplots
-fig, ax = plt.subplots(len(curs), sharex=True, figsize=(8.4,10.5))
+fig, ax = plt.subplots(len(curs), sharex=True, figsize=(8.27,10.0))
 
 # set limits to the very last one (lowest) subplot, since the x-axis is shared
 ax[-1].set_xlim((
@@ -98,7 +95,10 @@ plt.setp(ax[-1].xaxis.get_majorticklabels(), rotation="horizontal",
     ha="center")
 ax[-1].set_xlabel('', visible=False)
 
-fig.tight_layout(h_pad=0.5)
+fig.text(0.0, 0.5, "return, in percent p.a.",
+    va='center', rotation='vertical')
+
+fig.tight_layout(h_pad=0.5, pad=1.05)
 
 # save
 fig.savefig(out_path + "daily_swap_pts_vs_monthly" + ".pdf")

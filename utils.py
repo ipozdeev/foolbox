@@ -1,5 +1,7 @@
 import pandas as pd
 from pandas.tseries.offsets import *
+from pandas.tseries.holiday import *
+
 import numpy as np
 import pickle
 
@@ -302,10 +304,9 @@ def interevent_qcut(data_to_slice, events, n_quantiles):
 
     return out.drop(["evt_num"], axis=1)
 
-import pandas as pd
 
 def parse_bloomberg_excel(filename, colnames_sheet, data_sheets):
-    """
+    """Parse .xlsx frile constructed with Bloomberg Excel API.
 
     Returns
     -------
@@ -350,8 +351,9 @@ def parse_bloomberg_excel(filename, colnames_sheet, data_sheets):
             this_piece = this_piece.set_index(this_piece.columns[0])
             # rename
             this_piece.columns = [colnames[p]]
+            this_piece.index.name = "date"
             # store
-            new_data_df += [this_piece.dropna()]
+            new_data_df += [this_piece.dropna(),]
 
         # concat
         all_data[s] = pd.concat(new_data_df, axis=1, join="outer")
@@ -468,6 +470,70 @@ def compute_floating_leg_return(trade_dates, returns, maturity, settings):
 
     return out
 
+
+def next_days_same_rate(dt, b_day=None):
+    """
+    dt : str/np.datetime64
+    """
+    if b_day is None:
+        b_day = BDay()
+
+    dt = pd.to_datetime(dt)
+
+    next_b_day = dt + b_day
+
+    res = (next_b_day - dt).days
+
+    return res
+
+def to_better_latex(df_coef, df_tstat, fmt_coef="{}", fmt_tstat="{}",
+    **kwargs):
+    """
+    df_coef = pd.DataFrame(np.eye(2)*3, index=["on","tw"], columns=["A","B"])
+    df_coef.iloc[0, 0] = None
+    df_tstat = pd.DataFrame(np.eye(2), index=["on","tw"], columns=["A","B"])
+    fmt_coef = '{:3.2f}'
+    fmt_tstat = fmt_coef
+
+    """
+    weird_fmt = lambda x: "\multicolumn{1}{c}{" + str(x) + "}"
+
+    # def signif_fmt(x):
+    #     if x <= 0.01:
+    #         star = "***"
+    #     elif x <= 0.05:
+
+    mask_coef = df_coef.applymap(np.isfinite)
+    mask_tstat = df_tstat.applymap(np.isfinite)
+
+    df_coef_fmt = df_coef.applymap(fmt_tstat.format)
+    df_tstat_fmt = df_tstat.applymap(('('+fmt_tstat+')').format)
+
+    new_df = []
+    for p, q in zip(*[list(r.values) for r in (df_coef_fmt, df_tstat_fmt)]):
+        new_df += [p]
+        new_df += [q]
+
+    new_mask = []
+    for p, q in zip(*[list(r.values) for r in (mask_coef, mask_coef)]):
+        new_mask += [p]
+        new_mask += [q]
+
+    new_idx = []
+    for p, q in zip(list(df_coef.index), [' ',]*len(df_coef.index)):
+        new_idx += [p]
+        new_idx += [q]
+
+    # new_col = [weird_fmt(p) for p in df_coef.columns]
+    new_col = df_coef.columns
+
+    new_df = pd.DataFrame(new_df, index=new_idx, columns=new_col)
+    new_mask = pd.DataFrame(new_mask, index=new_idx, columns=new_col)
+    new_df = new_df.applymap(weird_fmt).where(~new_mask).fillna(new_df)
+
+    return new_df.to_latex(**kwargs)
+
+
 if __name__ == "__main__":
     # from foolbox.api import *
     # fname = data_path + "ois_2000_2017_d.xlsx"
@@ -580,3 +646,5 @@ if __name__ == "__main__":
             (to_plot.fixed - to_plot.realized).to_frame(name="d").astype("float")
 
         print(test_curr, taf.descriptives(diff, 1))
+    # to_better_latex(coef*100, se*100, fmt_coef="{:3.2f}", fmt_tstat="{:3.2f}",
+        #     buf=out_path+"temp.tex", column_format="l"+"W"*len(se.columns))
