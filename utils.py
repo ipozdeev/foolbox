@@ -533,6 +533,29 @@ def to_better_latex(df_coef, df_tstat, fmt_coef="{}", fmt_tstat="{}",
 
     return new_df.to_latex(**kwargs)
 
+def resample_between_events(data, events, fun, mask=None):
+    """
+    """
+    mask = mask.fillna(False)
+    mask = ~mask
+
+    idx = pd.Series(events.index, index=events.index).reindex(
+        index=data.index, method="ffill")
+    idx.name = "index"
+
+    # mask; this way is better than .loc[mask_idx] because of non-empty set
+    #   difference of the two
+    if mask is not None:
+        idx = idx.where(mask)
+
+    # concat `data` and `idx` to be able to group by column
+    to_group = pd.concat((data, idx), axis=1)
+
+    # groupby!
+    res = to_group.groupby("index").mean()
+
+    return res
+
 
 if __name__ == "__main__":
     # from foolbox.api import *
