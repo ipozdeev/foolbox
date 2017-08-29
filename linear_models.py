@@ -68,10 +68,6 @@ class PureOls(Regression):
     Performs the purest old-school no-nonsence OLS, inv(X'X)(X'Y), just like
     in the good old times.
     """
-    def __init__(self, y0, X0, add_constant, **kwargs):
-
-        super().__init__(y0=y0, X0=X0, add_constant=add_constant, **kwargs)
-
     def fit(self):
         """
         Evaluate inv(X'X)(X'Y) (in a smart way). Y can have rank > 1 (oh yeah).
