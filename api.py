@@ -3,8 +3,9 @@ from foolbox.EventStudy_new import *
 import foolbox.portfolio_construction as poco
 import foolbox.tables_and_figures as taf
 from foolbox.finance import *
-import pickle
+from foolbox.bankcalendars import *
 from foolbox.wp_tabs_figs.wp_settings import *
+import pickle
 
 import foolbox.data_mgmt.set_credentials as set_credentials
 set_credentials.set_r_environment()

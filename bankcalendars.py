@@ -182,5 +182,61 @@ class SwitzerlandTradingCalendar(AbstractHolidayCalendar):
         ]
 
 
+class CanadaTradingCalendar(AbstractHolidayCalendar):
+    """
+    Bank close days are those in Toronto (ON).
+
+    BoC:
+        http://www.bankofcanada.ca/about/contact-information/bank-of-canada-holiday-schedule
+    Wiki:
+        https://en.wikipedia.org/wiki/Public_holidays_in_Canada#Ontario
+    A good way to check is to look at daily CORRA:
+        http://www.bankofcanada.ca/rates/interest-rates/canadian-interest-rates
+    """
+    rules = [
+        Holiday('NewYearsDay',
+            month=1, day=1, observance=next_monday),
+        Holiday('FamilyDay',
+            month=2, day=1, offset=DateOffset(weekday=MO(3))),
+        GoodFriday,
+        Holiday('VictoriaDay',
+            month=5, day=24, offset=DateOffset(weekday=MO(-1))),
+        Holiday('CanadaDay',
+            month=7, day=1, observance=next_monday),
+        Holiday('AugustCivicHoliday',
+            month=8, day=1, offset=DateOffset(weekday=MO(1))),
+        Holiday('LabourDay',
+            month=9, day=1, offset=DateOffset(weekday=MO(1))),
+        Holiday('ThanksgivingDay',
+            month=10, day=1, offset=DateOffset(weekday=MO(2))),
+        Holiday('RemembranceDay',
+            month=11, day=11, observance=next_monday),
+        Holiday('Christmas Day',
+            month=12, day=25, observance=next_monday),
+        Holiday('BoxingDay',
+            month=12, day=26, observance=next_monday_or_tuesday)
+        ]
+
+def get_bank_calendar(iso):
+    """Retrieve calendar for currency `iso`.
+
+    Parameters
+    ----------
+    iso : str
+    """
+    calendar_dict = {
+        "usd": USTradingCalendar,
+        "chf": SwitzerlandTradingCalendar,
+        "eur": EuropeTradingCalendar,
+        "cad": CanadaTradingCalendar,
+        "nzd": NewZealandTradingCalendar,
+        "aud": AustraliaTradingCalendar,
+        "gbp": UKTradingCalendar,
+        "sek": SwedenTradingCalendar
+    }
+
+    return calendar_dict[iso]
+
+
 if __name__ == "__main__":
-    NewZealandTradingCalendar().holidays(start="2018-01-01", end="2018-12-31")
+    CanadaTradingCalendar().holidays(start="2013-11-29", end="2015-01-05")
