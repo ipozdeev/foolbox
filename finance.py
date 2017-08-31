@@ -7,7 +7,9 @@ from pandas.tseries.offsets import DateOffset, MonthBegin, MonthEnd, \
 import pickle
 
 import matplotlib.pyplot as plt
+from matplotlib import cm
 from matplotlib.ticker import MultipleLocator
+from mpl_toolkits.mplot3d import Axes3D
 
 from scipy.optimize import fsolve
 
@@ -618,6 +620,52 @@ class PolicyExpectation():
         cmx = cmx.astype(np.int16)
 
         return cmx
+
+
+    def plot_roc_surface(self, lag=1, **kwargs):
+        """
+        """
+        # different thresholds
+        thresholds = np.linspace(0.0, 1.50, 501)
+
+        # loop over thresholds; for each, calculate true pos probabilities for
+        #   each outcome
+        true_pos_probs = pd.DataFrame(
+            index=thresholds,
+            columns=[-1, 0, 1],
+            dtype=float)
+
+        for th in thresholds:
+            # p = 0.085
+            cmx = self.assess_forecast_quality(lag=lag, threshold=th, **kwargs)
+
+            # loop over outcomes
+            for p in [-1, 0, 1]:
+                true_pos_probs.loc[th, p] = cmx.loc[p, p] / cmx.loc[:, p].sum()
+
+        # sort values to plot a nice surface
+        true_pos_probs = true_pos_probs.sort_values(
+            by=[-1, 1], ascending=[True, True])
+
+        # plot
+        fig = plt.figure()
+        ax = Axes3D(fig)
+
+        ax.plot_trisurf(
+            true_pos_probs.loc[:, -1],
+            true_pos_probs.loc[:, 1],
+            true_pos_probs.loc[:, 0], linewidth=0.2, cmap=cm.coolwarm)
+
+        ax.set_xlim((0.0, 1.0))
+        ax.set_ylim((0.0, 1.0))
+        ax.set_zlim((0.0, 1.0))
+
+        ax.set_xlabel('-1')
+        ax.set_ylabel('1')
+        ax.set_zlabel('0')
+
+        return fig, ax, true_pos_probs
+
 
     def roc_curve(self, lag=1, out_path=None, **kwargs):
         """ Construct ROC curve.
@@ -1751,215 +1799,21 @@ class OIS():
 
 if __name__  == "__main__":
 
-    # ois data
-    with open(data_path + "ois_bloomberg.p", mode="rb") as hangar:
-        ois_data = pickle.load(hangar)
-    # events
-    with open(data_path + "events.p", mode="rb") as hangar:
-        events_data = pickle.load(hangar)
-    events_lvl = events_data["joint_cbs_lvl"]
-    events_chg = events_data["joint_cbs"]
-
-    # space for implied rates
-    implied_rates = dict()
-
-    for c in ois_data.keys():
-        # c = "usd"
-        print(c)
-
-        # OIS
-        ois = OIS.from_iso(c, maturity=DateOffset(months=1))
-
-        # this event, to frame + rename
-        this_evt = pd.concat((events_lvl[c], events_chg[c]), axis=1)
-        this_evt = this_evt.dropna()
-        this_evt.columns = ["rate_level", "rate_change"]
-
-        # this ois
-        this_ois = ois_data[c].loc[:,"1M"].astype(np.float)
-
-        # this overnight
-        this_on = ois_data[c].loc[:,"ON"].astype(np.float)
-
-        # align
-        this_ois, this_on = this_ois.loc[
-            this_ois.first_valid_index():this_ois.last_valid_index()].align(
-                this_on, axis=0, join="left")
-
-        # rates expected to prevale before meetings
-        rates_until = ois.get_rates_until(this_on, this_evt,
-            method="average")
-
-        pe = PolicyExpectation.from_ois_new(ois=ois,
-            meetings=this_evt,
-            ois_rates=this_ois,
-            on_rates=this_on)
-
-        # store
-        this_ir = pe.rate_expectation.copy()
-        this_ir.name = c
-        implied_rates[c] = pe.rate_expectation
-
-    implied_rates = pd.DataFrame.from_dict(implied_rates)
-
-    with open(data_path + "implied_rates_bloomberg_1m.p", mode="wb") as hangar:
-        pickle.dump(implied_rates, hangar)
-
-
-    # with open(data_path + "implied_rates_bloomberg_1m.p", mode="rb") as hangar:
-    #     lol = pickle.load(hangar)
-    #
-    # fig, ax = plt.subplots()
-    # lol.usd.plot(ax=ax, color='r')
-    # ois_data["usd"].loc[:,"ON"].plot(ax=ax, color='b')
-
-    # cur = "usd"
-    # ois = OIS.from_iso(cur, maturity=DateOffset(weeks=1))
-    #
-    # with open(data_path + "ois_bloomberg.p", mode="rb") as hangar:
-    #     ois_data = pickle.load(hangar)
-    #
-    # ois_rates = ois_data[cur]["2000-11":].loc[:,"1W"].astype(np.float)
-    # on_rates = ois_data[cur]["2000-11":].loc[:,"ON"].astype(np.float)
-    #
-    # ois_rates, on_rates = ois_rates.loc[
-    #     ois_rates.first_valid_index():ois_rates.last_valid_index()].align(
-    #         on_rates, axis=0, join="left")
-    #
-    # # events
-    # with open(data_path + "events.p", mode="rb") as hangar:
-    #     events_data = pickle.load(hangar)
-    #
-    # meetings = events_data["joint_cbs"][cur].dropna().to_frame("rate_change")
-    #
-    # rates_until = ois.get_rates_until(on_rates, meetings, method="average")
-    #
-    # pe = PolicyExpectation.from_ois_new(ois=ois,
-    #     meetings=meetings,
-    #     ois_rates=ois_rates,
-    #     on_rates=on_rates)
-    #
-    # pe.rate_expectation.plot()
-    #
-    # on_rates.loc["2001-01"]
-    #
-    # meetings["rate_change"].where(meetings["rate_change"] < 0).dropna()
-    # (meetings["rate_change"] < 0).loc[pe.rate_expectation.index].sum()
-    #
-    # pe.rate_expectation.shift(10).where(meetings["rate_change"] < 0).dropna()
-    #
-    # pe.rate_expectation.shape
-    # pe.assess_forecast_quality(
-    #     lag=10,
-    #     threshold=0.10,
-    #     avg_impl_over=5,
-    #     avg_refrce_over=5,
-    #     bday_reindex=True)
-    # pe.error_plot(avg_over=3)
-    #
-    # ois_eur.get_implied_rate(on_rate=on_rates, event_dt=event_dt,
-    #     swap_rate=test_data.loc[ois_eur.quote_dt])
-
-    # from foolbox.data_mgmt import set_credentials
-    #
-    # # data ------------------------------------------------------------------
-    # path = "c:/Users/Igor/Google Drive/Personal/opec_meetings/calc/"
-    # data_path = set_credentials.gdrive_path("research_data/fx_and_events/")
-    #
-    # pe = PolicyExpectation.from_pickles(data_path, "eur")
-    # ipdb.set_trace()
-    # pe.forecast_policy_change(5, 0.1250, 5, 5)
-
-
-    #
-    # with open(data_path + "ois.p", mode='rb') as fname:
-    #     oidataata = pickle.load(fname)
-    # with open(data_path + "overnight_rates.p", mode='rb') as fname:
-    #     overnight_rates = pickle.load(fname)
-    # with open(data_path + "events.p", mode='rb') as fname:
-    #     events = pickle.load(fname)
-    # many_meetings = events["joint_cbs_lvl"]
-    #
-    # # loop over providers (icap, tr etc.) -----------------------------------
-    # # init storage
-    # policy_expectation = pd.Panel.from_dict(
-    #     data={k: v*np.nan for k,v in oidataata.items()},
-    #     orient="minor")
-    #
-    # for provider, many_instr in oidataata.items():
-    #     # provider, many_instr = list(oidataata.items())[1]
-    #     tau = int(provider[-2:-1])
-    #
-    #     # loop over columns = currencies ------------------------------------
-    #     for cur in many_instr.columns:
-    #         if cur not in overnight_rates.columns:
-    #             continue
-    #         # cur = many_instr.columns[0]
-    #         instrument = many_instr[cur]
-    #         benchmark = overnight_rates.loc[:,cur]
-    #         meetings = many_meetings[cur].dropna()
-    #
-    #         pe = PolicyExpectation.from_money_market
-    #             meetings=meetings/100
-    #             instrument=instrument/100,
-    #             benchmark=benchmark/100,
-    #             tau=tau)
-    #
-    #         policy_expectation.loc[cur,:,provider] = pe.policy_exp*100
-
-    # # %matplotlib
-    # lol, wut = pe.plot(5)
-    # policy_expectation.loc[cur,:,provider] = pe.policy_exp*100
-    # events["snb"].loc[:,["lower","upper"]].plot(ax=wut[0], color='k')
-    # benchmark.rolling(5).mean().shift(5).dropna().plot(
-    #     ax=wut[0], color='g', linewidth=1.5)
-    #
-    # one = pe.policy_exp.shift(5).reindex(
-    #     index=meetings.index, method="ffill")
-    # two = benchmark.rolling(5).mean().shift(5).reindex(
-    #     index=meetings.index, method="ffill")
-    # both = (one*100-two).dropna()
-    # policy_diff = meetings.diff()
-    #
-    # f, ax = plt.subplots()
-    # policy_diff.plot(ax=ax, color='r', linestyle="none", marker='.')
-    # ax.set_ylim([-2.5, 1.0])
-    # both.plot(ax=ax, color='k', linestyle="none", marker='o'test_data,
-    #     alpha=0.33)
-    #
-    #
-    # meetings.loc["2016-07":]
-    # pe.policy_exp.loc["2016-07":]
-    # instrument.loc["2016-06-15":]
-    # benchmark.loc["2016-07":]
-    #
-    # with open(data_path + "implied_rates.p", "wb") as fname:
-    #     pickle.dump(policy_expectation, fname)
-
     # %matplotlib
-    # lol,wut = pe.plot(5)
-    #
-    # with open(data_path + "implied_rates.p", "rb") as fname:
-    #     policy_expectation = pickle.load(fname)
-    #
-    # gbp_impl = policy_expectation.loc["gbp",:,"icap_1m"]
-    # gbp_meet = many_meetings["gbp"].dropna()
-    # gbp_rate = overnight_rates.loc[:,"gbp"]
-    #
-    # # %matplotlib
-    # gbp_rate.rolling(5).mean().plot(color='r')
-    #
-    # one = gbp_impl.shift(5).reindex(
-    #     index=gbp_meet.index, method="ffill")
-    # two = gbp_rate.fillna(method="ffill", limit=2).\
-    #     rolling(5).mean().shift(5).reindex(
-    #         index=gbp_meet.index, method="ffill")
-    # both = (one*100-two).dropna()
-    # policy_diff = gbp_meet.diff()
-    #
-    # gbp_rate.loc["2016-05"]
-    #
-    # policy_fcast = np.sign(both).where(abs(both) > 0.24).fillna(0.0)
-    # policy_actual = np.sign(policy_diff)
-    #
-    # pd.concat((policy_fcast, policy_actual), axis=1).corr()
+
+    import ipdb
+    pe = PolicyExpectation.from_pickles(data_path, "usd",
+        impl_rates_pickle="implied_rates_from_1m.p")
+
+    ipdb.set_trace()
+    fig, ax, df = pe.plot_roc_surface(lag=5)
+    df.loc[sorted(df.index)].to_clipboard()
+
+    fig = plt.figure()
+    ax = Axes3D(fig)
+    pts = ax.scatter(df[-1], df[1], df[0], s=50, c=df.index, cmap=cm.jet)
+    fig.colorbar(pts)
+
+    from scipy.interpolate import RectBivariateSpline
+
+    rbs = RectBivariateSpline(df[-1], df[1], df[0])
