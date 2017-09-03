@@ -37,6 +37,9 @@ class PolicyExpectation():
         self.instrument = instrument
         self.reference_rate = reference_rate
 
+        self._policy_dir_fcast = None
+
+
     @classmethod
     def from_ois_new(cls, ois, meetings, ois_rates, on_rates, **kwargs):
         """
@@ -460,6 +463,50 @@ class PolicyExpectation():
 
         return f, ax
 
+    @staticmethod
+    def classify_direction(dr, h_low=None, h_high=None):
+        """
+        """
+        if (h_low is None) and (h_high is None):
+            raise ValueError("One of h_low and h_hiigh must be set.")
+
+        if h_low is None:
+            h_low = h_high*-1
+
+        if h_high is None:
+            h_high = h_low*-1
+
+        res = pd.Series(index=dr.index, dtype=float)
+
+        res.ix[dr < h_low] = -1
+        res.ix[dr > h_high] = 1
+        res.ix[(dr <= h_high) & (dr >= h_low)] = 0
+
+        return res
+
+
+    def forecast_policy_direction(self, lag, ref_rate, h_low=None, h_high=None,
+        transf_ref=None, transf_impl=None):
+        """
+        """
+        if transf_ref is None:
+            transf_ref = lambda x: x
+        if transf_impl is None:
+            transf_impl = lambda x: x
+
+        impl_rate, _ = self.rate_expectation.align(self.meetings, join="outer")
+
+        ref_rate, impl_rate = ref_rate.align(impl_rate, join="outer")
+
+        ref_rate = transf_ref(ref_rate)
+        impl_rate = transf_impl(impl_rate)
+
+        dr = (impl_rate - ref_rate).shift(lag).loc[self.meetings.index]
+
+        res = self.classify_direction(dr, h_low=h_low, h_high=h_high)
+
+        return res
+
 
     def forecast_policy_change(self,
         lag=1,
@@ -579,18 +626,13 @@ class PolicyExpectation():
         return policy_fcast
 
 
-    def assess_forecast_quality(self, lag=1, threshold=0.125, **kwargs):
+    def assess_forecast_quality(self, policy_dir_fcast):
         """
         Parameters
         ----------
-        kwargs : dict
-            args to `.forecast_policy_change`
+
         """
-        # ipdb.set_trace()
-        # forecast `lag` periods before
-        policy_fcast = self.forecast_policy_change(
-            lag, threshold, **kwargs)
-        policy_fcast.name = "fcast"
+        policy_dir_fcast.name = "fcast"
 
         # policy change: should already be expressed as difference
         #   (see __init__)
@@ -599,7 +641,7 @@ class PolicyExpectation():
         policy_actual.name = "actual"
 
         # concat to be able to drop NAs
-        both = pd.concat((policy_actual, policy_fcast), axis=1).\
+        both = pd.concat((policy_actual, policy_dir_fcast), axis=1).\
             dropna(how="any")
 
         # percentage of correct guesses
@@ -622,49 +664,66 @@ class PolicyExpectation():
         return cmx
 
 
-    def plot_roc_surface(self, lag=1, **kwargs):
+    def plot_roc_surface(self, lag, ref_rate):
         """
+        Parameters
+        ----------
+        kwargs : dict
+            keyword args to self.forecast_policy_direction
         """
         # different thresholds
-        thresholds = np.linspace(0.0, 1.50, 501)
+        thresholds = np.linspace(-1.50, 1.50, 101)
+
+        mix = pd.MultiIndex.from_product((thresholds, thresholds))
+        tprs = pd.DataFrame(index=mix, columns=[-1, 0, 1], dtype=float)
+        cmxs = dict()
 
         # loop over thresholds; for each, calculate true pos probabilities for
         #   each outcome
-        true_pos_probs = pd.DataFrame(
-            index=thresholds,
-            columns=[-1, 0, 1],
-            dtype=float)
 
-        for th in thresholds:
-            # p = 0.085
-            cmx = self.assess_forecast_quality(lag=lag, threshold=th, **kwargs)
+        for h_low in thresholds:
+            for h_high in thresholds:
 
-            # loop over outcomes
-            for p in [-1, 0, 1]:
-                true_pos_probs.loc[th, p] = cmx.loc[p, p] / cmx.loc[:, p].sum()
+                if h_high <= h_low:
+                    continue
+
+                this_m_idx = (h_low, h_high)
+
+                # p = 0.085
+                fc = self.forecast_policy_direction(lag=lag, ref_rate=ref_rate,
+                    h_low=h_low, h_high=h_high)
+                cmx = self.assess_forecast_quality(fc)
+
+                # # save cmx
+                # cmxs[th] = cmx
+
+                tprs.loc[this_m_idx, :] = np.diag(cmx / cmx.sum())
 
         # sort values to plot a nice surface
-        true_pos_probs = true_pos_probs.sort_values(
+        tprs = tprs.sort_values(
             by=[-1, 1], ascending=[True, True])
 
-        # plot
-        fig = plt.figure()
-        ax = Axes3D(fig)
+        # # cmxs to Panel
+        # cmxs = pd.Panel.from_dict(cmxs, orient="minor")
 
-        ax.plot_trisurf(
-            true_pos_probs.loc[:, -1],
-            true_pos_probs.loc[:, 1],
-            true_pos_probs.loc[:, 0], linewidth=0.2, cmap=cm.coolwarm)
+        # # plot
+        # fig = plt.figure()
+        # ax = Axes3D(fig)
+        #
+        # ax.plot_trisurf(
+        #     tprs.loc[:, -1],
+        #     tprs.loc[:, 1],
+        #     tprs.loc[:, 0], linewidth=0.2, cmap=cm.coolwarm)
+        #
+        # ax.set_xlim((0.0, 1.0))
+        # ax.set_ylim((0.0, 1.0))
+        # ax.set_zlim((0.0, 1.0))
+        #
+        # ax.set_xlabel('-1')
+        # ax.set_ylabel('1')
+        # ax.set_zlabel('0')
 
-        ax.set_xlim((0.0, 1.0))
-        ax.set_ylim((0.0, 1.0))
-        ax.set_zlim((0.0, 1.0))
-
-        ax.set_xlabel('-1')
-        ax.set_ylabel('1')
-        ax.set_zlabel('0')
-
-        return fig, ax, true_pos_probs
+        return tprs, cmxs
 
 
     def roc_curve(self, lag=1, out_path=None, **kwargs):
@@ -1799,21 +1858,4 @@ class OIS():
 
 if __name__  == "__main__":
 
-    # %matplotlib
-
-    import ipdb
-    pe = PolicyExpectation.from_pickles(data_path, "usd",
-        impl_rates_pickle="implied_rates_from_1m.p")
-
-    ipdb.set_trace()
-    fig, ax, df = pe.plot_roc_surface(lag=5)
-    df.loc[sorted(df.index)].to_clipboard()
-
-    fig = plt.figure()
-    ax = Axes3D(fig)
-    pts = ax.scatter(df[-1], df[1], df[0], s=50, c=df.index, cmap=cm.jet)
-    fig.colorbar(pts)
-
-    from scipy.interpolate import RectBivariateSpline
-
-    rbs = RectBivariateSpline(df[-1], df[1], df[0])
+    pass
