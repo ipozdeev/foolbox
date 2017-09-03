@@ -664,6 +664,54 @@ class PolicyExpectation():
         return cmx
 
 
+    @staticmethod
+    def calculate_vus(measurements, classes, order=None):
+        """
+        """
+        # measurements = (ir_us - r_until).shift(5).loc[evt_us.index]
+        # measurements = pd.Series(np.random.random((186,)),index=evt_us.index)
+        # classes = np.sign(evt_us)
+        grp = pd.concat((measurements, classes), axis=1).dropna()
+        grp.columns = ["m", "c"]
+
+        d = {c: m.loc[:, "m"].values for c, m in grp.groupby("c")}
+
+        if order is None:
+            order = sorted(d.keys())
+
+        p = np.array(list(itools.product(*[d[k] for k in order])))
+
+        f = lambda x: (x[1] > x[0]) & (x[2] > x[1])
+
+        res = np.apply_along_axis(func1d=f, axis=1, arr=p).mean()
+
+        return res
+
+
+    def get_vus(self, lag, ref_rate, transf_ref=None, transf_impl=None):
+        """
+        """
+        if transf_ref is None:
+            transf_ref = lambda x: x
+        if transf_impl is None:
+            transf_impl = lambda x: x
+
+        classes = np.sign(self.meetings.loc[:, "rate_change"].dropna())
+
+        impl_rate, _ = self.rate_expectation.align(classes, join="outer")
+
+        ref_rate, impl_rate = ref_rate.align(impl_rate, join="outer")
+
+        ref_rate = transf_ref(ref_rate)
+        impl_rate = transf_impl(impl_rate)
+
+        dr = (impl_rate - ref_rate).shift(lag).loc[classes.index]
+
+        vus = self.calculate_vus(dr, classes, order=[-1, 0, 1])
+
+        return vus
+
+
     def plot_roc_surface(self, lag, ref_rate):
         """
         Parameters
@@ -672,7 +720,7 @@ class PolicyExpectation():
             keyword args to self.forecast_policy_direction
         """
         # different thresholds
-        thresholds = np.linspace(-1.50, 1.50, 101)
+        thresholds = np.linspace(-1.50, 1.50, 201)
 
         mix = pd.MultiIndex.from_product((thresholds, thresholds))
         tprs = pd.DataFrame(index=mix, columns=[-1, 0, 1], dtype=float)
@@ -1732,7 +1780,7 @@ class OIS():
         if method == "last":
             res = on_rate.shift(self.fixing_lag)
 
-        elif method == "average":
+        elif method == "g_average":
             # expanding geometric average starting from events
             res = on_rate * np.nan
             for t in list(meetings.index)[::-1] + list(on_rate.index[[0]]):
@@ -1743,9 +1791,18 @@ class OIS():
 
             res -= 1.0
 
+        elif method == "a_average":
+            # expanding geometric average starting from events
+            res = on_rate * np.nan
+            for t in list(meetings.index)[::-1] + list(on_rate.index[[0]]):
+                to_fill_with = on_rate.shift(-self.new_rate_lag).loc[t:]\
+                        .expanding().mean()
+                res.fillna(to_fill_with.shift(self.new_rate_lag), inplace=True)
+
         else:
             raise ValueError(
-                "Method not implemented: choose 'average' or 'last'")
+                "Method not implemented: choose 'g_average' or " +
+                "'a_average' or 'last'")
 
         res *= 100
 
