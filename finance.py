@@ -50,7 +50,7 @@ class PolicyExpectation():
         rate_expectation = ois_rates.copy()*np.nan
 
         for t in rate_expectation.index:
-            # t = rate_expectation.index[0]
+            # t = "2017-01-31"
             # print(t)
             # if t > pd.to_datetime("2017-03-13"):
             # ipdb.set_trace()
@@ -63,8 +63,15 @@ class PolicyExpectation():
                 break
 
             # next closest meeting to ois's effective date
+            very_nx_meet = meetings.index[
+                meetings.index.get_loc(ois.quote_dt, method="bfill")]
             nx_meet = meetings.index[
                 meetings.index.get_loc(ois.start_dt, method="bfill")]
+
+            # if quote_dt < start_dt < end_dt, implied rate is just ois rate
+            if very_nx_meet < nx_meet:
+                if ois.end_dt < nx_meet:
+                    rate_expectation.loc[t] = ois_rates.loc[t]
 
             # continue if maturity is earlier than next meeting
             if ois.end_dt < nx_meet:
@@ -695,7 +702,7 @@ class PolicyExpectation():
             transf_ref = lambda x: x
         if transf_impl is None:
             transf_impl = lambda x: x
-
+        # ipdb.set_trace()
         classes = np.sign(self.meetings.loc[:, "rate_change"].dropna())
 
         impl_rate, _ = self.rate_expectation.align(classes, join="outer")
@@ -1756,7 +1763,7 @@ class OIS():
 
         return res
 
-    def get_rates_until(self, on_rate, meetings, method="average"):
+    def get_rates_until(self, on_rate, meetings, method="g_average"):
         """Calculate rates to be considered as prevailing until next meeting.
 
         Parameters

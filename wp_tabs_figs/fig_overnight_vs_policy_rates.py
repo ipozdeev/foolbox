@@ -2,6 +2,8 @@ import pandas as pd
 from matplotlib.ticker import FixedLocator
 from matplotlib import lines as mlines, patches as mpatches
 import seaborn as sns
+sns.set_style("white")
+
 from foolbox.wp_tabs_figs.wp_settings import *
 plt.rcParams["axes.edgecolor"] = new_gray
 plt.rcParams["axes.linewidth"]  = 2.0
@@ -27,14 +29,14 @@ def fig_implied_rates_unbiasedness(tgt_rate_diff, on_rate_diff, ols_eq=False):
     fig, ax = plt.subplots(figsize=(8.27,8.27/1.66))
 
     # boxplots --------------------------------------------------------------
-    bp = sns.boxplot(data=data_to_boxplot, x="tgt", y="on", linewidth=1.5,
-        color=new_blue, saturation=.9, fliersize=3, width=0.4, ax=ax)
+    bp = sns.boxplot(data=data_to_boxplot, x="tgt", y="on", linewidth=1,
+        color=new_blue, saturation=.75, fliersize=3, width=0.4, ax=ax)
 
     # plot bisector-like points ---------------------------------------------
     # (45 degree line showing unbiasedness)
     for p in range(len(unq_tgt_change)):
         ax.scatter(p, unq_tgt_change[p], marker='D',
-            color=new_red, edgecolor='k', s=65)
+            color=new_red, edgecolor='none', s=65)
 
     # number of cases -------------------------------------------------------
     # in a gray box below
@@ -45,7 +47,8 @@ def fig_implied_rates_unbiasedness(tgt_rate_diff, on_rate_diff, ols_eq=False):
     for p, q in data_to_boxplot.groupby("tgt"):
         ax.annotate(str(q.on.count()),
             xy=(cnt+0.2, ylim[0] + np.diff(ylim)[0]/25),
-            fontsize=12, bbox=dict(facecolor=new_gray, edgecolor='k'),
+            fontsize=12,
+            bbox=dict(facecolor="#d1d1d1", edgecolor='k'),
             horizontalalignment='center', verticalalignment='center')
         cnt += 1
 
@@ -74,7 +77,7 @@ def fig_implied_rates_unbiasedness(tgt_rate_diff, on_rate_diff, ols_eq=False):
     solid_line = mlines.Line2D([], [], color=new_red, linestyle="none",
         marker='D', markersize=8,
         label=r"($\alpha=0$, $\beta=1$) points")
-    gray_patch = mpatches.Patch(color=new_gray, label="number of cases")
+    gray_patch = mpatches.Patch(color="#d1d1d1", label="number of cases")
 
     lg = ax.legend(handles=[solid_line, gray_patch], loc='upper right',
         bbox_to_anchor=(0.375, 0.96), fontsize=12, frameon=True)
@@ -88,7 +91,7 @@ def fig_implied_rates_unbiasedness(tgt_rate_diff, on_rate_diff, ols_eq=False):
             r"$\widehat{{\Delta \bar{{r}}}} = {:3.2f} + {:3.2f} \Delta r_{{tgt}}$"
 
         ax.annotate(tex_message.format(*this_b.values, tgt="tgt"),
-            xy=(0.175, 0.65),
+            xy=(0.2, 0.65),
             horizontalalignment='center',
             verticalalignment='center',
             bbox=dict(facecolor='w', alpha=1.0, edgecolor='w'),
@@ -166,8 +169,7 @@ if __name__ == "__main__":
             ols_eq=True)
 
         fig.tight_layout()
-        fig.savefig(out_path + "unbias_" + c + ".png",
-            dpi=120)
+        fig.savefig(out_path + "unbias_" + c + ".pdf")
 
         # # regression
         # y0 = this_on_rate_diff.rename("on")
@@ -184,7 +186,7 @@ if __name__ == "__main__":
     se = pd.DataFrame.from_dict(se)
     se.index = ["alpha", "beta"]
 
-    out_path = set_credentials.set_path("../projects/ois/tex/tabs/",
+    out_path = set_credentials.set_path("../projects/ois/tex/figs/",
         which="local")
     to_better_latex(coef, se, fmt_coef="{:3.2f}", fmt_tstat="{:3.2f}",
         buf=out_path+"tab_overnight_vs_policy_rates.tex",
