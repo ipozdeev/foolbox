@@ -8,7 +8,7 @@ def calculate_implied_rates(ois_data, on_data, events_data):
     implied_rates = dict()
 
     for c in ois_data.keys():
-        # c = "gbp"
+        # c = "usd"
         print(c)
 
         # OIS
@@ -30,7 +30,7 @@ def calculate_implied_rates(ois_data, on_data, events_data):
 
         # rates expected to prevale before meetings
         rates_until = ois.get_rates_until(this_on, this_evt,
-            method="average")
+            method="g_average")
 
         pe = PolicyExpectation.from_ois_new(ois=ois,
             meetings=this_evt,

@@ -18,7 +18,7 @@ fx_cb_dict = {"fomc": "usd", "boe": "gbp", "boc": "cad", "rba": "aud",
 # Set the sample
 #cb_sample_start = "2000-11-01"  # start of the CB sample. Oh Caanadaaa...
 cb_sample_start = "1990-01-01"
-cb_sample_end = "2017-03-31"
+cb_sample_end = "2017-06-31"
 
 
 # Parse the summary data on CBs meetings
