@@ -11,7 +11,7 @@ pandas2ri.activate()
 
 from rpy2.robjects import numpy2ri
 numpy2ri.activate()
-
+from scipy.stats import chi2
 
 class Regression():
     """
@@ -35,9 +35,9 @@ class Regression():
 
         # everything better be frames
         if isinstance(X, pd.Series):
-            X = X.to_frame()
+            X = X.to_frame(name=X.name)
         if isinstance(y, pd.Series):
-            y = y.to_frame()
+            y = y.to_frame(name=y.name)
 
         # lag regressors
         if not hasattr(lag_x, "__iter__"):
@@ -144,6 +144,83 @@ class PureOls(Regression):
             index=["coef", "se", "tstat"])
 
         return res
+
+    def linear_restrictions_test(self, R, r, HAC=True):
+        """Tests linear restrictions on the coeficients in the following form:
+
+                            R * theta_hat = r
+
+        Parameters
+        ----------
+        R: pd.DataFrame
+            with columns named according parameters combinations of which are
+            to be tested (K) less or equal the total number of estimated
+            parameters, and number of rows equal to the number of linear
+            restrictions (q)
+        r: pd.Series
+            of size q, containing the null hypothesis value for each linear
+            restriction. Index is same as in R
+        HAC: bool
+            whether a robust VCV should be used. Default is True
+
+        Returns
+        -------
+        res: pd.Series
+            with chi-squared - statistic with dof = q, and the corresponding
+            p-value
+
+        """
+        # Only HAC, only hardcore
+        # TODO: refactor, so the estimation doesn't duplicate get_diagnostics()
+        if HAC:
+            # R-part
+            rdata = pandas2ri.py2ri(pd.concat((self.y, self.X), axis=1))
+
+            # import lm and base
+            lm = robj.r['lm']
+            base = importr('base')
+
+            # write down formula: y ~ x
+            fmla = Formula(self.Y_names[0] + " ~ . - 1")
+
+            env = fmla.environment
+            env["rdata"] = rdata
+
+            # fit model
+            f = lm(fmla, data = rdata)
+
+            # extract coefficients
+            coef = pd.Series(f.rx2('coefficients'), index=self.X_names)
+
+            # implementation of Newey-West (1997)
+            nw = importr("sandwich")
+
+            # errors
+            vcv = nw.NeweyWest(f)
+
+            # vcv
+            vcv = pd.DataFrame(np.array(vcv), index=self.X_names,
+                               columns=self.X_names)
+
+            # Select the subset with parameters involved in test
+            vcv = vcv.loc[R.columns, R.columns]
+            coef = coef.loc[R.columns]
+
+            # Compute the Wald statistic
+            W = (R.dot(coef) - r).T \
+                .dot(np.linalg.inv(R.dot(vcv).dot(R.T))) \
+                .dot(R.dot(coef) - r)
+
+            # Degrees of freedom equals the number of restrictions
+            q = R.shape[0]
+
+            # Compute p-value
+            p_val = 1 - chi2.cdf(W, q)
+
+            # Organize output
+            out = pd.Series([W, p_val], index=["chi_sq", "p_val"])
+
+        return out
 
     def get_yhat(self, original=True):
         """
@@ -263,7 +340,11 @@ def get_dynamic_betas(Y, x, method, **kwargs):
 
 if __name__ == '__main__':
     pass
-    # X = pd.DataFrame(data=np.random.normal(size=(100,2)))
-    # y = X.dot(pd.Series(data=[2,5], index=X.columns))
-    # mod = PureOls(y, X, add_constant=False)
-    # print(mod.get_diagnostics())
+    X = pd.DataFrame(data=np.random.normal(size=(1000, 2)), columns=["x", "e"])
+    y = X.dot(pd.Series(data=[2, 0.5], index=X.columns))
+    y.name = "y"
+    mod = PureOls(y, X[["x"]], add_constant=True)
+    print(mod.get_diagnostics())
+    print(mod.linear_restrictions_test(
+        pd.DataFrame([[1, 0], [0, 1]], columns=["const", "x"]),
+        pd.Series([0, 2])))

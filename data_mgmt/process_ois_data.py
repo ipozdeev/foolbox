@@ -44,7 +44,8 @@ def fetch_bloomberg_ois_data(data_path=None):
     ois_data = parse_bloomberg_excel(
         filename=fname,
         colnames_sheet="tenor",
-        data_sheets=["aud","cad","chf","gbp","nzd","sek","usd","eur"])
+        data_sheets=["aud", "cad", "chf", "eur","gbp", "jpy", "nzd", "sek",
+                     "usd"])
 
     # Pickle the bastard ----------------------------------------------------
     # Define the file name for pickling

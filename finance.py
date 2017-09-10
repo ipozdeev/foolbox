@@ -1892,7 +1892,8 @@ class OIS():
             "jpy": {"start_offset": 2,
                     "fixing_lag": 1,
                     "day_cnt_flt": 365,
-                    "day_roll": "modified following"},
+                    "day_roll": "modified following",
+                    "new_rate_lag": None},
 
             "nzd": {"start_offset": 2,
                     "fixing_lag": 0,

@@ -10,7 +10,8 @@ user_info =\
     {"borisenko": {
         "R_USER": "borisenko",
         "R_HOME": "c:/R/R-3.2.5",
-        "gdrive": "C:/Users/borisenko/GoogleDrive/"
+        "gdrive": "C:/Users/borisenko/GoogleDrive/",
+        "local": "C:/Users/borisenko/Documents/"
         },
      "Igor": {
         "R_USER": "Igor",

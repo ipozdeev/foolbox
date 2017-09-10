@@ -6,11 +6,15 @@ sns.set_style("white")
 
 from foolbox.wp_tabs_figs.wp_settings import *
 plt.rcParams["axes.edgecolor"] = new_gray
-plt.rcParams["axes.linewidth"]  = 2.0
+plt.rcParams["axes.linewidth"] = 2.0
 
 from foolbox.api import *
 from foolbox.linear_models import PureOls
 from foolbox.wp_tabs_figs.wp_settings import *
+
+from utils import resample_between_events
+
+from wp_ois.wp_settings import central_banks_start_dates, end_date, cb_fx_map
 
 def fig_implied_rates_unbiasedness(tgt_rate_diff, on_rate_diff, ols_eq=False):
     """
@@ -69,8 +73,8 @@ def fig_implied_rates_unbiasedness(tgt_rate_diff, on_rate_diff, ols_eq=False):
     bp.tick_params(axis='both', labelsize=12)
 
     # labels
-    ax.set_xlabel('target rate change', fontsize=12)
-    ax.set_ylabel('underlying rate change', fontsize=12)
+    ax.set_xlabel('target rate change, bps', fontsize=12)
+    ax.set_ylabel('underlying rate change, bps', fontsize=12)
     bp.yaxis.label.set_size(12)
 
     # legend
@@ -106,6 +110,7 @@ if __name__ == "__main__":
 
     out_path = set_credentials.set_path("ois_project/figs/")
 
+
     # data ------------------------------------------------------------------
     # overnight rates
     with open(data_path + "ois_bloomberg.p", mode="rb") as hangar:
@@ -122,6 +127,9 @@ if __name__ == "__main__":
     tgt_rate_changes = events_data["joint_cbs_plus_unscheduled"].astype(float)
     tgt_rate_changes = tgt_rate_changes.drop("nok", axis=1)
 
+    # Inverted cb_fx_map {"currency": "corresponding_cb"}
+    fx_cb_map = dict((fx, cb) for cb,fx in cb_fx_map.items())
+
     # OLS regression --------------------------------------------------------
     def fun(x):
         try:
@@ -134,9 +142,17 @@ if __name__ == "__main__":
     coef = dict()
     se = dict()
 
+    # Linear restrictions for the Wald test. Joint hypothesis alpha=0, beta=1
+    R = pd.DataFrame([[1, 0], [0, 1]],columns=["const", "tgt"])
+    r = pd.Series([0, 1], index=R.index)
+    wald = dict()
+
     for c in tgt_rate_changes.columns:
         # c = "usd"
         # this_ois = OIS.from_iso(c, DateOffset(months=1))
+
+        # Get the sample start for the corresponding cb
+        start_date = central_banks_start_dates[fx_cb_map[c]]
 
         this_tgt_rate_change = tgt_rate_changes.loc[:, c].dropna()\
             .astype(float)
@@ -161,7 +177,10 @@ if __name__ == "__main__":
 
         this_cumul_rate = (np.exp(this_cumul_rate) - 1)*360*100
 
-        this_on_rate_diff = this_cumul_rate.diff().squeeze()
+        # Take the sample
+        this_on_rate_diff = \
+            this_cumul_rate.diff().squeeze()[start_date:end_date]
+        this_tgt_rate_change = this_tgt_rate_change[start_date:end_date]
 
         fig, ax = fig_implied_rates_unbiasedness(
             tgt_rate_diff=this_tgt_rate_change,
@@ -169,29 +188,43 @@ if __name__ == "__main__":
             ols_eq=True)
 
         fig.tight_layout()
-        fig.savefig(out_path + "unbias_" + c + ".pdf")
+        #fig.savefig(out_path + "unbias_" + c + ".pdf")
 
         # # regression
-        # y0 = this_on_rate_diff.rename("on")
-        # x0 = this_tgt_rate_change.rename("tgt")
-        #
-        # mod = PureOls(y0*100, x0*100, add_constant=True)
-        # diagnostics = mod.get_diagnostics(HAC=True)
-        #
-        # coef[c] = diagnostics.loc["coef"]
-        # se[c] = diagnostics.loc["se"]
+        y0 = this_on_rate_diff.rename("on")
+        x0 = this_tgt_rate_change.rename("tgt")
+
+        mod = PureOls(y0*100, x0*100, add_constant=True)
+        diagnostics = mod.get_diagnostics(HAC=True)
+
+        coef[c] = diagnostics.loc["coef"]
+        se[c] = diagnostics.loc["se"]
+
+        # Compute Wald test for the joint hypothesis: alpha=0, beta=1
+        wald[c] = mod.linear_restrictions_test(R, r)
+
 
     coef = pd.DataFrame.from_dict(coef)
     coef.index = ["alpha", "beta"]
     se = pd.DataFrame.from_dict(se)
     se.index = ["alpha", "beta"]
 
+    wald = pd.DataFrame.from_dict(wald)
+
+    # Append coef and se dfs for making the table
+    coef.loc["chi_sq", :] = wald.loc["chi_sq", :]
+    se.loc["chi_sq", :] = wald.loc["p_val", :]
+
+
     out_path = set_credentials.set_path("../projects/ois/tex/figs/",
         which="local")
+
+    # out_path = set_credentials.set_path("",
+    #     which="local")
+
     to_better_latex(coef, se, fmt_coef="{:3.2f}", fmt_tstat="{:3.2f}",
         buf=out_path+"tab_overnight_vs_policy_rates.tex",
         column_format="l"+"W"*len(se.columns))
-
 
 
     # this_tgt_rate_change.where(this_tgt_rate_change < -0.5).dropna()

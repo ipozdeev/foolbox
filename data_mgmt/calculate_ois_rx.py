@@ -6,16 +6,16 @@ from foolbox.wp_tabs_figs.wp_settings import *
 if __name__ == "__main__":
 
     maturity_to_offset = {
-        "1W" : DateOffset(weeks=1),
-        "2W" : DateOffset(weeks=2),
-        "1M" : DateOffset(months=1),
-        "3M" : DateOffset(months=3),
-        "6M" : DateOffset(months=6),
-        "9M" : DateOffset(months=9),
-        "1Y" : DateOffset(years=1)
+        "1W": DateOffset(weeks=1),
+        "2W": DateOffset(weeks=2),
+        "1M": DateOffset(months=1),
+        "3M": DateOffset(months=3),
+        "6M": DateOffset(months=6),
+        "9M": DateOffset(months=9),
+        "1Y": DateOffset(years=1)
         }
 
-    order = ["1W","2W","1M","3M","6M","9M","1Y"]
+    order = ["1W", "2W", "1M", "3M", "6M", "9M", "1Y"]
 
     # data ------------------------------------------------------------------
     # ois data
@@ -31,8 +31,9 @@ if __name__ == "__main__":
 
     # loop over currencies
     for c in on_rates.columns:
-        if c == "usd":
-            continue
+        print(c)
+        # if c == "usd":
+        #     continue
         # c = "usd"
         this_ois_data = ois_data[c].astype(float)
         this_on_rate = on_rates[c]

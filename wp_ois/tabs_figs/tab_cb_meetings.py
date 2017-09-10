@@ -1,4 +1,5 @@
 from foolbox.api import *
+from wp_ois.wp_settings import central_banks_start_dates, end_date
 
 if __name__ == "__main__":
     # Parse this file
@@ -6,11 +7,9 @@ if __name__ == "__main__":
         "central_bank_rates_raw_data/summary_all_central_banks.xlsx"
 
     # Parse these banks since these dates
-    central_banks = {"rba": "2001-10", "boc": "2002-05", "snb": "2000-08",
-                     "ecb": "2000-01", "boe": "2000-12", "rbnz": "2002-09",
-                     "riks": "2004-08", "fomc": "2001-12"}
+    central_banks = central_banks_start_dates
     # And unntil this date
-    end_date = "2017-06-30"
+    end_date = end_date
 
     # Order cbs according to alphabetical order of currencies
     ordered_cbs = ["rba", "boc", "snb", "ecb", "boe", "rbnz", "riks", "fomc"]
