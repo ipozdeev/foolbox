@@ -124,7 +124,7 @@ if __name__ == "__main__":
     with open(data_path + "ois_project_events.p", mode="rb") as hangar:
         events_data = pickle.load(hangar)
 
-    tgt_rate_changes = events_data["joint_cbs_plus_unscheduled"].astype(float)
+    tgt_rate_changes = events_data["joint_cbs_plus_unscheduled_eff"].astype(float)
     tgt_rate_changes = tgt_rate_changes.drop("nok", axis=1)
 
     # Inverted cb_fx_map {"currency": "corresponding_cb"}

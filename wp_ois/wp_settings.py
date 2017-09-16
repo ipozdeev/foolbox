@@ -10,6 +10,10 @@ central_banks_start_dates =\
 
 end_date = "2017-06-30"
 
+# Effective day offset in business days, for countries with no series available
+cb_effective_date_offset = \
+    {"boc": 0, "snb": 0, "boe": 1, "rbnz": 0, "norges": 1, "fomc": 1}
+
 cb_fx_map = \
     {"rba": "aud", "boc": "cad", "snb": "chf", "ecb": "eur", "boe": "gbp",
      "rbnz": "nzd", "riks": "sek", "fomc": "usd"}
