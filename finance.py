@@ -892,7 +892,7 @@ class PolicyExpectation():
 
     @classmethod
     def from_pickles(cls, data_path, currency, s_dt="1990",
-        impl_rates_pickle="implied_rates.p"):
+        impl_rates_pickle="implied_rates.p", events_pickle="events.p"):
         """
         Parameters
         ----------
@@ -907,7 +907,7 @@ class PolicyExpectation():
             with rate expectation set
         """
         # meetings
-        with open(data_path + "events.p", mode='rb') as hangar:
+        with open(data_path + events_pickle, mode='rb') as hangar:
             events = pickle.load(hangar)
 
         # concat level and change, trim -------------------------------------
