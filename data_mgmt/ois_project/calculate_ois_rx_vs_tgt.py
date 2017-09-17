@@ -35,7 +35,7 @@ if __name__ == "__main__":
 
     # Reindex the target rates and substitute them for overnight rates
     tgt_rates = \
-        tgt_rates.reindex(on_rates.index).ffill().bfill().drop(["nok"], axis=1)
+        tgt_rates.reindex(on_rates.index).ffill().drop(["nok"], axis=1)
     on_rates = tgt_rates
 
     risk_premium_all = dict()
