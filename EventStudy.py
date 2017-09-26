@@ -50,6 +50,27 @@ class EventStudy():
         self.abnormal_data = abnormal_data
         self.events = events
 
+        self.assets = self.abnormal_data.columns
+
+        self._timeline = None
+
+    @property
+    def timeline(self):
+        if self._timeline is None:
+            timelines = dict()
+            # loop over columns in `abnormal_data`
+            for c in self.abnormal_data.columns:
+                this_evt = self.events[c].dropna()
+                this_timeline = self.mark_timeline(
+                    data=self.abnormal_data[c],
+                    events=this_evt,
+                    window=self._window,
+                    x_overlaps=self._x_overlaps)
+                timelines[c] = this_timeline
+            self._timeline = timelines
+
+        return self._timeline
+
     def prepare_data(self):
         """
         """
@@ -58,6 +79,12 @@ class EventStudy():
 
         # take events as is
         events = self._raw["events"].copy()
+
+        # fix index
+        if isinstance(events.index, pd.tseries.index.DatetimeIndex):
+            events.index = events.index.date
+        if isinstance(data.index, pd.tseries.index.DatetimeIndex):
+            data.index = data.index.date
 
         # type manipulations to ensure that everthing is conformable DataFrames
         if isinstance(data, pd.Series):
@@ -159,7 +186,7 @@ class EventStudy():
 
         # count events
         # evt_count = events.expanding().count() - 1
-        evt_count = pd.Series(data=events.index.date, index=events.index)
+        evt_count = pd.Series(data=events.index, index=events.index)
         evt_count = evt_count.reindex(index=data.index)
 
         # allocate space for marked timeline: need pre and post to capture
@@ -258,21 +285,10 @@ class EventStudy():
 
         # loop over columns in `abnormal_data`
         for c in self.abnormal_data.columns:
-            print(c)
-            # if c == "sek":
-            #     ipdb.set_trace()
-            this_evt = self.events[c].dropna()
-
-            # timeline
-            this_timeline = self.mark_timeline(
-                data=self.abnormal_data[c],
-                events=this_evt,
-                window=self._window,
-                x_overlaps=self._x_overlaps)
             # pivot
             res[c] = self.pivot_with_timeline(
                 data=self.abnormal_data[c],
-                timeline=this_timeline)
+                timeline=self.timeline[c])
 
         res = pd.Panel.from_dict(res, orient="minor")
 
@@ -309,147 +325,171 @@ class EventStudy():
 
         return cs_mu
 
-    # def get_ci(self, ps, method="simple", **kwargs):
-    #     """ Calculate confidence bands.
-    #     Parameters
-    #     ----------
-    #     p : float / tuple of floats
-    #         interval width or tuple of (lower bound, upper bound)
-    #     Returns
-    #     -------
-    #     ci : pd.Panel
-    #
-    #     """
-    #     # if `ps` was provided as single float
-    #     if isinstance(ps, float):
-    #         ps = ((1-ps)/2, ps/2+1/2)
-    #
-    #     # calculate confidence band
-    #     if method == "simple":
-    #         ci = self.simple_ci(ps=ps)
-    #     elif method == "boot":
-    #         ci = self.boot_ci(ps, **kwargs)
-    #     else:
-    #         raise NotImplementedError("ci you asked for is not implemented")
-    #
-    #     self.ci = ci
-    #
-    #     return ci
+    def get_ci(self, ps, method="simple", **kwargs):
+        """ Calculate confidence bands.
+        Parameters
+        ----------
+        p : float / tuple of floats
+            interval width or tuple of (lower bound, upper bound)
+        Returns
+        -------
+        ci : pd.Panel
 
-    # def simple_ci(self, ps):
-    #     """
-    #     """
-    #     ta, tb, tc, td = self._window
-    #
-    #     sigma = np.sqrt(self.grp_var.sum())/self.grp_var.count()
-    #     self.sigma = sigma
-    #
-    #     # mu = boot_from.mean()
-    #
-    #     # # sd of mean across events is mean outside of events divided
-    #     # #   through sqrt(number of events)
-    #     # sd_across = boot_from.std()/np.sqrt(len(self.events))
-    #     # # sd of cumulative sum of mean across events is sd times sqrt(# of
-    #     # #   cumulants)
-    #     # # pdb.set_trace()
-    #
-    #     q = np.sqrt(np.hstack(
-    #         (np.arange(-ta+tb+1,0,-1), np.arange(1,td-tc+2))))
-    #     # q = q[:,np.newaxis]
-    #
-    #     # # multiply with broadcast, add mean
-    #     # ci_lo = norm.ppf(ps[0])*q*sd_across.values[np.newaxis,:] + \
-    #     #     boot_from.mean().values[np.newaxis,:]*q**2
-    #     # ci_hi = norm.ppf(ps[1])*q*sd_across.values[np.newaxis,:] + \
-    #     #     boot_from.mean().values[np.newaxis,:]*q**2
-    #     # multiply with broadcast, add mean
-    #     ci_lo = norm.ppf(ps[0])*q*sigma + self.tot_mu*(q**2)
-    #     ci_hi = norm.ppf(ps[1])*q*sigma + self.tot_mu*(q**2)
-    #
-    #     # concatenate: items keeps columns of Y
-    #     ci = pd.DataFrame(
-    #         index=self.stacked_idx,
-    #         columns=ps)
-    #
-    #     ci.loc[:,ps[0]] = ci_lo
-    #     ci.loc[:,ps[1]] = ci_hi
-    #
-    #     return ci
+        """
+        # if `ps` was provided as single float
+        if isinstance(ps, float):
+            ps = ((1-ps)/2, ps/2+1/2)
 
-    def boot_ci(self, ps, M=500):
+        # calculate confidence band
+        if method == "simple":
+            ci = self.simple_ci(ps=ps)
+        elif method == "boot":
+            ci = self.boot_ci(ps, **kwargs)
+        else:
+            raise NotImplementedError("ci you asked for is not implemented")
+
+        self.ci = ci
+
+        return ci
+
+    def simple_ci(self, ps):
+        """
+        """
+        pass
+
+        # ta, tb, tc, td = self._window
+        #
+        # sigma = np.sqrt(self.grp_var.sum())/self.grp_var.count()
+        # self.sigma = sigma
+        #
+        # # mu = boot_from.mean()
+        #
+        # # # sd of mean across events is mean outside of events divided
+        # # #   through sqrt(number of events)
+        # # sd_across = boot_from.std()/np.sqrt(len(self.events))
+        # # # sd of cumulative sum of mean across events is sd times sqrt(# of
+        # # #   cumulants)
+        # # # pdb.set_trace()
+        #
+        # q = np.sqrt(np.hstack(
+        #     (np.arange(-ta+tb+1,0,-1), np.arange(1,td-tc+2))))
+        # # q = q[:,np.newaxis]
+        #
+        # # # multiply with broadcast, add mean
+        # # ci_lo = norm.ppf(ps[0])*q*sd_across.values[np.newaxis,:] + \
+        # #     boot_from.mean().values[np.newaxis,:]*q**2
+        # # ci_hi = norm.ppf(ps[1])*q*sd_across.values[np.newaxis,:] + \
+        # #     boot_from.mean().values[np.newaxis,:]*q**2
+        # # multiply with broadcast, add mean
+        # ci_lo = norm.ppf(ps[0])*q*sigma + self.tot_mu*(q**2)
+        # ci_hi = norm.ppf(ps[1])*q*sigma + self.tot_mu*(q**2)
+        #
+        # # concatenate: items keeps columns of Y
+        # ci = pd.DataFrame(
+        #     index=self.stacked_idx,
+        #     columns=ps)
+        #
+        # ci.loc[:,ps[0]] = ci_lo
+        # ci.loc[:,ps[1]] = ci_hi
+        #
+        # return ci
+
+    @staticmethod
+    def shuffle_data(data, n_blocks):
+        """
+        """
+        T, N = data.shape
+
+        arr_no_na = np.array([
+            np.random.choice(
+                data[p].dropna().values, T) for p in data.columns]).T
+
+        old_df_no_na = pd.DataFrame(
+            data=arr_no_na,
+            index=data.index,
+            columns=data.columns)
+
+        new_df_no_na = data.fillna(old_df_no_na).values
+
+        new_df_no_na = np.concatenate((
+            new_df_no_na,
+            new_df_no_na[np.random.choice(range(T), n_blocks - T % n_blocks)]))
+
+        M = new_df_no_na.shape[0] // n_blocks
+        res = new_df_no_na.reshape(M, -1, N)
+        res = res[np.random.permutation(M)].reshape(-1, N)
+
+        res = pd.DataFrame(data=res, columns=data.columns)
+
+        return res
+
+    def boot_ci(self, ps, M=500, n_blocks=None, fun=None):
         """
         Returns
         -------
         ci : pandas.DataFrame
             with columns for confidence interval bands
+        fun : callable
+            function to call on the (events, event_index, assets) panel
         """
         ta, tb, tc, td = self._window
+
+        if n_blocks is None:
+            n_blocks = td - ta + 1
 
         ci = pd.Panel(
             items=ps,
             major_axis=self.event_index,
             minor_axis=self.abnormal_data.columns)
 
-        # loop over columns in `abnormal_data`
-        for c in self.abnormal_data.columns:
+        # boot from `abnormal_data` without intervals around events
+        this_interevt_idx = {
+            c: self.timeline[c].loc[:, "inter_evt"].astype(bool) \
+                for c in self.assets}
+        boot_from = {
+            c: self.abnormal_data[c].copy().ix[this_interevt_idx[c]] \
+                for c in self.assets}
+        Ks = {c: self.events[c].count() for c in self.assets}
 
-            this_evt = self.events[c].dropna()
-            K = len(this_evt)
+        boot_from = pd.DataFrame.from_dict(boot_from)
 
-            # timeline
-            this_timeline = self.mark_timeline(
-                data=self.abnormal_data[c],
-                events=this_evt,
+        # space for df's of pivoted tables
+        booted = pd.DataFrame(columns=range(M), index=self.event_index)
+
+        # loop over simulations
+        for p in range(M):
+
+            print(p)
+
+            # shuffle data
+            shuffled_data = self.shuffle_data(boot_from, n_blocks=n_blocks)
+
+            # shuffle events
+            # make sure resampled events do not lie outside normal range
+            possible_dt = shuffled_data.index.tolist()[(-ta+1):-(td+1)]
+            shuffled_evts = pd.DataFrame.from_dict({
+                c: pd.Series(1,
+                    index=np.random.choice(possible_dt, Ks[c], replace=False))\
+                for c in self.assets})
+
+            this_evt_study = EventStudy(
+                data=shuffled_data,
+                events=shuffled_evts,
                 window=self._window,
+                normal_data=0.0,
                 x_overlaps=self._x_overlaps)
 
-            # boot from `abnormal_data` without intervals around events
-            this_interevt_idx = this_timeline.loc[:, "inter_evt"].astype(bool)
-            boot_from = self.abnormal_data[c].copy().ix[this_interevt_idx]
+            # pivot this batch
+            this_resp = this_evt_study.collect_responses()
 
-            # possible dates exclude values that are too early or too late
-            possible_dt = boot_from.index.tolist()[(-ta):-(td+1)]
+            # calculate transformation
+            res = fun(self.get_ts_cumsum(this_resp, window=self._window))
 
-            # space for df's of pivoted tables
-            booted = pd.DataFrame(columns=range(M), index=self.event_index)
+            booted.iloc[:, p] = res
 
-            for p in range(M):
-                # print(p)
-                # draw sequence of events, sort them
-                tmp_events = pd.Series(
-                    data=list(range(K)),
-                    index=sorted(random.sample(possible_dt, K)))
-                # ipdb.set_trace()
-                tmp_events, _ = self.exclude_overlaps(tmp_events, boot_from,
-                    self._window)
+        this_ci = booted.quantile(ps, axis=1).T
 
-                tmp_timeline = self.mark_timeline(
-                    data=boot_from,
-                    events=tmp_events,
-                    window=self._window,
-                    x_overlaps=self._x_overlaps)
-
-                # pivot this batch
-                this_pivoted_data = self.pivot_with_timeline(
-                    data=boot_from,
-                    timeline=tmp_timeline)
-
-                # calculate cumsum + cross-sectional mean
-                this_cs_ts = self.get_cs_mean(
-                    self.get_ts_cumsum(this_pivoted_data, window=self._window),
-                    window=self._window)
-
-                # store
-                booted.iloc[:, p] = this_cs_ts
-
-            # extract percentiles
-            # ipdb.set_trace()
-            this_ci = booted.quantile(ps, axis=1)
-
-            # store
-            ci.loc[:, :, c] = this_ci.T
-
-        return ci
+        return this_ci
 
     # def plot(self, **kwargs):
     #     """
@@ -520,6 +560,33 @@ class EventStudy():
     #     fig.suptitle(self.data.name, fontsize=14)
     #
     #     return fig
+
+    @staticmethod
+    def mean(method="simple"):
+        """
+        method : str
+            'simple' or 'count_weighted'
+        """
+        def simple_avg(x):
+            assert isinstance(x, pd.Panel)
+            res = x.mean(axis=("items")).mean(axis=1)
+            return res
+
+        def count_weighted_avg(x):
+            assert isinstance(x, pd.Panel)
+            wght = x.count(axis="items").divide(
+                x.count(axis="items").sum(axis=1),
+                axis=0)
+            res = (x.mean(axis=("items"))*wght).sum(axis=1)
+            return res
+
+        if method == "simple":
+            return simple_avg
+        elif method == "count_weighted":
+            return count_weighted_avg
+        else:
+            raise ValueError("type '{}' not implemented".format(method))
+
 
 # def event_study_wrapper(data, events, reix_w_bday=False,
 #     direction="all", crisis="both", window=None, ps=0.9, ci_method="simple",
@@ -604,16 +671,10 @@ class EventStudy():
 #
 #     return es
 
-# def get_idx(data, t):
-#     """ Fetch integer index given time index.
-#     If index `t` is not present in `data`.index, this function finds the
-#     first present later.
-#     """
-#     return data.index.get_loc(t, method="ffill")
 
 if __name__ == "__main__":
 
-    import ipdb
+    # import ipdb
     from foolbox.api import *
 
     # currency to drop
@@ -642,35 +703,21 @@ if __name__ == "__main__":
     events_perf = events["joint_cbs"].drop(drop_curs, axis=1, errors="ignore")
     events_perf = events_perf.loc[s_dt:e_dt]
 
-    data = ret["nzd"]
-    data = ret.copy()
-    events = events_perf["nzd"].dropna()
+    # data = ret["nzd"]
+    data = ret.copy().loc[s_dt:e_dt, :]
+    # events = events_perf["nzd"].dropna()
     events = events_perf.copy()
     events = events.where(events < 0)
 
     es = EventStudy(data, events, window, normal_data=0.0, x_overlaps=True)
 
-    ipdb.set_trace()
+    # ipdb.set_trace()
     res = es.collect_responses()
+    cum_res = es.get_ts_cumsum(res, window)
 
-    res.squeeze().iloc[:10, 0].sum()
+    ci = es.boot_ci(ps=(0.05, 0.95), M=5, fun=es.mean("count_weighted"))
 
-    res.squeeze()
+    fn = es.mean("count_weighted")
+    ax = fn(cum_res).plot()
 
-    mu = es.get_ts_cumsum(res, window).mean(axis="items")
-    number_evts = es.get_ts_cumsum(res, window).count(axis="items")
-
-    r = (mu * number_evts.divide(number_evts.sum(axis=1), axis=0)).sum(axis=1)
-
-    r.plot()
-
-
-    ax = es.get_cs_mean(es.get_ts_cumsum(res, window), window).plot()
-    es.get_ts_cumsum(res, window).loc[:,:,"sek"].dropna(how="all", axis=1)
-    res
-
-    es.events
-
-    ci = es.boot_ci(ps=(0.05, 0.95), M=100)
-
-    ci.squeeze().plot(ax=ax, color='gray')
+    ci.plot(ax=ax, color="gray")
