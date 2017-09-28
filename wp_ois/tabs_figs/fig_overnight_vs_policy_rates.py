@@ -12,9 +12,10 @@ from foolbox.api import *
 from foolbox.linear_models import PureOls
 from foolbox.wp_tabs_figs.wp_settings import *
 
-from utils import resample_between_events
+from foolbox.utils import resample_between_events
 
-from wp_ois.wp_settings import central_banks_start_dates, end_date, cb_fx_map
+from foolbox.wp_ois.wp_settings import central_banks_start_dates, end_date,\
+    cb_fx_map
 
 def fig_implied_rates_unbiasedness(tgt_rate_diff, on_rate_diff, ols_eq=False):
     """
@@ -30,7 +31,7 @@ def fig_implied_rates_unbiasedness(tgt_rate_diff, on_rate_diff, ols_eq=False):
     unq_tgt_change = sorted(data_to_boxplot["tgt"].unique())
 
     # start figure
-    fig, ax = plt.subplots(figsize=(8.27,8.27/1.66))
+    fig, ax = plt.subplots(figsize=(8.27,8.27/2.2))
 
     # boxplots --------------------------------------------------------------
     bp = sns.boxplot(data=data_to_boxplot, x="tgt", y="on", linewidth=1,
@@ -63,9 +64,9 @@ def fig_implied_rates_unbiasedness(tgt_rate_diff, on_rate_diff, ols_eq=False):
 
     # limits
     ax.yaxis.set_major_locator(FixedLocator(np.arange(
-        np.ceil(ax.get_ylim()[0]/25)*25,
-        np.ceil(ax.get_ylim()[-1]/25)*25,
-        25)))
+        np.ceil(ax.get_ylim()[0]/50)*50,
+        np.ceil(ax.get_ylim()[-1]/50)*50,
+        50)))
     ax.set_ylim((ylim[0]-5, ylim[-1]+5))
 
     # ticks
@@ -110,7 +111,6 @@ if __name__ == "__main__":
 
     out_path = set_credentials.set_path("ois_project/figs/")
 
-
     # data ------------------------------------------------------------------
     # overnight rates
     with open(data_path + "ois_bloomberg.p", mode="rb") as hangar:
@@ -124,7 +124,8 @@ if __name__ == "__main__":
     with open(data_path + "ois_project_events.p", mode="rb") as hangar:
         events_data = pickle.load(hangar)
 
-    tgt_rate_changes = events_data["joint_cbs_plus_unscheduled_eff"].astype(float)
+    tgt_rate_changes = \
+        events_data["joint_cbs_plus_unscheduled_eff"].astype(float)
     tgt_rate_changes = tgt_rate_changes.drop("nok", axis=1)
 
     # Inverted cb_fx_map {"currency": "corresponding_cb"}
@@ -158,6 +159,8 @@ if __name__ == "__main__":
             .astype(float)
         this_on_rate = on_rates.loc[:, c].astype(float)
 
+        # this_on_rate = this_on_rate.shift(this_ois.fixing_lag)
+
         # this_on_rate_avg = this_ois.get_rates_until(this_on_rate,
         #     meetings=this_tgt_rate_change,
         #     method="average")
@@ -167,20 +170,35 @@ if __name__ == "__main__":
 
         mask = pd.Series(True, this_tgt_rate_change.index).reindex(
             index=this_on_rate.index)
-        mask.fillna(method="ffill", limit=2, inplace=True)
-        mask.fillna(method="bfill", limit=2, inplace=True)
+        mask.fillna(method="ffill", limit=1, inplace=True)
+        mask.fillna(method="bfill", limit=1, inplace=True)
 
         this_cumul_rate = resample_between_events(
-            data=np.log(this_on_rate/100/360+1),
+            data=(this_on_rate/100/360),
             events=this_tgt_rate_change,
             fun=np.nanmean, mask=mask)
 
-        this_cumul_rate = (np.exp(this_cumul_rate) - 1)*360*100
+        # this_cumul_rate = (np.exp(this_cumul_rate) - 1)*360*100
+        this_cumul_rate = (this_cumul_rate)*360*100
 
         # Take the sample
         this_on_rate_diff = \
             this_cumul_rate.diff().squeeze()[start_date:end_date]
+
         this_tgt_rate_change = this_tgt_rate_change[start_date:end_date]
+
+        # # new version -------------------------------------------------------
+        # this_ois = OIS.from_iso(c, maturity=DateOffset(months=1))
+        # this_avg_on_rate = this_ois.get_rates_until(
+        #     this_on_rate,
+        #     this_tgt_rate_change,
+        #     method="g_average")
+        # this_pe = PolicyExpectation.from_pickles(data_path, c,
+        #     impl_rates_pickle="implied_rates_from_1m.p",
+        #     events_pickle="events.p")
+        # this_on_rate_diff = this_pe.rate_expectation - this_avg_on_rate
+        # this_on_rate_diff = this_on_rate_diff.loc[start_date:end_date]
+        # # -------------------------------------------------------------------
 
         fig, ax = fig_implied_rates_unbiasedness(
             tgt_rate_diff=this_tgt_rate_change,
@@ -188,7 +206,7 @@ if __name__ == "__main__":
             ols_eq=True)
 
         fig.tight_layout()
-        #fig.savefig(out_path + "unbias_" + c + ".pdf")
+        fig.savefig(out_path + "unbias_" + c + ".pdf")
 
         # # regression
         y0 = this_on_rate_diff.rename("on")
