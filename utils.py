@@ -552,7 +552,7 @@ def resample_between_events(data, events, fun, mask=None):
     to_group = pd.concat((data, idx), axis=1)
 
     # groupby!
-    res = to_group.groupby("index").mean()
+    res = to_group.groupby("index").agg(fun)
 
     return res
 
