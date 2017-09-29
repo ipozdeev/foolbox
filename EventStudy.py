@@ -5,12 +5,16 @@ import random
 from pandas.tseries.offsets import DateOffset
 import matplotlib.pyplot as plt
 import warnings
+from foolbox.utils import resample_between_events
+from foolbox.wp_tabs_figs.wp_settings import *
+
 # import ipdb
 
 class EventStudy():
     """
     """
-    def __init__(self, data, events, window, normal_data=0, x_overlaps=False):
+    def __init__(self, data, events, window, mean_type="simple",
+        normal_data=0.0, x_overlaps=False):
         """
         Parameters
         ----------
@@ -24,12 +28,17 @@ class EventStudy():
             a - start of cumulating returns in `data` before event (neg. int);
             b - stop of cumulating returns before event (neg. int),
             c - start of cumulating returns in `data` after event,
-            d - stop of cumulating returns before event.
-            For example, [-5,-1,1,5] means that one starts to look at returns 5
+            d - stop of cumulating returns before event;
+            for example, [-5,-1,1,5] means that one starts to look at returns 5
             periods before each event, ends 1 day before, starts again 1 day
-            after and stops 5 days after.
-        normal_data : pandas.DataFrame/Series
+            after and stops 5 days after
+        mean_type : str
+            method for calculating cross-sectional average; "simple" or
+            "count_weighted" are supported
+        normal_data : float/pandas.DataFrame/pandas.Series
             of 'normal' returns
+        x_overlaps : bool
+            True for excluding events and days in case of overlaps
         """
         self._raw = {
             "data": data,
@@ -38,8 +47,9 @@ class EventStudy():
         self._x_overlaps = x_overlaps
         self._window = window
         self._normal_data = normal_data
+        self._mean_type = mean_type
 
-        # break down window
+        # break down window, construct index of holding days
         ta, tb, tc, td = self._window
         self.event_index = \
             np.array(list(range(ta, tb+1)) + list(range(tc, td+1)))
@@ -52,7 +62,10 @@ class EventStudy():
 
         self.assets = self.abnormal_data.columns
 
+        # property-based
         self._timeline = None
+        self._evt_avg_ts_sum = None
+        self._the_mean = None
 
     @property
     def timeline(self):
@@ -70,6 +83,22 @@ class EventStudy():
             self._timeline = timelines
 
         return self._timeline
+
+    @property
+    def evt_avg_ts_sum(self):
+        if self._evt_avg_ts_sum is None:
+            responses = self.collect_responses()
+            self._evt_avg_ts_sum = self.get_ts_cumsum(responses, self._window)
+
+        return self._evt_avg_ts_sum
+
+    @property
+    def the_mean(self):
+        if self._the_mean is None:
+            fun = self.mean_fun(method=self._mean_type)
+            self._the_mean = fun(self.evt_avg_ts_sum)
+
+        return self._the_mean
 
     def prepare_data(self):
         """
@@ -165,6 +194,8 @@ class EventStudy():
             of events (collapsed)
         window : tuple
             ta, tb, tc, td as before
+        x_overlaps : bool
+            see above
 
         Returns
         -------
@@ -222,6 +253,7 @@ class EventStudy():
         # fill nans
         # inter_evt_idx = timeline.loc[:, ["evt_wind_pre", "evt_wind_post"]].\
         #     dropna(how="all").index
+        # ipdb.set_trace()
         timeline.ix[timeline.loc[:, "evt_no"].isnull(), "inter_evt"] = 1
 
         # ensure overlaps do not enter
@@ -318,23 +350,23 @@ class EventStudy():
 
         return ts_cumsum
 
-    @staticmethod
-    def get_cs_mean(ndframe, window):
-        """Calculate the average across events."""
-        cs_mu = ndframe.mean(axis=("items" if len(ndframe.shape) > 2 else 1))
-
-        return cs_mu
-
     def get_ci(self, ps, method="simple", **kwargs):
-        """ Calculate confidence bands.
+        """Calculate confidence bands for self.`the_mean`; wrapper.
+
         Parameters
         ----------
-        p : float / tuple of floats
+        ps : float / tuple of floats
             interval width or tuple of (lower bound, upper bound)
+        method : str
+            "simple" or "boot"
+        **kwargs : dict
+            additional arguments to methods 'simple' or 'boot'
         Returns
         -------
-        ci : pd.Panel
+        ci : pandas.DataFrame
+            column'ed by quantiles
 
+        sets attribute `ci` needed for plots later
         """
         # if `ps` was provided as single float
         if isinstance(ps, float):
@@ -352,85 +384,73 @@ class EventStudy():
 
         return ci
 
-    def simple_ci(self, ps):
+    def simple_ci(self, ps, variances=None):
         """
         """
-        pass
+        ta, tb, tc, td = self._window
 
-        # ta, tb, tc, td = self._window
-        #
-        # sigma = np.sqrt(self.grp_var.sum())/self.grp_var.count()
-        # self.sigma = sigma
-        #
-        # # mu = boot_from.mean()
-        #
-        # # # sd of mean across events is mean outside of events divided
-        # # #   through sqrt(number of events)
-        # # sd_across = boot_from.std()/np.sqrt(len(self.events))
-        # # # sd of cumulative sum of mean across events is sd times sqrt(# of
-        # # #   cumulants)
-        # # # pdb.set_trace()
-        #
-        # q = np.sqrt(np.hstack(
-        #     (np.arange(-ta+tb+1,0,-1), np.arange(1,td-tc+2))))
-        # # q = q[:,np.newaxis]
-        #
-        # # # multiply with broadcast, add mean
-        # # ci_lo = norm.ppf(ps[0])*q*sd_across.values[np.newaxis,:] + \
-        # #     boot_from.mean().values[np.newaxis,:]*q**2
-        # # ci_hi = norm.ppf(ps[1])*q*sd_across.values[np.newaxis,:] + \
-        # #     boot_from.mean().values[np.newaxis,:]*q**2
-        # # multiply with broadcast, add mean
-        # ci_lo = norm.ppf(ps[0])*q*sigma + self.tot_mu*(q**2)
-        # ci_hi = norm.ppf(ps[1])*q*sigma + self.tot_mu*(q**2)
-        #
-        # # concatenate: items keeps columns of Y
-        # ci = pd.DataFrame(
-        #     index=self.stacked_idx,
-        #     columns=ps)
-        #
-        # ci.loc[:,ps[0]] = ci_lo
-        # ci.loc[:,ps[1]] = ci_hi
-        #
-        # return ci
+        var_sums = pd.DataFrame(
+            index=self.events.columns,
+            columns=["var", "count"])
 
-    @staticmethod
-    def shuffle_data(data, n_blocks):
-        """
-        """
-        T, N = data.shape
+        for c in self.events.columns:
+            # c = "nzd"
+            evts_used = self.timeline[c].loc[:, "evt_no"].dropna().unique()
 
-        arr_no_na = np.array([
-            np.random.choice(
-                data[p].dropna().values, T) for p in data.columns]).T
+            mask = self.timeline[c].loc[:, "inter_evt"].isnull()
 
-        old_df_no_na = pd.DataFrame(
-            data=arr_no_na,
-            index=data.index,
-            columns=data.columns)
+            # calculate variance between events
+            var_btw = resample_between_events(self.abnormal_data[c],
+                events=self.events[c].dropna(),
+                fun=lambda x: np.nanmean(x**2),
+                mask=mask)
 
-        new_df_no_na = data.fillna(old_df_no_na).values
+            var_sums.loc[c, "count"] = var_btw.loc[evts_used].count().values[0]
 
-        new_df_no_na = np.concatenate((
-            new_df_no_na,
-            new_df_no_na[np.random.choice(range(T), n_blocks - T % n_blocks)]))
+            if variances is None:
+                var_sums.loc[c, "var"] = var_btw.loc[evts_used].sum().values[0]
+            elif isinstance(variances, pd.Series):
+                var_sums.loc[c, "var"] = var_sums.loc[c, "count"]*variances[c]
+            else:
+                raise ValueError("Unknown type for variances!")
 
-        M = new_df_no_na.shape[0] // n_blocks
-        res = new_df_no_na.reshape(M, -1, N)
-        res = res[np.random.permutation(M)].reshape(-1, N)
+        # daily variances
+        daily_var = var_sums.loc[:, "var"] / var_sums.loc[:, "count"]**2
 
-        res = pd.DataFrame(data=res, columns=data.columns)
+        # weighted
+        if self._mean_type == "simple":
+            wght = pd.Series(1/len(self.assets), index=self.assets)
+        elif self._mean_type == "count_weighted":
+            wght = var_sums.loc[:, "count"] / var_sums.loc[:, "count"].sum()
 
-        return res
+        avg_daily_var = (daily_var * wght**2).sum()
 
-    def boot_ci(self, ps, M=500, n_blocks=None, fun=None):
-        """
+        # time index
+        time_idx = pd.Series(
+            data=np.hstack((np.arange(-ta+tb+1,0,-1), np.arange(1,td-tc+2))),
+            index=self.event_index)
+
+        cumul_avg_daily_var = avg_daily_var * time_idx
+
+        ci = pd.concat((
+            np.sqrt(cumul_avg_daily_var).rename(ps[0]) * norm.ppf(ps[0]),
+            np.sqrt(cumul_avg_daily_var).rename(ps[1]) * norm.ppf(ps[1])),
+            axis=1)
+
+        return ci
+
+    def boot_ci(self, ps, M=500, n_blocks=None):
+        """Block bootstrap.
         Returns
         -------
         ci : pandas.DataFrame
             with columns for confidence interval bands
-        fun : callable
-            function to call on the (events, event_index, assets) panel
+        ps : float/tuple
+            see above
+        M : int
+            number of iterations
+        n_blocks : int
+            size of blocks to use for resampling
         """
         ta, tb, tc, td = self._window
 
@@ -444,7 +464,7 @@ class EventStudy():
 
         # boot from `abnormal_data` without intervals around events
         this_interevt_idx = {
-            c: self.timeline[c].loc[:, "inter_evt"].astype(bool) \
+            c: self.timeline[c].loc[:, "inter_evt"].notnull() \
                 for c in self.assets}
         boot_from = {
             c: self.abnormal_data[c].copy().ix[this_interevt_idx[c]] \
@@ -476,93 +496,102 @@ class EventStudy():
                 data=shuffled_data,
                 events=shuffled_evts,
                 window=self._window,
+                mean_type=self._mean_type,
                 normal_data=0.0,
                 x_overlaps=self._x_overlaps)
 
-            # pivot this batch
-            this_resp = this_evt_study.collect_responses()
-
-            # calculate transformation
-            res = fun(self.get_ts_cumsum(this_resp, window=self._window))
-
-            booted.iloc[:, p] = res
+            booted.iloc[:, p] = this_evt_study.the_mean
 
         this_ci = booted.quantile(ps, axis=1).T
 
         return this_ci
 
-    # def plot(self, **kwargs):
-    #     """
-    #     Parameters
-    #     ----------
-    #     kwargs : dict
-    #         of arguments to EventStudy.get_ci() method.
-    #
-    #     Returns
-    #     -------
-    #     fig :
-    #     """
-    #     ta, tb, tc, td = self._window
-    #
-    #     cs_mu = self.get_cs_mean(self.before, self.after)
-    #     ts_mu = self.get_ts_cumsum(self.before, self.after)
-    #     cs_ts_mu = self.get_cs_ts(self.before, self.after)
-    #
-    #     if not hasattr(self, "ci"):
-    #         ci = self.get_ci(**kwargs)
-    #
-    #     fig, ax = plt.subplots(2, figsize=(8.4,11.7/2), sharex=True)
-    #
-    #     # # 1st plot: before and after for each event in light gray
-    #     # self.before.plot(ax=ax[0], color=gr_1)
-    #     # self.after.plot(ax=ax[0], color=gr_1)
-    #     # # add points at initiation
-    #     # self.before.iloc[[-1],:].plot(ax=ax[0], color="k",
-    #     #     linestyle="none", marker=".", markerfacecolor="k")
-    #     # self.after.iloc[[0],:].plot(ax=ax[0], color="k",
-    #     #     linestyle="none", marker=".", markerfacecolor="k")
-    #     # # plot mean in black =)
-    #     # cs_mu.plot(ax=ax[0], color='k', linewidth=1.5)
-    #
-    #     # 2nd plot: cumulative sums
-    #     ts_mu.loc[:tb,:].plot(ax=ax[0], color=gr_1)
-    #     ts_mu.loc[tc:,:].plot(ax=ax[0], color=gr_1)
-    #     # add points at initiation
-    #     self.before.iloc[[-1],:].plot(ax=ax[0], color="k",
-    #         linestyle="none", marker=".", markerfacecolor="k")
-    #     self.after.iloc[[0],:].plot(ax=ax[0], color="k",
-    #         linestyle="none", marker=".", markerfacecolor="k")
-    #     # mean in black
-    #     cs_ts_mu.plot(ax=ax[0], color='k', linewidth=1.5)
-    #     ax[0].set_title("cumulative, individual")
-    #
-    #     # 3rd plot: ci around avg cumsum
-    #     cs_ts_mu.loc[:tb].plot(ax=ax[1], color='k', linewidth=1.5)
-    #     cs_ts_mu.loc[tc:].plot(ax=ax[1], color='k', linewidth=1.5)
-    #     ax[1].fill_between(self.stacked_idx,
-    #         self.ci.iloc[:,0].values,
-    #         self.ci.iloc[:,1].values,
-    #         color=gr_1, alpha=0.5, label="conf. interval")
-    #     ax[1].set_title("cumulative average")
-    #
-    #     # some parameters common for all ax
-    #     for x in range(len(ax)):
-    #         # ax[x].legend_.remove()
-    #         ax[x].xaxis.set_ticks(self.stacked_idx)
-    #         ax[x].axhline(y=0, color='r', linestyle='--', linewidth=1.0)
-    #         ax[x].grid(axis="both", alpha=0.33, linestyle=":")
-    #         legend = ax[x].legend()
-    #         legend.remove()
-    #
-    #     ax[x].set_xlabel("periods after event")
-    #
-    #     # super title
-    #     fig.suptitle(self.data.name, fontsize=14)
-    #
-    #     return fig
+    @staticmethod
+    def shuffle_data(data, n_blocks):
+        """
+        """
+        T, N = data.shape
+
+        arr_no_na = np.array([
+            np.random.choice(
+                data[p].dropna().values, T) for p in data.columns]).T
+
+        old_df_no_na = pd.DataFrame(
+            data=arr_no_na,
+            index=data.index,
+            columns=data.columns)
+
+        new_df_no_na = data.fillna(old_df_no_na).values
+
+        new_df_no_na = np.concatenate((
+            new_df_no_na,
+            new_df_no_na[np.random.choice(range(T), n_blocks - T % n_blocks)]))
+
+        M = new_df_no_na.shape[0] // n_blocks
+        res = new_df_no_na.reshape(M, -1, N)
+        res = res[np.random.permutation(M)].reshape(-1, N)
+
+        res = pd.DataFrame(data=res, columns=data.columns)
+
+        return res
+
+    def plot(self):
+        """
+        Parameters
+        ----------
+        kwargs : dict
+            of arguments to EventStudy.get_ci() method.
+
+        Returns
+        -------
+        fig :
+        """
+        ta, tb, tc, td = self._window
+
+        ts_mu = self.evt_avg_ts_sum
+        cs_ts_mu = self.the_mean
+
+        fig, ax = plt.subplots(2, figsize=(8.4,11.7/2), sharex=True)
+
+        # 2nd plot: cumulative sums
+        ts_mu.loc[:,:tb,:].mean(axis="items").plot(ax=ax[0], color=new_gray)
+        ts_mu.loc[:,tc:,:].mean(axis="items").plot(ax=ax[0], color=new_gray)
+        # add points at initiation
+        ax[0].plot([tb]*len(self.assets), ts_mu.loc[:,tb,:].mean(axis=1),
+            color="k", linestyle="none", marker=".", markerfacecolor="k")
+        ax[0].plot([tc]*len(self.assets), ts_mu.loc[:,tc,:].mean(axis=1),
+            color="k", linestyle="none", marker=".", markerfacecolor="k")
+        # mean in black
+        cs_ts_mu.plot(ax=ax[0], color='k', linewidth=1.5)
+        ax[0].set_title("cumulative, individual")
+
+        # 3rd plot: ci around avg cumsum
+        cs_ts_mu.loc[:tb].plot(ax=ax[1], color='k', linewidth=1.5)
+        cs_ts_mu.loc[tc:].plot(ax=ax[1], color='k', linewidth=1.5)
+        ax[1].fill_between(self.event_index,
+            self.ci.iloc[:,0].values,
+            self.ci.iloc[:,1].values,
+            color=new_gray, alpha=0.5, label="conf. interval")
+        ax[1].set_title("cumulative average")
+
+        # some parameters common for all ax
+        for x in range(len(ax)):
+            # ax[x].legend_.remove()
+            ax[x].xaxis.set_ticks(self.event_index)
+            ax[x].axhline(y=0, color='r', linestyle='--', linewidth=1.0)
+            ax[x].grid(axis="both", alpha=0.33, linestyle=":")
+            legend = ax[x].legend()
+            legend.remove()
+
+        ax[x].set_xlabel("periods after event")
+
+        # # super title
+        # fig.suptitle(self.data.name, fontsize=14)
+
+        return fig
 
     @staticmethod
-    def mean(method="simple"):
+    def mean_fun(method="simple"):
         """
         method : str
             'simple' or 'count_weighted'
@@ -674,7 +703,7 @@ class EventStudy():
 
 if __name__ == "__main__":
 
-    # import ipdb
+    import ipdb
     from foolbox.api import *
 
     # currency to drop
@@ -698,26 +727,42 @@ if __name__ == "__main__":
 
     # events + drop currencies ----------------------------------------------
     with open(data_path + settings["events_data"], mode='rb') as fname:
-        events = pickle.load(fname)
+        events_data = pickle.load(fname)
 
-    events_perf = events["joint_cbs"].drop(drop_curs, axis=1, errors="ignore")
-    events_perf = events_perf.loc[s_dt:e_dt]
+    events = events_data["joint_cbs"].drop(drop_curs, axis=1, errors="ignore")
+    events = events.loc[s_dt:e_dt]
 
     # data = ret["nzd"]
-    data = ret.copy().loc[s_dt:e_dt, :]
+    data = ret.copy().loc[s_dt:e_dt]
+
     # events = events_perf["nzd"].dropna()
-    events = events_perf.copy()
     events = events.where(events < 0)
 
-    es = EventStudy(data, events, window, normal_data=0.0, x_overlaps=True)
+    # normal_data = data.rolling(22).mean().shift(1)
+    es = EventStudy(data, events, window, mean_type="count_weighted",
+        normal_data=0.0, x_overlaps=True)
+    ci = es.get_ci(ps=(0.025, 0.975), method="simple")
 
     # ipdb.set_trace()
     res = es.collect_responses()
     cum_res = es.get_ts_cumsum(res, window)
 
-    ci = es.boot_ci(ps=(0.05, 0.95), M=5, fun=es.mean("count_weighted"))
+    ipdb.set_trace()
+    ci = es.get_ci(ps=(0.025, 0.975), method="boot", M=100)
+    es.plot()
 
-    fn = es.mean("count_weighted")
+    es.evt_avg_ts_sum.loc[:,tb,:].mean(axis=1)
+    es.evt_avg_ts_sum.loc[:,:tb,:].mean(axis="items")
+
+    fn = es.mean_fun("count_weighted")
+
     ax = fn(cum_res).plot()
 
-    ci.plot(ax=ax, color="gray")
+    ci.plot(ax=ax, color="magenta")
+
+    plt.gcf()
+
+    with open(data_path + "data_dev_d.p", mode='rb') as fname:
+        stocks = pickle.load(fname)
+
+    ret = stocks["msci_ret"].loc[:, "usd"]
