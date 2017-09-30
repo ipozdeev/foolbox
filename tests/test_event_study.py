@@ -74,39 +74,46 @@ class TestEventStudy(unittest.TestCase):
 #
 #         self.assertTupleEqual(evt_study.before.shape, (randint, self.K))
 
-class TestEventStudy1D(TestEventStudy):
-    """
-    """
-    def setUp(self):
-        """
-        """
-        randint = random.randint(3,10)
-        evt_study = EventStudy(
-            data=self.data_1d,
-            events=self.events,
-            normal_data=self.mu,
-            window=[-randint,-1,0,randint],
-            x_overlaps=True)
+# class TestEventStudy1D(TestEventStudy):
+#     """
+#     """
+#     def setUp(self):
+#         """
+#         """
+#         randint = random.randint(3,10)
+#         evt_study = EventStudy(
+#             data=self.data_1d,
+#             events=self.events,
+#             normal_data=self.mu,
+#             window=[-randint,-1,0,randint],
+#             x_overlaps=True)
+#
+#         # confidence interval, upper bound
+#         ls = np.hstack((np.arange(randint,0,-1), np.arange(1,randint+2)))
+#         true_ci = self.sigma*1.95*np.sqrt(ls)/np.sqrt(self.K)+self.mu*ls
+#
+#         self.true_ci = true_ci
+#         self.evt_study = evt_study
+#         self.randint = randint
+#
+#     def test_ci_boot(self):
+#         """
+#         """
+#         ci = self.evt_study.get_ci(ps=(0.025, 0.975), method="boot", M=50)
+#
+#         print(ci)
+#         print(self.true_ci)
+#
+#     def test_ci_simple(self):
+#         """
+#         """
+#         ci = self.evt_study.get_ci(ps=(0.025, 0.975), method="simple")
+#
+#         print(ci)
+#         print(self.true_ci)
 
-        # confidence interval, upper bound
-        ls = np.hstack((np.arange(randint,0,-1), np.arange(1,randint+2)))
-        true_ci = self.sigma*1.95*np.sqrt(ls)/np.sqrt(self.K)+self.mu*ls
 
-        self.true_ci = true_ci
-        self.evt_study = evt_study
-        self.randint = randint
-
-    def test_ci(self):
-        """
-        """
-        fun = self.evt_study.mean(method="simple")
-        ci = self.evt_study.boot_ci(ps=(0.025, 0.975), M=100, fun=fun)
-
-        print(ci)
-        print(self.true_ci)
-        
-
-class TestEventStudy1D(TestEventStudy):
+class TestEventStudy2D(TestEventStudy):
     """
     """
     def setUp(self):
@@ -117,6 +124,7 @@ class TestEventStudy1D(TestEventStudy):
             data=self.data_2d,
             events=self.events_2d,
             normal_data=0.0,
+            mean_type="count_weighted",
             window=[-randint,-1,0,randint],
             x_overlaps=True)
 
@@ -128,11 +136,18 @@ class TestEventStudy1D(TestEventStudy):
         self.evt_study = evt_study
         self.randint = randint
 
-    def test_ci(self):
+    def test_ci_simple(self):
         """
         """
-        fun = self.evt_study.mean(method="simple")
-        ci = self.evt_study.boot_ci(ps=(0.025, 0.975), M=100, fun=fun)
+        ci = self.evt_study.get_ci(ps=(0.025, 0.975), method="simple")
+
+        print(ci)
+        print(self.true_ci)
+
+    def test_ci_boot(self):
+        """
+        """
+        ci = self.evt_study.get_ci(ps=(0.025, 0.975), method="boot", M=100)
 
         print(ci)
         print(self.true_ci)
