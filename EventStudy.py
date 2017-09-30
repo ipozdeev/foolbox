@@ -389,13 +389,17 @@ class EventStudy():
         """
         ta, tb, tc, td = self._window
 
+        # get the huge panel of everything stacked together
+        the_panel = self.collect_responses()
+
         var_sums = pd.DataFrame(
             index=self.events.columns,
             columns=["var", "count"])
 
         for c in self.events.columns:
             # c = "nzd"
-            evts_used = self.timeline[c].loc[:, "evt_no"].dropna().unique()
+            # evts_used = self.timeline[c].loc[:, "evt_no"].dropna().unique()
+            evts_used = the_panel.loc[:,:,c].dropna(axis=1, how="all").columns
 
             mask = self.timeline[c].loc[:, "inter_evt"].isnull()
 
