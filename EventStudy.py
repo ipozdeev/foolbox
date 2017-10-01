@@ -221,7 +221,7 @@ class EventStudy():
         evt_count = evt_count.reindex(index=data.index)
 
         # allocate space for marked timeline: need pre and post to capture
-        #   cases when deleteing overlapping events is not desired
+        #   cases when deleting overlapping events is not desired
         cols = [
             "evt_no",
             "evt_wind_pre",
@@ -261,6 +261,8 @@ class EventStudy():
             idx = timeline.loc[:, ["evt_wind_pre", "evt_wind_post"]].\
                 notnull().all(axis=1)
             timeline.ix[idx, ["evt_wind_pre", "evt_wind_post"]] = np.nan
+            # timeline.dropna(subset=["evt_wind_pre", "evt_wind_post"],
+            #     how="all", inplace=True)
 
         return timeline
 
@@ -286,6 +288,8 @@ class EventStudy():
 
         # concat
         both = pd.concat((data, timeline), axis=1).dropna(subset=["evt_no"])
+        both = both.dropna(subset=["evt_wind_pre", "evt_wind_post"],
+            how="all")
 
         # # event window
         # data_to_pivot_pre = timeline.loc[:, ["evt_wind_pre", "evt_no"]]
@@ -404,9 +408,10 @@ class EventStudy():
             mask = self.timeline[c].loc[:, "inter_evt"].isnull()
 
             # calculate variance between events
+            # TODO: think about var here
             var_btw = resample_between_events(self.abnormal_data[c],
                 events=self.events[c].dropna(),
-                fun=lambda x: np.nanmean(x**2),
+                fun=lambda x: np.nanvar(x),
                 mask=mask)
 
             var_sums.loc[c, "count"] = var_btw.loc[evts_used].count().values[0]
@@ -484,6 +489,7 @@ class EventStudy():
         for p in range(M):
 
             print(p)
+            # ipdb.set_trace()
 
             # shuffle data
             shuffled_data = self.shuffle_data(boot_from, n_blocks=n_blocks)
@@ -495,6 +501,7 @@ class EventStudy():
                 c: pd.Series(1,
                     index=np.random.choice(possible_dt, Ks[c], replace=False))\
                 for c in self.assets})
+            shuffled_evts = shuffled_evts.sort_index(axis=0)
 
             this_evt_study = EventStudy(
                 data=shuffled_data,
@@ -745,28 +752,17 @@ if __name__ == "__main__":
     # normal_data = data.rolling(22).mean().shift(1)
     es = EventStudy(data, events, window, mean_type="count_weighted",
         normal_data=0.0, x_overlaps=True)
-    ci = es.get_ci(ps=(0.025, 0.975), method="simple")
+
+    ci = es.get_ci(ps=(0.025, 0.975), method="boot", M=500)
+    es.ci = ci
 
     # ipdb.set_trace()
-    res = es.collect_responses()
-    cum_res = es.get_ts_cumsum(res, window)
+    res = es.the_mean
 
-    ipdb.set_trace()
+    # ipdb.set_trace()
     ci = es.get_ci(ps=(0.025, 0.975), method="boot", M=100)
-    es.plot()
+    fig = es.plot()
+    fig.tight_layout()
+    fig.savefig(out_path + "evt_st_boot_ci.png", dpi=200)
 
-    es.evt_avg_ts_sum.loc[:,tb,:].mean(axis=1)
-    es.evt_avg_ts_sum.loc[:,:tb,:].mean(axis="items")
-
-    fn = es.mean_fun("count_weighted")
-
-    ax = fn(cum_res).plot()
-
-    ci.plot(ax=ax, color="magenta")
-
-    plt.gcf()
-
-    with open(data_path + "data_dev_d.p", mode='rb') as fname:
-        stocks = pickle.load(fname)
-
-    ret = stocks["msci_ret"].loc[:, "usd"]
+    
