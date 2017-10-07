@@ -296,10 +296,7 @@ class FXTrading():
         """
         Parameters
         ----------
-        prices : pandas.Panel
-            with currencies along the items axis, time on major_axis
-        swap_points : pandas.Panel
-            with currencies along the items axis, time on major_axis
+
         """
         self.prices = environment.spot_prices.copy()
         self.swap_points = environment.swap_points.copy()
@@ -344,8 +341,8 @@ class FXTrading():
             #     ipdb.set_trace()
 
             # fetch prices and swap points ----------------------------------
-            these_prices = self.prices.loc[:,t,:]
-            these_swap_points = self.swap_points.loc[:,t,:]
+            these_prices = self.prices.loc[:, t, :].T
+            these_swap_points = self.swap_points.loc[:, t, :].T
 
             # rebalance -----------------------------------------------------
             self.portfolio.rebalance_from_dpw(row, these_prices)
@@ -354,8 +351,7 @@ class FXTrading():
             self.portfolio.roll_over(these_swap_points)
 
             # get liquidation value -----------------------------------------
-            liquidation_v.loc[t] = self.portfolio.get_liquidation_value(
-                prices=these_prices)
+            liquidation_v.loc[t] = self.portfolio.balance
 
         return liquidation_v
 
@@ -457,53 +453,33 @@ class FXPortfolio():
         # position weights: start with 0 everywhere
         self.position_weights = pd.Series(0.0, index=self.currencies)
 
-    def get_margin_closeout_value(self, prices):
+    def get_margin_closeout_value(self, bid_ask_prices):
         """Calculate margin closeout: how much value can be in open positions.
 
         Parameters
         ----------
-        prices : pd.DataFrame
+        bid_ask_prices : pd.DataFrame
             of quotes, indexed by currency names, column'ed by ['bid', 'ask']
         """
         # 1) from each position, get unrealized p&l
         # concat positions and prices (index by currency names)
-        both = pd.concat((self.positions, self.prices), axis=1)
+        both = pd.concat((self.positions.to_frame().T, bid_ask_prices), axis=0)
 
         # function to apply over rows
         func = lambda x: x["positions"].get_unrealized_pnl(x.drop("positions"))
 
         # for all positions, apply the func to get unrealized p&l
-        res = self.positions.apply(axis=1, func=func)
+        res = both.apply(func=func, axis=0).sum()
+        # pf = FXPortfolio(positions=positions)
+        # pf.positions.apply(func=func).sum()
+        # both = pd.concat((positions, prices), axis=1)
 
         # 2) add balance
         res += self.balance
 
         return res
 
-    def get_liquidation_value(self, prices):
-        """Calculate the total liquidation value of portfolio.
-
-        Liquidation value is the result of closing all open position
-        immediately and draining any balance.
-
-        Parameters
-        ----------
-        prices : pd.DataFrame
-            of quotes, indexed by currency names, column'ed by ['bid', 'ask']
-        """
-        # init result at 0
-        res = 0.0
-
-        # loop over positions, for repective currency fetch price & get p&l
-        for p in self.positions.values:
-            res += p.get_unrealized_pnl(prices.loc[p.currency])
-
-        # drain the balance
-        res += self.balance
-
-        return res
-
-    def rebalance_from_dpw(self, dpw, prices):
+    def rebalance_from_dpw(self, dpw, bid_ask_prices):
         """ Rebalance from change in position weights.
         0. skip if changes in position weights are all zero
         i. close positions to be closed, drain realized p&l onto balance
@@ -515,44 +491,28 @@ class FXPortfolio():
         if (dpw == 0.0).all():
             return
 
+        # get margin closeout value
+        # TODO: mid price is suggested by OANDA
+        prices_mid = pd.concat([bid_ask_prices.mean(axis=0).to_frame().T, ]*2,
+            axis=0)
+        prices_mid.index = bid_ask_prices.index
+        marg_closeout = self.get_margin_closeout_value(prices_mid)
+
         # new position weights
         new_pw = self.position_weights + dpw
 
-        # 1) the ones that get closed
-        to_close_idx = new_pw.ix[(new_pw == 0) & (dpw != 0)].index
-        for idx, p in self.positions.ix[to_close_idx].iteritems():
-            # close -> realized p&l here
-            p.close(prices.loc[idx,:])
-
-        # for each closed position, replenish the balance
-        for p in self.positions.ix[to_close_idx].values:
-            self.balance += p.realized_pnl
-            p.realized_pnl = 0.0
-
-        # recover liquidation value
-        lqd_val = self.get_liquidation_value(prices)
-
-        # 2) for each position, calculate additional amount to be transacted
-        # total dollar amount
-        pos_dol_vals = new_pw * lqd_val
-        # total quantity: divide through ask prices for buys, bid for sells
-        new_qty = self.fxdivide(pos_dol_vals, prices)
-        # current quantities
-        cur_qty = self.positions.map(lambda x: x.end_quantity)
-        cur_pos_types = self.positions.map(lambda x: x.position_float())
-        cur_qty *= cur_pos_types
-
-        # difference in positions
-        dp = new_qty - cur_qty
+        # determine dp
+        # TODO: mid price?
+        new_p = (new_pw * marg_closeout).divide(prices_mid.iloc[0, :], axis=0)
+        dp = new_p - self.get_position_quantities()
 
         # rebalance
-        for idx, p in self.positions.drop(to_close_idx).iteritems():
-            p.transact(dp[idx], prices.loc[idx,:])
+        self.rebalance_from_dp(dp=dp, bid_ask_prices=bid_ask_prices)
 
         # drag position weights
         self.position_weights = new_pw
 
-    def rebalance_from_dp(self, dp, prices):
+    def rebalance_from_dp(self, dp, bid_ask_prices):
         """ Reabalance given differences in position quantities.
         Parameters
         ----------
@@ -560,39 +520,29 @@ class FXPortfolio():
             indexed with currency names, e.g. "aud"
         """
         # loop over names of dp, transact in respective currency
-        for idx, p in dp.iteritems():
-            self.positions[idx].transact(p, prices.loc[idx,:])
+        for cur, p in dp.iteritems():
+            new_r = self.positions[cur].transact(p, bid_ask_prices.loc[:, cur])
 
-    # def dpw2quantities(self, dpw, prices):
-    #     """ Transform position weights to quantitites to be transacted.
-    #     Parameters
-    #     ----------
-    #     new_pw : pandas.Series
-    #         of new position weights, indexed with currency names
-    #     """
-    #     # 1) calculate liquidation value of portfolio
-    #     lqd_val = self.get_liquidation_value(prices)
-    #
-    #     # 3) dollar value of positions
-    #     dpw_dollar_val = dpw * lqd_val
-    #
-    #     # 4) from dollar value to foreign currency quantity
-    #     qty = self.fxdivide(dpw_dollar_val, prices)
-    #
-    #     return qty
+            if new_r is not None:
+                self.balance += new_r
 
-    def roll_over(self, swap_points):
-        """ Roll over all positions.
+        return
+
+    def roll_over(self, bid_ask_points):
+        """Roll over all positions.
+
+        Parameters
+        ----------
+        bid_ask_points : pandas.DataFrame
+            indexed by ['bid', 'ask'], columned by position names
         """
-        for idx, p in self.positions.iteritems():
-            p.roll_over(swap_points.loc[idx,:])
+        for cur, p in self.positions.iteritems():
+            p.roll_over(bid_ask_points.loc[:, cur])
 
     def get_position_quantities(self):
         """
         """
-        res = self.positions.map(lambda x: x.end_quantity)
-
-        # res = pd.Series(data=position_quantities, index=self.currencies)
+        res = self.positions.map(lambda x: x.quantity)
 
         return res
 
@@ -622,9 +572,11 @@ class FXPosition():
     currency : str
         a string, most logically a 3-letter ISO such as 'usd' or 'cad'
     """
-    def __init__(self, currency="xxx"):
+    def __init__(self, currency="xxx", tolerance=1e-10):
         """
         """
+        self._tolerance = tolerance
+
         self.currency = currency
 
         # see property below
@@ -634,18 +586,24 @@ class FXPosition():
     def is_open(self):
         return self.quantity != 0
 
-    @is_open.setter:
+    @is_open.setter
     def is_open(self, value):
-        if not(value):
+        if not value:
             self.quantity = 0.0
             self.avg_price = 0.0
         else:
             raise ValueError("Impossible operation; use .transact() instead.")
 
+    @property
+    def position_sign(self):
+        if not self.is_open:
+            return np.nan
+        return np.sign(self.quantity)
+
     def __str__(self):
         """
         """
-        if not(self.is_open) is None:
+        if not self.is_open is None:
             return self.currency + ' ' + "(closed)"
 
         qty = np.round(self.end_quantity, 4)
@@ -691,17 +649,21 @@ class FXPosition():
         bid_ask_prices : pandas.Series
             indexed by ['bid', 'ask']
         """
+        if np.abs(qty) < self._tolerance:
+            return
+
         # deterimine transaction price: buy at ask, sell at bid
         transaction_price = self.choose_bid_or_ask(qty, bid_ask_prices)
 
-        if (np.sign(self.quantity) == np.sign(qty)) || not(self.is_open):
+        if (self.position_sign == np.sign(qty)) | (not self.is_open):
             # refill if position not open or if signs match
             res = self.refill(qty, transaction_price)
         else:
             # otherwise partially close, or close and reopen
-            if np.abs(self.quantity) < np.abs(qty):
-                res = self.close()
-                self.refill(qty + self.quantity, transaction_price)
+            if np.abs(self.quantity) - np.abs(qty) < self._tolerance:
+                rest_qty = qty + self.quantity
+                res = self.close(bid_ask_prices)
+                self.transact(rest_qty, bid_ask_prices)
             else:
                 res = self.drain(qty, transaction_price)
 
@@ -715,7 +677,10 @@ class FXPosition():
         -------
         None
         """
-        assert (np.sign(self.quantity) == np.sign(qty)) | not(self.is_open)
+        # if np.abs(qty) < self._tolerance:
+        #     return
+
+        assert (self.position_sign == np.sign(qty)) | (not self.is_open)
 
         # total quantity
         total_qty = self.quantity + qty
@@ -734,24 +699,29 @@ class FXPosition():
         res : float
             p&l, if any
         """
-        assert (np.sign(self.quantity) ! np.sign(qty)) & self.is_open
+        # if np.abs(qty) < self._tolerance:
+        #     return 0.0
+        assert (self.position_sign != np.sign(qty)) & self.is_open
 
         if np.abs(self.quantity) < np.abs(qty):
             raise ValueError("Amount drained exceed position size; use " +
                 ".transact() instead")
 
         # calculate p&l
-        res = qty * (price - self.avg_price)
+        res = np.abs(qty) * (price - self.avg_price) * self.position_sign
 
         # change quantity
         self.quantity += qty
+
+        if np.abs(self.quantity) < self._tolerance:
+            self.quantity = 0.0
 
         return res
 
     def close(self, bid_ask_prices):
         """
         """
-        if not(self.is_open):
+        if not self.is_open:
             return 0.0
 
         # deterimine transaction price: buy at ask, sell at bid
@@ -776,7 +746,7 @@ class FXPosition():
         # deterimine transaction points: buy at ask, sell at bid
         points = self.choose_bid_or_ask(self.quantity, bid_ask_points)
 
-        if not(self.is_open):
+        if not self.is_open:
             return
 
         # add swap points to the average price
@@ -797,7 +767,7 @@ class FXPosition():
         res: float
             with unrealized profit and loss of the position
         """
-        if not(self.is_open):
+        if not self.is_open:
             return 0.0
 
         # deterimine transaction price: buy at ask, sell at bid
@@ -1117,7 +1087,7 @@ class FXPosition():
 #         market_prices: pd.Series
 #             indexed with 'bid' and 'ask' and containing corresponding
 #             exchange rates
-# 
+#
 #         Returns
 #         -------
 #         unrealized_pnl: float
@@ -1199,12 +1169,14 @@ if __name__ == "__main__":
     # events = events.loc[start_date:]
 
     fx_tr_str = FXTradingStrategy.from_events(events,
-        blackout=-1, hold_period=5, leverage="none")
+        blackout=1, hold_period=10, leverage="full")
 
     fx_tr = FXTrading(environment=fx_tr_env, strategy=fx_tr_str)
 
     res = fx_tr.backtest()
     res.dropna().plot()
+    taf.descriptives(res.dropna().pct_change().to_frame(), scale=252)
+
 
     # carry
     with open(data_path+"data_wmr_dev_d.p", mode="rb") as hangar:
@@ -1303,4 +1275,4 @@ if __name__ == "__main__":
 
             # useless comment here
             #
-            and here
+            # and here
