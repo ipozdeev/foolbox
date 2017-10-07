@@ -5,10 +5,15 @@ import random
 from pandas.tseries.offsets import DateOffset
 import matplotlib.pyplot as plt
 import warnings
+from foolbox.data_mgmt import set_credentials
 from foolbox.utils import resample_between_events
 from foolbox.wp_tabs_figs.wp_settings import *
+import pickle
 
 # import ipdb
+
+path_out = set_credentials.set_path("research_data/fx_and_events/",
+    which="gdrive")
 
 class EventStudy():
     """
@@ -66,6 +71,7 @@ class EventStudy():
         self._timeline = None
         self._evt_avg_ts_sum = None
         self._the_mean = None
+        self._booted = None
 
     @property
     def timeline(self):
@@ -99,6 +105,27 @@ class EventStudy():
             self._the_mean = fun(self.evt_avg_ts_sum)
 
         return self._the_mean
+
+    @property
+    def booted(self):
+        return self._booted
+
+    @booted.setter
+    def booted(self, value):
+        self._booted = value
+
+        # also, pickle
+        with open(path_out + "evt_study_booted_mean.p", mode="wb") as han:
+            pickle.dump(value, han)
+
+    @booted.getter
+    def booted(self):
+        if self._booted is None:
+            with open(path_out + "evt_study_booted_mean.p", mode="rb") as han:
+                res = pickle.load(han)
+            return res
+
+        return self._booted
 
     def prepare_data(self):
         """
@@ -380,7 +407,9 @@ class EventStudy():
         if method == "simple":
             ci = self.simple_ci(ps=ps)
         elif method == "boot":
-            ci = self.boot_ci(ps, **kwargs)
+            booted = self.boot_the_mean(ps, **kwargs)
+            self.booted = booted
+            ci = booted.quantile(ps, axis=1).T
         else:
             raise NotImplementedError("ci you asked for is not implemented")
 
@@ -448,7 +477,7 @@ class EventStudy():
 
         return ci
 
-    def boot_ci(self, ps, M=500, n_blocks=None):
+    def boot_the_mean(self, ps, M=500, n_blocks=None):
         """Block bootstrap.
         Returns
         -------
@@ -513,9 +542,7 @@ class EventStudy():
 
             booted.iloc[:, p] = this_evt_study.the_mean
 
-        this_ci = booted.quantile(ps, axis=1).T
-
-        return this_ci
+        return booted
 
     @staticmethod
     def shuffle_data(data, n_blocks):
@@ -753,16 +780,43 @@ if __name__ == "__main__":
     es = EventStudy(data, events, window, mean_type="count_weighted",
         normal_data=0.0, x_overlaps=True)
 
-    ci = es.get_ci(ps=(0.025, 0.975), method="boot", M=500)
-    es.ci = ci
+    ci_boot_c = es.get_ci(ps=(0.025, 0.975), method="boot", n_blocks=10,
+        M=5000)
 
-    # ipdb.set_trace()
-    res = es.the_mean
+    es.booted
+    qs = (0.01, 0.025, 0.05, 0.95, 0.975, 0.99)
+    es.booted.quantile(qs, axis=1).T * 100
 
-    # ipdb.set_trace()
-    ci = es.get_ci(ps=(0.025, 0.975), method="boot", M=100)
-    fig = es.plot()
-    fig.tight_layout()
-    fig.savefig(out_path + "evt_st_boot_ci.png", dpi=200)
-
-    
+    #
+    # lol, wut = es.boot_ci(ps=(0.025, 0.975), M=333)
+    # wut.quantile((0.01, 0.025, 0.05, 0.95, 0.975, 0.99), axis=1).T * 100
+    # _
+    #
+    # ci_boot_c_90 = es.get_ci(ps=(0.05, 0.95), method="boot", M=500)
+    # ci_smpl_c = es.get_ci(ps=(0.025, 0.975), method="simple")
+    #
+    # ci_boot_c*100
+    # ci_boot_c_90*100
+    #
+    # pd.concat((ci_boot_c, ci_boot_c_90), axis=1).sort_index("columns")*10000
+    #
+    # ci_smpl_c*100
+    #
+    # es.ci = ci
+    #
+    # # ipdb.set_trace()
+    # res = es.the_mean
+    #
+    # # ipdb.set_trace()
+    # ci = es.get_ci(ps=(0.025, 0.975), method="boot", M=100)
+    # fig = es.plot()
+    # fig.tight_layout()
+    # fig.savefig(out_path + "evt_st_boot_ci.png", dpi=200)
+    #
+    #
+    # import pandas as pd
+    #
+    # data.corr()
+    #
+    # events.count()
+    # (data*100).describe()
