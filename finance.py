@@ -892,7 +892,8 @@ class PolicyExpectation():
 
     @classmethod
     def from_pickles(cls, data_path, currency, s_dt="1990",
-        impl_rates_pickle="implied_rates.p", events_pickle="events.p"):
+        impl_rates_pickle="implied_rates_bloomberg.p",
+        events_pickle="events.p"):
         """
         Parameters
         ----------
