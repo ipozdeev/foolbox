@@ -33,8 +33,8 @@ class FXTradingStrategy():
         events : pd.DataFrame
             of events: -1,0,1
         blackout : int
-            the period to close position in: negative numbers indicate closing
-            before event
+            the number of time periods to close the position in: negative
+            numbers indicate closing after event
         hold_period : int
             the number of periods to maintain position
         leverage : str
@@ -1147,14 +1147,28 @@ if __name__ == "__main__":
     fx_tr_env.align_spot_and_swap()
     fx_tr_env.fillna(which="both", method="ffill")
 
-    signals = get_pe_signals(fx_tr_env.spot_prices.minor_axis,
-        lag=10,
-        threshold=0.10,
-        data_path=data_path,
-        fomc=False,
-        avg_impl_over=settings["avg_impl_over"],
-        avg_refrce_over=settings["avg_refrce_over"],
-        bday_reindex=True)
+    signals = dict()
+    for c in ['aud', 'cad', 'chf', 'eur', 'gbp', 'nzd', 'sek']:
+        # c = "nzd"
+        pe = PolicyExpectation.from_pickles(data_path, c,
+            impl_rates_pickle="implied_rates_bloomberg.p")
+        signals[c] = pe.forecast_policy_change(
+            lag=10,
+            threshold=0.10,
+            avg_impl_over=settings["avg_impl_over"],
+            avg_refrce_over=settings["avg_refrce_over"],
+            bday_reindex=True)
+
+    signals = pd.DataFrame.from_dict(signals).loc["2000-11":]
+
+    # signals = get_pe_signals(fx_tr_env.spot_prices.minor_axis,
+    #     lag=10,
+    #     threshold=0.10,
+    #     data_path=data_path,
+    #     fomc=False,
+    #     avg_impl_over=settings["avg_impl_over"],
+    #     avg_refrce_over=settings["avg_refrce_over"],
+    #     bday_reindex=True)
 
     events = signals.reindex(index=fx_tr_env.spot_prices.major_axis)
     events = events.loc[start_date:end_date,:]
@@ -1170,31 +1184,46 @@ if __name__ == "__main__":
 
     fx_tr_str = FXTradingStrategy.from_events(events,
         blackout=1, hold_period=10, leverage="full")
+    # fx_tr_str.actions.loc["2005-11":"2005-12"].to_clipboard()
+    # events.loc["2005-11":"2005-12"].to_clipboard()
 
     fx_tr = FXTrading(environment=fx_tr_env, strategy=fx_tr_str)
 
     res = fx_tr.backtest()
     res.dropna().plot()
-    taf.descriptives(res.dropna().pct_change().to_frame(), scale=252)
-
+    # taf.descriptives(res.dropna().pct_change().to_frame(), scale=252)
 
     # carry
-    with open(data_path+"data_wmr_dev_d.p", mode="rb") as hangar:
+    with open(data_path+"fx_by_tz_sp_fixed.p", mode="rb") as hangar:
         data_d = pickle.load(hangar)
 
-    fdisc_d = data_d["fwd_disc"]
-    fdisc_d = fdisc_d.reindex(index=fx_tr_env.spot_prices.major_axis,
-        method="ffill").drop(settings["drop_currencies"], axis=1)
-    fdisc_d = fdisc_d.loc[start_date:]
+    fx_tr_env = FXTradingEnvironment.from_scratch(
+        spot_prices={
+            "bid": data_d["spot_bid"].loc[:, :, "NYC"],
+            "ask": data_d["spot_ask"].loc[:, :, "NYC"]},
+        swap_points={
+            "bid": data_d["tnswap_bid"].loc[:, :, "NYC"],
+            "ask": data_d["tnswap_ask"].loc[:, :, "NYC"]}
+            )
+
+    fx_tr_env.remove_swap_outliers()
+    fx_tr_env.reindex_with_freq('B')
+    fx_tr_env.align_spot_and_swap()
+    fx_tr_env.fillna(which="both", method="ffill")
+
+    fdisc_d = fx_tr_env.swap_points.mean(axis="items")
+    fdisc_d = fdisc_d.rolling(22).mean()
 
     fx_tr_str_carry = FXTradingStrategy.monthly_from_daily_signals(
-        signals_d=fdisc_d, n_portf=3, leverage="net")
+        signals_d=fdisc_d, n_portf=3, leverage="none")
 
     fx_tr = FXTrading(environment=fx_tr_env, strategy=fx_tr_str_carry)
 
     fx_tr_str_carry.actions
     fx_tr_env.spot_prices.minor_axis
+
     res = fx_tr.backtest()
+
     res.dropna().plot()
 
     # data
