@@ -44,8 +44,8 @@ def fetch_bloomberg_ois_data(data_path=None):
     ois_data = parse_bloomberg_excel(
         filename=fname,
         colnames_sheet="tenor",
-        data_sheets=["aud", "cad", "chf", "eur","gbp", "jpy", "nzd", "sek",
-                     "usd"])
+        data_sheet=["aud", "cad", "chf", "eur","gbp", "jpy", "nzd", "sek",
+            "usd"])
 
     # Pickle the bastard ----------------------------------------------------
     # Define the file name for pickling
@@ -81,7 +81,7 @@ def merge_ois_data(datastream_pkl=None, bloomberg_pkl=None, maturity='1M',
     ois_ds_tr = ois_datastream["tr_"+maturity.lower()]
     ois_ds_icap = ois_datastream["icap_"+maturity.lower()]
     ois_bl = pd.concat(
-        [p.loc[:,maturity].to_frame(c) for c, p in ois_bloomberg.items()],
+        [p.loc[:,maturity].rename(c) for c, p in ois_bloomberg.items()],
         axis=1)
 
     # collect into dictionary to be able to prioritize
@@ -107,6 +107,8 @@ def merge_ois_data(datastream_pkl=None, bloomberg_pkl=None, maturity='1M',
     # pickle
     pickle_name = "ois_merged_" + maturity.lower() + ".p"
 
+    # return new_data
+
     with open(data_path + pickle_name, mode="wb") as fname:
         pickle.dump(new_data, fname)
 
@@ -114,4 +116,4 @@ def merge_ois_data(datastream_pkl=None, bloomberg_pkl=None, maturity='1M',
 if __name__ == "__main__":
     fetch_datastream_ois_data(data_path=data_path)
     fetch_bloomberg_ois_data(data_path=data_path)
-    merge_ois_data(priority="bit")
+    res = merge_ois_data(priority="bit")
