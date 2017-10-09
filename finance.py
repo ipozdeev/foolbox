@@ -17,6 +17,7 @@ from foolbox.utils import *
 from foolbox.bankcalendars import *
 from foolbox.portfolio_construction import multiple_timing
 from foolbox.api import *
+from trading import EventTradingStrategy
 
 # import ipdb
 
