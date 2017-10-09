@@ -3,7 +3,7 @@ import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 from matplotlib.ticker import MultipleLocator
 import matplotlib.lines as mlines
-from wp_tabs_figs.wp_settings import settings
+from foolbox.wp_tabs_figs.wp_settings import settings
 from foolbox.utils import *
 
 """Plots returns to strategy based on monetary ploicy action forecasts along
@@ -82,8 +82,8 @@ to_plot = pd.concat([perfect_consistent.dropna().cumsum(),
 to_plot.columns = ["pfct", "fcst"]
 
 # Plot it
-to_plot[["pfct"]].plot(ax=ax, color='k', linewidth=1.5, linestyle="--")
-to_plot[["fcst"]].plot(ax=ax, color='k', linewidth=1.5, linestyle="-")
+(to_plot[["pfct"]]*100).plot(ax=ax, color='k', linewidth=1.5, linestyle="--")
+(to_plot[["fcst"]]*100).plot(ax=ax, color='k', linewidth=1.5, linestyle="-")
 
 # Rotate the axis labels
 plt.setp(ax.get_xticklabels(), rotation=0, ha="center")
@@ -95,7 +95,7 @@ ax.xaxis.set_minor_locator(minor_locator)
 # Polish the layout
 ax.grid(which="both", alpha=0.33, linestyle=":")
 ax.set_xlabel("date", visible=True)
-ax.set_ylabel("cumulative return", visible=True)
+ax.set_ylabel("cumulative return, in percent", visible=True)
 ax.legend_.remove()
 
 # Add some descriptives

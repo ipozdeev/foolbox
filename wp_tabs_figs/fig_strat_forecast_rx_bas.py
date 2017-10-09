@@ -3,7 +3,7 @@ import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 from matplotlib.ticker import MultipleLocator
 import matplotlib.lines as mlines
-from wp_tabs_figs.wp_settings import settings
+from foolbox.wp_tabs_figs.wp_settings import settings
 from foolbox.trading import EventTradingStrategy
 from foolbox.utils import *
 
