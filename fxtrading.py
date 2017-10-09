@@ -352,6 +352,8 @@ class FXTrading():
 
             # get liquidation value -----------------------------------------
             liquidation_v.loc[t] = self.portfolio.balance
+            # liquidation_v.loc[t] = self.portfolio.get_margin_closeout_value(
+            #     bid_ask_prices=these_prices)
 
         return liquidation_v
 
@@ -1183,7 +1185,7 @@ if __name__ == "__main__":
     # events = events.loc[start_date:]
 
     fx_tr_str = FXTradingStrategy.from_events(events,
-        blackout=1, hold_period=10, leverage="full")
+        blackout=1, hold_period=10, leverage="none")
     # fx_tr_str.actions.loc["2005-11":"2005-12"].to_clipboard()
     # events.loc["2005-11":"2005-12"].to_clipboard()
 
