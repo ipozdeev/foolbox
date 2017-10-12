@@ -17,7 +17,7 @@ from foolbox.utils import *
 from foolbox.bankcalendars import *
 from foolbox.portfolio_construction import multiple_timing
 from foolbox.api import *
-from trading import EventTradingStrategy
+from foolbox.trading import EventTradingStrategy
 
 # import ipdb
 
@@ -1393,7 +1393,7 @@ def get_pe_signals(currencies, lag, threshold, data_path, fomc=False,
                                          **kwargs)
 
         # Create inverse signals for every currency around FOMC announcements
-        signals = pd.concat([-us_fcast]*len(currencies), axis=1)
+        signals = pd.concat([-1*us_fcast]*len(currencies), axis=1)
         signals.columns = currencies
 
     # Otherwise get signals for each currency in the list
