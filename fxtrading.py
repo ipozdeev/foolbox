@@ -1,6 +1,7 @@
 import pandas as pd
 import numpy as np
 import warnings
+from foolbox import portfolio_construction as poco
 # import ipdb
 
 class FXTradingStrategy():
@@ -70,7 +71,7 @@ class FXTradingStrategy():
             limit=hold_period-1)
 
         # II. position weights
-        # weights are understood to be fractions of portfolio value invested
+        # weights are understood to be fractions of portfolio value invested;
         # in case of equally-weighted no-leverage portfolio, position weights
         #   are events divided by the absolute sum thereof
         if leverage == "none":
@@ -105,6 +106,7 @@ class FXTradingStrategy():
         actions = position_weights.diff().shift(-1)
 
         res = cls(actions=actions)
+        res.position_flags = position_flags
 
         return res
 
@@ -124,9 +126,9 @@ class FXTradingStrategy():
         pf = poco.rank_sort(signals_m, signals_m.shift(1), n_portf)
 
         short_leg = -1*pf["portfolio1"].notnull().where(
-            pf["portfolio1"])
+            pf["portfolio1"]).astype(float)
         long_leg = pf["portfolio"+str(n_portf)].notnull().where(
-            pf["portfolio"+str(n_portf)])
+            pf["portfolio"+str(n_portf)]).astype(float)
 
         both_legs = short_leg.fillna(long_leg)
 
@@ -142,6 +144,7 @@ class FXTradingStrategy():
         if leverage == "none":
             # also, make sure that pandas does not sum all nan's to zero
             row_leverage = np.abs(position_flags).apply(axis=1, func=np.nansum)
+            row_leverage = row_leverage.replace(0.0, np.nan)
             # divide by leverage
             position_weights = position_flags.divide(row_leverage, axis=0)
 
@@ -166,6 +169,7 @@ class FXTradingStrategy():
         actions = position_weights.replace(np.nan, 0.0).diff().shift(-1)
 
         res = cls(actions=actions)
+        res.position_flags = position_flags
 
         return res
 
@@ -313,15 +317,24 @@ class FXTrading():
         # self.position_flags = position_flags
         # self.position_weights = position_weights
 
-    def backtest(self):
+    def backtest(self, method="balance"):
         """ Backtest a strategy based on self.`signals`.
 
         Routine, for each date t:
         1) take changes in positions
         2) rebalance accordingly
         3) roll after rebalancing
-        4) record liquidation value
+        4) record balance / liquidation value
 
+        Parameters
+        ----------
+        method : str
+            'balance' (smoother) or 'unrealized_pnl' (more jagged)
+
+        Returns
+        -------
+        payoff : pandas.Series
+            cumulative payoff, starting at 1
         """
         # find rows where some action takes place: self.actions or
         #   self.position_flags are not zero
@@ -332,7 +345,7 @@ class FXTrading():
         # ipdb.set_trace()
 
         # allocate space for liquidation values
-        liquidation_v = pd.Series(index=self.prices.major_axis)
+        payoff = pd.Series(index=self.prices.major_axis)
 
         # loop over time and position weights
         for t, row in self.actions.iterrows():
@@ -351,11 +364,17 @@ class FXTrading():
             self.portfolio.roll_over(these_swap_points)
 
             # get liquidation value -----------------------------------------
-            liquidation_v.loc[t] = self.portfolio.balance
-            # liquidation_v.loc[t] = self.portfolio.get_margin_closeout_value(
-            #     bid_ask_prices=these_prices)
+            if method == "balance"[:len(method)]:
+                res = self.portfolio.balance
+            elif method == "unrealized_pnl"[:len(method)]:
+                res = self.portfolio.get_margin_closeout_value(these_prices)
+            else:
+                raise ValueError("Unknown method! Choose 'balance' or "
+                "'unrealized_pnl' instead.")
 
-        return liquidation_v
+            payoff.loc[t] = res
+
+        return payoff
 
     def to_excel(self, filename):
         """ Write stuff to the excel spreadsheet.
@@ -605,7 +624,7 @@ class FXPosition():
     def __str__(self):
         """
         """
-        if not self.is_open is None:
+        if not self.is_open:
             return self.currency + ' ' + "(closed)"
 
         qty = np.round(self.end_quantity, 4)
@@ -1120,48 +1139,49 @@ if __name__ == "__main__":
     from foolbox.api import *
     from foolbox.wp_tabs_figs.wp_settings import settings
     from foolbox.utils import *
+    # import ipdb
 
     # Set the output path, input data and sample
     start_date = pd.to_datetime(settings["sample_start"])
     end_date = pd.to_datetime(settings["sample_end"])
     # start_date = pd.to_datetime("2002-01-29")
 
-    # data
-    with open(data_path+"fx_by_tz_aligned_d.p", mode="rb") as fname:
-        data_merged_tz = pickle.load(fname)
+    # # data
+    # with open(data_path+"fx_by_tz_aligned_d.p", mode="rb") as fname:
+    #     data_merged_tz = pickle.load(fname)
 
-    # Import the all fixing times for the dollar index
-    with open(data_path+"fx_by_tz_sp_fixed.p", mode="rb") as fname:
-        data_all_tz = pickle.load(fname)
+    # # Import the all fixing times for the dollar index
+    # with open(data_path+"fx_by_tz_sp_fixed.p", mode="rb") as fname:
+    #     data_all_tz = pickle.load(fname)
 
-    fx_tr_env = FXTradingEnvironment.from_scratch(
-        spot_prices={
-            "bid": data_merged_tz["spot_bid"],
-            "ask": data_merged_tz["spot_ask"]},
-        swap_points={
-            "bid": data_merged_tz["tnswap_bid"],
-            "ask": data_merged_tz["tnswap_ask"]}
-            )
-
-    fx_tr_env.drop(labels=settings["drop_currencies"], axis="minor_axis")
-    fx_tr_env.remove_swap_outliers()
-    fx_tr_env.reindex_with_freq('B')
-    fx_tr_env.align_spot_and_swap()
-    fx_tr_env.fillna(which="both", method="ffill")
-
-    signals = dict()
-    for c in ['aud', 'cad', 'chf', 'eur', 'gbp', 'nzd', 'sek']:
-        # c = "nzd"
-        pe = PolicyExpectation.from_pickles(data_path, c,
-            impl_rates_pickle="implied_rates_bloomberg.p")
-        signals[c] = pe.forecast_policy_change(
-            lag=10,
-            threshold=0.10,
-            avg_impl_over=settings["avg_impl_over"],
-            avg_refrce_over=settings["avg_refrce_over"],
-            bday_reindex=True)
-
-    signals = pd.DataFrame.from_dict(signals).loc["2000-11":]
+    # fx_tr_env = FXTradingEnvironment.from_scratch(
+    #     spot_prices={
+    #         "bid": data_merged_tz["spot_bid"],
+    #         "ask": data_merged_tz["spot_ask"]},
+    #     swap_points={
+    #         "bid": data_merged_tz["tnswap_bid"],
+    #         "ask": data_merged_tz["tnswap_ask"]}
+    #         )
+    #
+    # fx_tr_env.drop(labels=settings["drop_currencies"], axis="minor_axis")
+    # fx_tr_env.remove_swap_outliers()
+    # fx_tr_env.reindex_with_freq('B')
+    # fx_tr_env.align_spot_and_swap()
+    # fx_tr_env.fillna(which="both", method="ffill")
+    #
+    # signals = dict()
+    # for c in ['aud', 'cad', 'chf', 'eur', 'gbp', 'nzd', 'sek']:
+    #     # c = "nzd"
+    #     pe = PolicyExpectation.from_pickles(data_path, c,
+    #         impl_rates_pickle="implied_rates_bloomberg.p")
+    #     signals[c] = pe.forecast_policy_change(
+    #         lag=10,
+    #         threshold=0.10,
+    #         avg_impl_over=settings["avg_impl_over"],
+    #         avg_refrce_over=settings["avg_refrce_over"],
+    #         bday_reindex=True)
+    #
+    # signals = pd.DataFrame.from_dict(signals).loc["2000-11":]
 
     # signals = get_pe_signals(fx_tr_env.spot_prices.minor_axis,
     #     lag=10,
@@ -1172,8 +1192,8 @@ if __name__ == "__main__":
     #     avg_refrce_over=settings["avg_refrce_over"],
     #     bday_reindex=True)
 
-    events = signals.reindex(index=fx_tr_env.spot_prices.major_axis)
-    events = events.loc[start_date:end_date,:]
+    # events = signals.reindex(index=fx_tr_env.spot_prices.major_axis)
+    # events = events.loc[start_date:end_date,:]
     # events.loc["2002-01":"2002-02"].dropna(how="all")
 
     # with open(data_path+"events.p", mode="rb") as fname:
@@ -1184,15 +1204,15 @@ if __name__ == "__main__":
     # events = perfect_sig.reindex(index=fx_tr_env.spot_prices.major_axis)
     # events = events.loc[start_date:]
 
-    fx_tr_str = FXTradingStrategy.from_events(events,
-        blackout=1, hold_period=10, leverage="none")
+    # fx_tr_str = FXTradingStrategy.from_events(events,
+    #     blackout=1, hold_period=10, leverage="none")
     # fx_tr_str.actions.loc["2005-11":"2005-12"].to_clipboard()
     # events.loc["2005-11":"2005-12"].to_clipboard()
 
-    fx_tr = FXTrading(environment=fx_tr_env, strategy=fx_tr_str)
-
-    res = fx_tr.backtest()
-    res.dropna().plot()
+    # fx_tr = FXTrading(environment=fx_tr_env, strategy=fx_tr_str)
+    #
+    # res = fx_tr.backtest()
+    # res.dropna().plot()
     # taf.descriptives(res.dropna().pct_change().to_frame(), scale=252)
 
     # carry
@@ -1201,11 +1221,11 @@ if __name__ == "__main__":
 
     fx_tr_env = FXTradingEnvironment.from_scratch(
         spot_prices={
-            "bid": data_d["spot_bid"].loc[:, :, "NYC"],
-            "ask": data_d["spot_ask"].loc[:, :, "NYC"]},
+            "bid": data_d["spot_bid"].loc[:, start_date:, "NYC"],
+            "ask": data_d["spot_ask"].loc[:, start_date:, "NYC"]},
         swap_points={
-            "bid": data_d["tnswap_bid"].loc[:, :, "NYC"],
-            "ask": data_d["tnswap_ask"].loc[:, :, "NYC"]}
+            "bid": data_d["tnswap_bid"].loc[:, start_date:, "NYC"],
+            "ask": data_d["tnswap_ask"].loc[:, start_date:, "NYC"]}
             )
 
     fx_tr_env.remove_swap_outliers()
@@ -1214,19 +1234,46 @@ if __name__ == "__main__":
     fx_tr_env.fillna(which="both", method="ffill")
 
     fdisc_d = fx_tr_env.swap_points.mean(axis="items")
-    fdisc_d = fdisc_d.rolling(22).mean()
+    spot_d = fx_tr_env.spot_prices.mean(axis="items")
 
+    dr = -1*np.log((fdisc_d + spot_d)/spot_d).rolling(22).mean()
+
+    log_spot_d = np.log(spot_d).diff().rolling(22).sum().shift(1)
+
+    # ipdb.set_trace()
     fx_tr_str_carry = FXTradingStrategy.monthly_from_daily_signals(
-        signals_d=fdisc_d, n_portf=3, leverage="none")
+        signals_d=dr, n_portf=3, leverage="none")
+
+    new_strat = FXTradingStrategy.monthly_from_daily_signals(
+        signals_d=-1*log_spot_d, n_portf=5, leverage="none")
+
+    new_strat = FXTradingStrategy.from_events(np.sign(log_spot_d),
+        blackout=1, hold_period=1, leverage="none")
 
     fx_tr = FXTrading(environment=fx_tr_env, strategy=fx_tr_str_carry)
+    fx_tr = FXTrading(environment=fx_tr_env, strategy=new_strat)
 
-    fx_tr_str_carry.actions
-    fx_tr_env.spot_prices.minor_axis
+    ipdb.set_trace()
+    res_unr = fx_tr.backtest("unrealiz")
+    res_bal = fx_tr.backtest("balance")
 
-    res = fx_tr.backtest()
+    fx_tr_str_carry.actions.cumsum().loc[:, ["jpy", "chf"]].plot()
 
-    res.dropna().plot()
+    res_unr.dropna().plot()
+
+    res_bal.dropna().plot()
+
+    true_carry = poco.get_carry(pickle_name="data_wmr_dev_m",
+        key_name="rx",
+        n_portf=3)
+    car = true_carry.loc[start_date:, "hml"].cumsum()
+
+    pd.concat((
+        np.log(res_bal.rename("retail_balance")),
+        np.log(res_unr.rename("retail_unr")),
+        car.rename("true_carry")), axis=1).ffill().plot()
+
+    fx_tr_str_carry.actions.cumsum().loc[:, "aud"].plot()
 
     # data
     prices, swap_points = fetch_the_data(data_path,
