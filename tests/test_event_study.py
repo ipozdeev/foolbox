@@ -136,20 +136,22 @@ class TestEventStudy2D(TestEventStudy):
         self.evt_study = evt_study
         self.randint = randint
 
-    def test_ci_simple(self):
-        """
-        """
-        ci = self.evt_study.get_ci(ps=(0.025, 0.975), method="simple")
-
-        print(ci)
-        print(self.true_ci)
+    # def test_ci_simple(self):
+    #     """
+    #     """
+    #     ci = self.evt_study.get_ci(ps=(0.025, 0.975), method="simple")
+    #
+    #     print(ci)
+    #     print(self.true_ci)
 
     def test_ci_boot(self):
         """
         """
-        ci = self.evt_study.get_ci(ps=(0.025, 0.975), method="boot", M=100)
+        ci_1 = self.evt_study.get_ci(ps=(0.025, 0.975), method="boot", M=150)
+        ci_2 = self.evt_study.get_ci(ps=(0.05, 0.95), method="boot", M=150)
 
-        print(ci)
+        print(ci_1)
+        print(ci_2)
         print(self.true_ci)
 
 
