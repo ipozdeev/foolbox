@@ -369,7 +369,7 @@ class EventStudy():
 
             # concat
             ts_cumsum = pd.concat((ts_cumsum_before, ts_cumsum_after),
-                axis="major")
+                axis=1)
         else:
             ts_cumsum_before = ndframe.loc[:tb, :].iloc[::-1, :].\
                 cumsum().iloc[::-1, :]
