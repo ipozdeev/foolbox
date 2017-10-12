@@ -3,6 +3,7 @@ if __name__ == "__main__":
     from foolbox.api import *
     from foolbox.wp_tabs_figs.wp_settings import settings
     from foolbox.utils import *
+    from foolbox.fxtrading import *
 
     # Set the output path, input data and sample
     start_date = pd.to_datetime(settings["sample_start"])
@@ -70,7 +71,7 @@ if __name__ == "__main__":
 
             fx_tr = FXTrading(environment=fx_tr_env, strategy=fx_tr_str)
 
-            res = fx_tr.backtest()
+            res = fx_tr.backtest(method="unrealized")
 
             results.loc[:, ix[h, th]] = res
 
