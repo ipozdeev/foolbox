@@ -138,8 +138,8 @@ def descriptives(data, scale=12, use_statsmodels=False, **kwargs):
 
     """
     # Names for rows in the output DataFrame
-    rows = ["mean", "se_mean", "median", "std", "skew", "kurt", "sharpe",
-            "ac1", "se_ac1"]
+    rows = ["mean", "se_mean", "tstat", "median", "std", "skew", "kurt",
+        "sharpe", "ac1", "se_ac1"]
     # Generate the output DataFrame
     out = pd.DataFrame(index=rows, columns=data.columns, dtype="float")
 
@@ -151,8 +151,8 @@ def descriptives(data, scale=12, use_statsmodels=False, **kwargs):
             exog = np.ones(shape=(len(endog),))
             mod = sm.OLS(endog, exog)
             mod_fit = mod.fit(cov_type='HAC', **kwargs)
-            mean = mod_fit.params[0]
-            se_mean = mod_fit.bse[0]
+            mean = mod_fit.params
+            se_mean = mod_fit.bse
         else:
             mean, se_mean, _ = ec.rOls(
                 data[column], None, const=True, HAC=True)
@@ -162,6 +162,7 @@ def descriptives(data, scale=12, use_statsmodels=False, **kwargs):
 
         out[column]["mean"] = mean[0] * scale
         out[column]["se_mean"] = se_mean[0] * scale
+        out[column]["tstat"] = mean[0] / se_mean[0]
 
         # Compute autocorrelation with HAC-adjusted standard error, suppress
         # inntercept
