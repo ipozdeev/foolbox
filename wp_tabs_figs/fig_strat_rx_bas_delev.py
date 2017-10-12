@@ -55,15 +55,15 @@ if __name__ == "__main__":
 
     # signals ---------------------------------------------------------------
     # forecast
-    signals = get_pe_signals(curs, base_lag, base_th*100, data_path,
+    signals_fcast = get_pe_signals(curs, base_lag, base_th*100, data_path,
         fomc=False,
         avg_impl_over=avg_impl_over,
         avg_refrce_over=avg_refrce_over,
         bday_reindex=True)
     # signals = signals.replace(0.0, np.nan)
 
-    signals.loc[:, "nok"] = np.nan
-    signals.loc[:, "jpy"] = np.nan
+    signals_fcast.loc[:, "nok"] = np.nan
+    signals_fcast.loc[:, "jpy"] = np.nan
 
     signals_fomc = get_pe_signals(curs_extend, base_lag,
         base_th*100, data_path,
@@ -71,11 +71,13 @@ if __name__ == "__main__":
         avg_impl_over=avg_impl_over,
         avg_refrce_over=avg_refrce_over,
         bday_reindex=True)
-    # signals_fomc = signals_fomc.replace(0.0, np.nan)
+    signals_fomc = signals_fomc.replace(0.0, np.nan)
 
-    signals_fcast = signals.reindex(index=timeline).fillna(signals_fomc)
+    signals_fcast = signals_fcast.reindex(index=timeline).replace(0.0, np.nan)\
+        .fillna(signals_fomc)
 
     signals_fcast = signals_fcast.loc[start_date:end_date,:]
+    # signals_perf.dropna(how="all")
 
     # perfect foresight
     signals_perf = np.sign(data_events["joint_cbs"])
@@ -88,7 +90,8 @@ if __name__ == "__main__":
 
     # signals_perf_us = signals_perf_us.replace(0.0, np.nan)
 
-    signals_perf = signals_perf.reindex(index=timeline).fillna(signals_perf_us)
+    signals_perf = signals_perf.reindex(index=timeline).replace(0.0, np.nan)\
+        .fillna(signals_perf_us)
 
     # make forecast consistent
     signals_perf = signals_perf.where(signals_fcast)
@@ -96,14 +99,22 @@ if __name__ == "__main__":
 
     signals_perf = signals_perf.loc[start_date:end_date,:]
 
+    signals_fcast = signals_fcast.replace(0.0, np.nan)
+    signals_perf = signals_perf.replace(0.0, np.nan)
+
     # trading strategy ------------------------------------------------------
     # forecast
     strategy_fcast = FXTradingStrategy.from_events(signals_fcast,
         blackout=1, hold_period=10, leverage="none")
 
+    # strategy_fcast.actions.to_clipboard()
+
     trading_fcast = FXTrading(environment=fx_tr_env, strategy=strategy_fcast)
 
-    res_fcast = trading_fcast.backtest()
+    res_fcast = trading_fcast.backtest(method="unrealized_pnl")
+    # res_fcast.dropna().plot()
+    # taf.descriptives(np.log(res_fcast).diff().to_frame()*10000, scale=10)
+    # res_fcast.to_clipboard()
 
     # perfect
     strategy_perf = FXTradingStrategy.from_events(signals_perf,
@@ -111,7 +122,8 @@ if __name__ == "__main__":
 
     trading_perf = FXTrading(environment=fx_tr_env, strategy=strategy_perf)
 
-    res_perf = trading_perf.backtest()
+    res_perf = trading_perf.backtest(method="unrealized_pnl")
+    # res_perf.to_clipboard()
 
     # plot ------------------------------------------------------------------
     fig, ax = plt.subplots()
@@ -122,11 +134,20 @@ if __name__ == "__main__":
     # Concatenate the data first
     to_plot = pd.concat((res_fcast.rename("fcst"), res_perf.rename("pfct")),
         axis=1) - 1
-    to_plot = to_plot.dropna(how="all")
 
-    idx = signals_fcast.replace(0.0, np.nan).dropna(how="all").index
-    to_plot_add = to_plot.reindex(index=idx).dropna(how="all")
-    descr = taf.descriptives(np.log(to_plot_add+1).diff()*10000, 1)
+    to_plot = to_plot.dropna()
+
+    # idx = signals_fcast.replace(0.0, np.nan).dropna(how="all").index
+    # to_plot_add = to_plot.shift(1).reindex(index=idx).dropna(how="all")
+    idx = strategy_fcast.position_flags.notnull().any(axis=1)
+    tmp = res_fcast.where(idx).dropna()
+    tmp.loc[tmp.index[0]-DateOffset(days=1)] = 1.0
+    tmp = tmp.sort_index()
+    # tmp.plot()
+
+    to_descr = np.log(tmp).diff()
+
+    descr = taf.descriptives(to_descr.to_frame("fcst")*10000, 10)
 
     # Plot it
     to_plot[["pfct"]].plot(ax=ax, color='k', linewidth=1.5, linestyle="--")
@@ -162,6 +183,6 @@ if __name__ == "__main__":
     fig.savefig(out_path +
          "ueber_fcast_lag{:d}_thresh{:d}_ai{:d}_ar{:d}".\
          format(base_lag-2,int(base_th*10000),avg_impl_over,avg_refrce_over) +
-         "_rx_bas_leverage_control_time" +
+         "_rx_bas_leverage_control" +
          "_time" +
          ".pdf")
