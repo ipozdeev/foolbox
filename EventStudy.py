@@ -592,8 +592,9 @@ class EventStudy():
         fig, ax = plt.subplots(2, figsize=(8.4,11.7/2), sharex=True)
 
         # 2nd plot: cumulative sums
-        ts_mu.loc[:,:tb,:].mean(axis="items").plot(ax=ax[0], color=new_gray)
-        ts_mu.loc[:,tc:,:].mean(axis="items").plot(ax=ax[0], color=new_gray)
+        which_axis = "items" if ts_mu.shape[2] > 1 else "minor_axis"
+        ts_mu.loc[:,:tb,:].mean(axis=which_axis).plot(ax=ax[0], color=new_gray)
+        ts_mu.loc[:,tc:,:].mean(axis=which_axis).plot(ax=ax[0], color=new_gray)
         # add points at initiation
         ax[0].plot([tb]*len(self.assets), ts_mu.loc[:,tb,:].mean(axis=1),
             color="k", linestyle="none", marker=".", markerfacecolor="k")
@@ -601,7 +602,8 @@ class EventStudy():
             color="k", linestyle="none", marker=".", markerfacecolor="k")
         # mean in black
         cs_ts_mu.plot(ax=ax[0], color='k', linewidth=1.5)
-        ax[0].set_title("cumulative, individual")
+        title = "all assets" if ts_mu.shape[2] > 1 else "all events"
+        ax[0].set_title(title)
 
         # 3rd plot: ci around avg cumsum
         cs_ts_mu.loc[:tb].plot(ax=ax[1], color='k', linewidth=1.5)
