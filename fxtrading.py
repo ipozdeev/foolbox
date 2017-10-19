@@ -4,30 +4,130 @@ import warnings
 from foolbox import portfolio_construction as poco
 # import ipdb
 
+class StrategyFactory():
+    """Factory for constructing strategies."""
+    def __init__(self):
+        """
+        """
+        pass
+
+    @staticmethod
+    def deleverage_position_flags(position_flags, method="net"):
+        """Deleverage position flags.
+
+        Parameters
+        ----------
+        method : str
+            'zero' to make position weights sum up to zero;
+            'net' to make absolute weights of short and long positions sum up
+                to one each (sum(abs(negative positions)) = 1);
+            'unlimited' for unlimited leverage.
+        """
+        if method not in ("zero", "net", "unlimited"):
+            raise ValueError("leverage not known!")
+
+        # weights are understood to be fractions of portfolio value
+        if method == "zero":
+            # NB: dangerous, because meaningless whenever there are long/sort
+            #   positions only
+            # make sure that pandas does not sum all nan's to zero
+            row_lev = np.abs(position_flags).apply(axis=1, func=np.nansum)
+
+            # divide by leverage
+            pos_weights = position_flags.divide(row_lev, axis=0)
+
+        elif method == "net":
+            # delverage positive and negative positions separately
+            row_lev_pos = position_flags.where(position_flags > 0)\
+                .apply(axis=1, func=np.nansum)
+            row_lev_neg = -1*position_flags.where(position_flags < 0)\
+                .apply(axis=1, func=np.nansum)
+
+            # divide by leverage
+            pos_weights = \
+                position_flags.where(position_flags < 0).divide(
+                    row_lev_neg, axis=0).fillna(
+                position_flags.where(position_flags > 0).divide(
+                    row_lev_pos, axis=0))
+
+        elif method == "unlimited":
+            pos_weights = position_flags.copy()
+
+        return pos_weights
+
+    @staticmethod
+    def position_weights_to_actions(position_weights):
+        """Get actions from (deleveraged if needed) position weights."""
+
+        # reinstall zeros where nan's are
+        position_weights = position_weights.fillna(value=0.0)
+
+        # actions are changes in positions: to realize a return on day t, a
+        #   position on t-1 should be opened
+        actions = position_weights.diff().shift(-1)
+
+        return actions
+
 class FXTradingStrategy():
     """
     """
-    def __init__(self, actions=None):
+    def __init__(self, actions, position_flags=None, position_weights=None):
         """
         """
-        self._actions = actions
+        self.actions = actions
+        self._position_flags = position_flags
+        self._position_weights = position_weights
 
     @property
-    def actions(self):
-        return self._actions
+    def position_flags(self):
+        return self._position_flags
 
-    @actions.getter
-    def actions(self):
-        if self._actions is None:
-            raise ValueError("No actions specified!")
-        return self._actions
+    @position_flags.getter
+    def position_flags(self):
+        if self._position_flags is None:
+            raise ValueError("No position flags specified!")
+        return self._position_flags
 
-    @actions.setter
-    def actions(self, value):
-        self._actions = value
+    @position_flags.setter
+    def position_flags(self, value):
+        self._position_flags = value
+
+    @property
+    def position_weights(self):
+        return self._position_weights
+
+    @position_weights.getter
+    def position_weights(self):
+        if self._position_weights is None:
+            raise ValueError("No position weights specified!")
+        return self._position_weights
+
+    @position_weights.setter
+    def position_weights(self, value):
+        self._position_weights = value
 
     @classmethod
-    def from_events(cls, events, blackout, hold_period, leverage="full"):
+    def from_position_flags(cls, position_flags, leverage="none"):
+        """
+        leverage : str
+            "full" for allowing unlimited leverage
+            "none" for restricting it to 1
+            "net" for restricting that short and long positions net out to
+                no-leverage
+        """
+        pos_weights = StrategyFactory().deleverage_position_flags(
+            position_flags, method=leverage)
+        actions = StrategyFactory().position_weights_to_actions(
+            pos_weights)
+
+        strat = cls(actions=actions)
+        strat.position_weights = pos_weights
+        strat.position_flags = position_flags
+
+        return strat
+
+    @classmethod
+    def from_events(cls, events, blackout, hold_period, leverage="net"):
         """
         Parameters
         ----------
@@ -70,45 +170,23 @@ class FXTradingStrategy():
         position_flags = position_flags.fillna(method="bfill",
             limit=hold_period-1)
 
-        # II. position weights
-        # weights are understood to be fractions of portfolio value invested;
-        # in case of equally-weighted no-leverage portfolio, position weights
-        #   are events divided by the absolute sum thereof
-        if leverage == "none":
-            # also, make sure that pandas does not sum all nan's to zero
-            row_leverage = np.abs(position_flags).apply(axis=1, func=np.nansum)
-            # divide by leverage
-            position_weights = position_flags.divide(row_leverage, axis=0)
+        # need to open and close it somewhere
+        # TODO: relevant?
+        position_flags.iloc[0,:] = np.nan
+        position_flags.iloc[-1,:] = np.nan
 
-        elif leverage == "net":
-            row_leverage_pos = position_flags.where(position_flags > 0)\
-                .apply(axis=1, func=np.nansum)
-            row_leverage_neg = -1*position_flags.where(position_flags < 0)\
-                .apply(axis=1, func=np.nansum)
-            position_weights = position_flags.where(position_flags < 0)\
-                .divide(row_leverage_neg, axis=0).fillna(
-                position_flags.where(position_flags > 0)\
-                        .divide(row_leverage_pos, axis=0))
+        # pos_weights = StrategyFactory().deleverage_position_flags(
+        #     position_flags, method=leverage)
+        # actions = StrategyFactory().position_weights_to_actions(
+        #     pos_weights)
+        #
+        # strat = cls(actions=actions)
+        # strat.position_weights = pos_weights
+        # strat.position_flags = position_flags
+        #
+        # return strat
 
-        elif leverage == "full":
-            row_leverage = 1.0
-            position_weights = position_flags.copy()
-
-        else:
-            raise ValueError("admissible types of leverage are 'none', "+
-                "'net' and 'full'!")
-
-        # reinstall zeros where nan's are
-        position_weights = position_weights.fillna(value=0.0)
-
-        # actions are changes in positions: to realize a return on day t, a
-        #   position on t-1 should be opened
-        actions = position_weights.diff().shift(-1)
-
-        res = cls(actions=actions)
-        res.position_flags = position_flags
-
-        return res
+        return cls.from_position_flags(position_flags, leverage)
 
     @classmethod
     def monthly_from_daily_signals(cls, signals_d, agg_fun=None, n_portf=3,
@@ -118,6 +196,10 @@ class FXTradingStrategy():
         ----------
         log_fdisc : pd.DataFrame
             of approximate interest rate differentials
+
+        Returns
+        -------
+        strat : FXTradingStrategy
         """
         if agg_fun is None:
             agg_fun = lambda x: x.iloc[-1,:]
@@ -129,50 +211,49 @@ class FXTradingStrategy():
             pf["portfolio1"]).astype(float)
         long_leg = pf["portfolio"+str(n_portf)].notnull().where(
             pf["portfolio"+str(n_portf)]).astype(float)
-
         both_legs = short_leg.fillna(long_leg)
 
         # reindex, bfill
         position_flags = both_legs.reindex(index=signals_d.index,
             method="bfill")
 
-        # need to close it somewhere
+        # need to open and close it somewhere
         position_flags.iloc[0,:] = np.nan
         position_flags.iloc[-1,:] = np.nan
 
-        # to actions
-        if leverage == "none":
-            # also, make sure that pandas does not sum all nan's to zero
-            row_leverage = np.abs(position_flags).apply(axis=1, func=np.nansum)
-            row_leverage = row_leverage.replace(0.0, np.nan)
-            # divide by leverage
-            position_weights = position_flags.divide(row_leverage, axis=0)
+        # # construct strategy
+        # pos_weights = StrategyFactory().deleverage_position_flags(
+        #     position_flags, method=leverage)
+        # actions = StrategyFactory().position_weights_to_actions(
+        #     pos_weights)
+        #
+        # strat = cls(actions=actions)
+        # strat.position_weights = pos_weights
+        # strat.position_flags = position_flags
+        #
+        # return strat
 
-        elif leverage == "net":
-            row_leverage_pos = position_flags.where(position_flags > 0)\
-                .apply(axis=1, func=np.nansum)
-            row_leverage_neg = -1*position_flags.where(position_flags < 0)\
-                .apply(axis=1, func=np.nansum)
-            position_weights = position_flags.where(position_flags < 0)\
-                .divide(row_leverage_neg, axis=0).fillna(
-                position_flags.where(position_flags > 0)\
-                        .divide(row_leverage_pos, axis=0))
+        return cls.from_position_flags(position_flags, leverage)
 
-        elif leverage == "full":
-            row_leverage = 1.0
-            position_weights = position_flags.copy()
+    def __add__(self, other):
+        """Combine two strategies.
+        A + B means strategy A is taken as the base strategy and 'enhanced'
+        with strategy B.
 
-        else:
-            raise ValueError("admissible types of leverage are 'none', "+
-                "'net' and 'full'!")
+        Not commutative!
+        """
+        # fill position weights with those of `other`
+        new_pos_weights = other.position_weights.fillna(self.position_weights)
 
-        actions = position_weights.replace(np.nan, 0.0).diff().shift(-1)
+        # the new strategy is a strategy with the above compbo and unlimited
+        #   leverage
+        new_strat = FXTradingStrategy.from_position_flags(new_pos_weights,
+            leverage="net")
+        new_strat.position_flags = \
+            new_strat.position_weights / new_strat.position_weights * \
+            np.sign(new_strat.position_weights)
 
-        res = cls(actions=actions)
-        res.position_flags = position_flags
-
-        return res
-
+        return new_strat
 
 class FXTradingEnvironment():
     """
@@ -1139,81 +1220,14 @@ if __name__ == "__main__":
     from foolbox.api import *
     from foolbox.wp_tabs_figs.wp_settings import settings
     from foolbox.utils import *
-    # import ipdb
 
     # Set the output path, input data and sample
     start_date = pd.to_datetime(settings["sample_start"])
     end_date = pd.to_datetime(settings["sample_end"])
-    # start_date = pd.to_datetime("2002-01-29")
-
-    # # data
-    # with open(data_path+"fx_by_tz_aligned_d.p", mode="rb") as fname:
-    #     data_merged_tz = pickle.load(fname)
-
-    # # Import the all fixing times for the dollar index
-    # with open(data_path+"fx_by_tz_sp_fixed.p", mode="rb") as fname:
-    #     data_all_tz = pickle.load(fname)
-
-    # fx_tr_env = FXTradingEnvironment.from_scratch(
-    #     spot_prices={
-    #         "bid": data_merged_tz["spot_bid"],
-    #         "ask": data_merged_tz["spot_ask"]},
-    #     swap_points={
-    #         "bid": data_merged_tz["tnswap_bid"],
-    #         "ask": data_merged_tz["tnswap_ask"]}
-    #         )
-    #
-    # fx_tr_env.drop(labels=settings["drop_currencies"], axis="minor_axis")
-    # fx_tr_env.remove_swap_outliers()
-    # fx_tr_env.reindex_with_freq('B')
-    # fx_tr_env.align_spot_and_swap()
-    # fx_tr_env.fillna(which="both", method="ffill")
-    #
-    # signals = dict()
-    # for c in ['aud', 'cad', 'chf', 'eur', 'gbp', 'nzd', 'sek']:
-    #     # c = "nzd"
-    #     pe = PolicyExpectation.from_pickles(data_path, c,
-    #         impl_rates_pickle="implied_rates_bloomberg.p")
-    #     signals[c] = pe.forecast_policy_change(
-    #         lag=10,
-    #         threshold=0.10,
-    #         avg_impl_over=settings["avg_impl_over"],
-    #         avg_refrce_over=settings["avg_refrce_over"],
-    #         bday_reindex=True)
-    #
-    # signals = pd.DataFrame.from_dict(signals).loc["2000-11":]
-
-    # signals = get_pe_signals(fx_tr_env.spot_prices.minor_axis,
-    #     lag=10,
-    #     threshold=0.10,
-    #     data_path=data_path,
-    #     fomc=False,
-    #     avg_impl_over=settings["avg_impl_over"],
-    #     avg_refrce_over=settings["avg_refrce_over"],
-    #     bday_reindex=True)
-
-    # events = signals.reindex(index=fx_tr_env.spot_prices.major_axis)
-    # events = events.loc[start_date:end_date,:]
-    # events.loc["2002-01":"2002-02"].dropna(how="all")
-
-    # with open(data_path+"events.p", mode="rb") as fname:
-    #     events = pickle.load(fname)
-    # perfect_sig = np.sign(events["joint_cbs"])
-    # perfect_sig = perfect_sig.loc[:,fx_tr_env.spot_prices.minor_axis]
-    #
-    # events = perfect_sig.reindex(index=fx_tr_env.spot_prices.major_axis)
-    # events = events.loc[start_date:]
-
-    # fx_tr_str = FXTradingStrategy.from_events(events,
-    #     blackout=1, hold_period=10, leverage="none")
-    # fx_tr_str.actions.loc["2005-11":"2005-12"].to_clipboard()
-    # events.loc["2005-11":"2005-12"].to_clipboard()
-
-    # fx_tr = FXTrading(environment=fx_tr_env, strategy=fx_tr_str)
-    #
-    # res = fx_tr.backtest()
-    # res.dropna().plot()
-    # taf.descriptives(res.dropna().pct_change().to_frame(), scale=252)
+    avg_impl_over = settings["avg_impl_over"]
+    avg_refrce_over = settings["avg_refrce_over"]
+    base_lag = settings["base_holding_h"] + 2
+    base_th = settings["base_threshold"]
 
     # carry
     with open(data_path+"fx_by_tz_sp_fixed.p", mode="rb") as hangar:
@@ -1228,8 +1242,9 @@ if __name__ == "__main__":
             "ask": data_d["tnswap_ask"].loc[:, start_date:, "NYC"]}
             )
 
+    fx_tr_env.drop(labels=["dkk"], axis="minor_axis", errors="ignore")
     fx_tr_env.remove_swap_outliers()
-    fx_tr_env.reindex_with_freq('B')
+    fx_tr_env.reindex_with_freq('D')
     fx_tr_env.align_spot_and_swap()
     fx_tr_env.fillna(which="both", method="ffill")
 
@@ -1238,28 +1253,39 @@ if __name__ == "__main__":
 
     dr = -1*np.log((fdisc_d + spot_d)/spot_d).rolling(22).mean()
 
-    log_spot_d = np.log(spot_d).diff().rolling(22).sum().shift(1)
-
-    # ipdb.set_trace()
     fx_tr_str_carry = FXTradingStrategy.monthly_from_daily_signals(
-        signals_d=dr, n_portf=3, leverage="none")
+        signals_d=dr.drop("dkk", axis=1), n_portf=3, leverage="net")
 
-    new_strat = FXTradingStrategy.monthly_from_daily_signals(
-        signals_d=-1*log_spot_d, n_portf=5, leverage="none")
+    # ois-implied forecasts
+    curs = [p for p in dr.columns if p not in ["dkk", "nok", "jpy"]]
 
-    new_strat = FXTradingStrategy.from_events(np.sign(log_spot_d),
-        blackout=1, hold_period=1, leverage="none")
+    # forecast direction
+    signals_fcast = get_pe_signals(curs, base_lag, base_th*100, data_path,
+        fomc=False,
+        avg_impl_over=avg_impl_over,
+        avg_refrce_over=avg_refrce_over,
+        bday_reindex=True)
 
-    fx_tr = FXTrading(environment=fx_tr_env, strategy=fx_tr_str_carry)
-    fx_tr = FXTrading(environment=fx_tr_env, strategy=new_strat)
+    signals_fcast.loc[:, "nok"] = np.nan
+    signals_fcast.loc[:, "jpy"] = np.nan
 
-    ipdb.set_trace()
+    signals_fcast = signals_fcast.loc[start_date:end_date].reindex(
+        index=pd.date_range(start_date, end_date, freq='B'))
+
+    strategy_fcast = FXTradingStrategy.from_events(signals_fcast,
+        blackout=1, hold_period=10, leverage="net")
+
+    combined_strat = fx_tr_str_carry + strategy_fcast
+
+    # fx_tr = FXTrading(environment=fx_tr_env, strategy=fx_tr_str_carry)
+    # fx_tr = FXTrading(environment=fx_tr_env, strategy=strategy_fcast)
+    fx_tr = FXTrading(environment=fx_tr_env, strategy=combined_strat)
+
     res_unr = fx_tr.backtest("unrealiz")
     res_bal = fx_tr.backtest("balance")
 
-    fx_tr_str_carry.actions.cumsum().loc[:, ["jpy", "chf"]].plot()
-
     res_unr.dropna().plot()
+    taf.descriptives(np.log(res_unr.dropna()).diff().to_frame()*100, scale=1)
 
     res_bal.dropna().plot()
 
@@ -1274,6 +1300,8 @@ if __name__ == "__main__":
         car.rename("true_carry")), axis=1).ffill().plot()
 
     fx_tr_str_carry.actions.cumsum().loc[:, "aud"].plot()
+
+    new_strat = fx_tr_str_carry + strategy_fcast
 
     # data
     prices, swap_points = fetch_the_data(data_path,
