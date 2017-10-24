@@ -4,6 +4,7 @@ if __name__ == "__main__":
     from foolbox.wp_tabs_figs.wp_settings import settings
     from foolbox.utils import *
     from foolbox.fxtrading import *
+    from foolbox.visuals import broomstick_plot
 
     # Set the output path, input data and sample
     start_date = pd.to_datetime(settings["sample_start"])
@@ -32,8 +33,8 @@ if __name__ == "__main__":
     fx_tr_env.align_spot_and_swap()
     fx_tr_env.fillna(which="both", method="ffill")
 
-    holding_range = np.arange(1, 16, 1)
-    threshold_range = np.arange(1, 26, 1)
+    holding_range = np.arange(1, 2, 1)
+    threshold_range = np.arange(1, 2, 1)
 
     combos = list(itools.product(holding_range, threshold_range))
     cols = pd.MultiIndex.from_tuples(combos, names=["holding", "threshold"])
@@ -75,8 +76,16 @@ if __name__ == "__main__":
 
             results.loc[:, ix[h, th]] = res
 
-    with open(data_path + "results_deleveraged.p", mode='wb') as hangar:
+    with open(data_path + "results_deleveraged_1.p", mode='wb') as hangar:
         pickle.dump(results, hangar)
 
+    with open(data_path + "results_deleveraged.p", mode='rb') as hangar:
+        data = pickle.load(hangar)
 
-    fig_all = broomstick_plot(results.dropna(how="all").ffill())
+
+    fig_all = broomstick_plot(data.dropna(how="all").ffill())
+
+    fig_all.tight_layout()
+
+    out_path = data_path + "wp_figures_limbo/"
+    fig_all.savefig(out_path + "broomstick_plot_rx_bas_deleveraged.pdf")

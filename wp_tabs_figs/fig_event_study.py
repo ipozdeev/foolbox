@@ -44,7 +44,7 @@ def fig_event_study(events, ret, direction,
         this_evt = events.loc[:,cur].dropna()
 
         # signal
-        this_sig = (this_evt < 0) if direction == "downs" else (this_evt > 0)
+        this_sig = (this_evt < 0) if direction == "cuts" else (this_evt > 0)
 
         # fetch return
         this_ret = ret[cur]*100
@@ -243,84 +243,95 @@ if __name__ == "__main__":
     # parameters ------------------------------------------------------------
     from foolbox.wp_tabs_figs.wp_settings import *
 
+    # data path -------------------------------------------------------------
+    data_path = set_credentials.gdrive_path("research_data/fx_and_events/")
+    out_path = set_credentials.gdrive_path("opec_meetings/tex/figs/")
+
     # currency to drop
-    drop_curs = ["usd","jpy","dkk"]
+    drop_curs = settings["drop_currencies"]
 
     # dates to trim to
     s_dt = settings["sample_start"]
     e_dt = settings["sample_end"]
 
     # window
-    wa,wb,wc,wd = -10,-1,1,5
-    window = (wa,wb,wc,wd)
+    wa, wb, wc, wd = -10, -1, 1, 5
+    window = (wa, wb, wc, wd)
 
-    # direction of rate decision: "ups" or "downs"
-    direction="downs"
-
-    # lag to take
-    lag = settings["base_holding_h"]+1
-
-    # data ------------------------------------------------------------------
-    data_path = set_credentials.gdrive_path("research_data/fx_and_events/")
-    out_path = set_credentials.gdrive_path("opec_meetings/tex/figs/")
-
-    # spot returns + drop currencies ----------------------------------------
+    # spot returns ----------------------------------------------------------
     with open(data_path + settings["fx_data"], mode='rb') as fname:
-        fx = pickle.load(fname)
-    ret = np.log(fx["spot_mid"].drop(drop_curs,axis=1,errors="ignore")).diff()
+        fx_data = pickle.load(fname)
 
-    # events + drop currencies ----------------------------------------------
+    ds = np.log(fx_data["spot_mid"]).diff()
+    ds = ds.loc[s_dt:e_dt, :]
+
+    # events ----------------------------------------------------------------
     with open(data_path + settings["events_data"], mode='rb') as fname:
-        events = pickle.load(fname)
-    events_perf = events["joint_cbs"].drop(drop_curs, axis=1, errors="ignore")
-    events_perf = events_perf.loc[s_dt:e_dt]
+        events_data = pickle.load(fname)
 
-    # # events: forecast ------------------------------------------------------
-    # events_fcast = events_perf.drop(["nok",], axis=1)*np.nan
-    # for cur in events_fcast.columns:
-    #     # cur = "sek"
-    #     pe = PolicyExpectation.from_pickles(data_path, cur)
-    #     events_fcast.loc[:,cur] = pe.forecast_policy_change(
-    #         lag=lag,
-    #         threshold=settings["base_threshold"],
-    #         avg_impl_over=settings["avg_impl_over"],
-    #         avg_refrce_over=settings["avg_refrce_over"])
+    events = events_data["joint_cbs"]
+    events = events.loc[s_dt:e_dt, :]
 
-    # fomc ------------------------------------------------------------------
-    with open(data_path + "fx_by_tz_sp_fixed.p", mode='rb') as fname:
-        fx_all = pickle.load(fname)
-    ret_fomc = np.log(fx_all["spot_mid"].loc[:,:,"NYC"]\
-        .drop(drop_curs,axis=1,errors="ignore")).diff()
+    # loop over direction of rate decision: "ups" or "downs"
+    for d in ["ups", "downs"]:
+        # d = "downs"
+        # and over counter currencies
+        for c in ["usd", "jpy", "gbp"]:
+            # c = "jpy"
+            ret = into_currency(ds, c).drop(
+                [p for p in drop_curs if p != c], axis=1, errors="ignore"))
+            ret = ds
 
-    fomc = events["joint_cbs"].loc[:,"usd"]
-    fomc = pd.concat([fomc,]*events_perf.shape[1], axis=1)
-    fomc.columns = events_perf.columns
-    fomc = fomc.loc[s_dt:e_dt]
 
-    # event study -----------------------------------------------------------
-    f_i, f_a = fig_event_study(events_perf, ret,
-        direction=direction,
-        wght="by_event",
-        ci_width=0.95,
-        window=window)
 
-    # fomc ------------------------------------------------------------------
-    f_i, f_a = fig_event_study(fomc, ret_fomc,
-        direction=direction,
-        wght="by_event",
-        ci_width=0.95,
-        window=window)
+        events_perf = events_perf.loc[s_dt:e_dt]
 
-    # save ------------------------------------------------------------------
-    f_i.tight_layout()
-    f_a.tight_layout()
+        # # events: forecast ------------------------------------------------------
+        # events_fcast = events_perf.drop(["nok",], axis=1)*np.nan
+        # for cur in events_fcast.columns:
+        #     # cur = "sek"
+        #     pe = PolicyExpectation.from_pickles(data_path, cur)
+        #     events_fcast.loc[:,cur] = pe.forecast_policy_change(
+        #         lag=lag,
+        #         threshold=settings["base_threshold"],
+        #         avg_impl_over=settings["avg_impl_over"],
+        #         avg_refrce_over=settings["avg_refrce_over"])
 
-    f_i.savefig(
-        out_path+"xxxusd_before_"+direction+"_weighted_indiv.pdf",
-        bbox_inches="tight")
-    f_a.savefig(
-        out_path+"xxxusd_before_"+direction+"_weighted_avg.pdf",
-        bbox_inches="tight")
+        # fomc ------------------------------------------------------------------
+        with open(data_path + "fx_by_tz_sp_fixed.p", mode='rb') as fname:
+            fx_all = pickle.load(fname)
+        ret_fomc = np.log(fx_all["spot_mid"].loc[:,:,"NYC"]\
+            .drop(drop_curs,axis=1,errors="ignore")).diff()
+
+        fomc = events["joint_cbs"].loc[:,"usd"]
+        fomc = pd.concat([fomc,]*events_perf.shape[1], axis=1)
+        fomc.columns = events_perf.columns
+        fomc = fomc.loc[s_dt:e_dt]
+
+        # event study -----------------------------------------------------------
+        f_i, f_a = fig_event_study(events_perf, ret,
+            direction=direction,
+            wght="by_event",
+            ci_width=0.95,
+            window=window)
+
+        # fomc ------------------------------------------------------------------
+        f_i, f_a = fig_event_study(fomc, ret_fomc,
+            direction=direction,
+            wght="by_event",
+            ci_width=0.95,
+            window=window)
+
+        # save ------------------------------------------------------------------
+        f_i.tight_layout()
+        f_a.tight_layout()
+
+        f_i.savefig(
+            out_path+"xxxusd_before_"+direction+"_weighted_indiv.pdf",
+            bbox_inches="tight")
+        f_a.savefig(
+            out_path+"xxxusd_before_"+direction+"_weighted_avg.pdf",
+            bbox_inches="tight")
 
 
 

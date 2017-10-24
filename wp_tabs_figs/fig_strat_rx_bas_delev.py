@@ -105,7 +105,7 @@ if __name__ == "__main__":
     # trading strategy ------------------------------------------------------
     # forecast
     strategy_fcast = FXTradingStrategy.from_events(signals_fcast,
-        blackout=1, hold_period=10, leverage="none")
+        blackout=1, hold_period=10, leverage="net")
 
     # strategy_fcast.actions.to_clipboard()
 
@@ -118,7 +118,7 @@ if __name__ == "__main__":
 
     # perfect
     strategy_perf = FXTradingStrategy.from_events(signals_perf,
-        blackout=1, hold_period=10, leverage="none")
+        blackout=1, hold_period=10, leverage="net")
 
     trading_perf = FXTrading(environment=fx_tr_env, strategy=strategy_perf)
 
@@ -184,5 +184,5 @@ if __name__ == "__main__":
          "ueber_fcast_lag{:d}_thresh{:d}_ai{:d}_ar{:d}".\
          format(base_lag-2,int(base_th*10000),avg_impl_over,avg_refrce_over) +
          "_rx_bas_leverage_control" +
-         "_time" +
+         "_time_new" +
          ".pdf")
