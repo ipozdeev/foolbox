@@ -747,10 +747,10 @@ if __name__ == "__main__":
     from foolbox.api import *
 
     # currency to drop
-    drop_curs = ["usd","jpy","dkk"]
+    drop_curs = ["jpy","dkk", "nok"]
 
     # window
-    wa,wb,wc,wd = -10,-1,1,5
+    wa,wb,wc,wd = -5,-1,1,5
     window = (wa,wb,wc,wd)
 
     s_dt = settings["sample_start"]
@@ -765,6 +765,14 @@ if __name__ == "__main__":
         fx = pickle.load(fname)
     ret = np.log(fx["spot_mid"].drop(drop_curs,axis=1,errors="ignore")).diff()
 
+    with open(data_path + "bond_data.p", mode='rb') as fname:
+        fx = pickle.load(fname)
+    ret = np.log(fx["3Y"].drop(drop_curs,axis=1,errors="ignore")).diff()
+
+    # with open(data_path+"data_dev_d.p", mode="rb") as fname:
+    #     ret = pickle.load(fname)["msci_ret"].drop(drop_curs, axis=1,
+    #                                               errors="ignore")
+
     # events + drop currencies ----------------------------------------------
     with open(data_path + settings["events_data"], mode='rb') as fname:
         events_data = pickle.load(fname)
@@ -773,17 +781,25 @@ if __name__ == "__main__":
     events = events.loc[s_dt:e_dt]
 
     # data = ret["nzd"]
+    #ret = ret.mean(axis=1).to_frame("usd")
     data = ret.copy().loc[s_dt:e_dt]
 
     # events = events_perf["nzd"].dropna()
-    events = events.where(events < 0)
+    events = events.where(events > 0)
 
+    data=data
+    events=events
+
+    wa,wb,wc,wd = -10,-1,1,5
+    window = (wa,wb,wc,wd)
     # normal_data = data.rolling(22).mean().shift(1)
     es = EventStudy(data, events, window, mean_type="count_weighted",
         normal_data=0.0, x_overlaps=True)
+    es.get_ci((0.025, 0.975), method="boot", M=25)
+    es.plot()
 
     ci_boot_c = es.get_ci(ps=(0.025, 0.975), method="boot", n_blocks=10,
-        M=5000)
+        M=25)
 
     es.booted
     qs = (0.01, 0.025, 0.05, 0.95, 0.975, 0.99)
