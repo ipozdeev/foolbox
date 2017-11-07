@@ -84,7 +84,8 @@ class Regression():
             yhat = self.X.dot(self.coef)
 
         # to frame + rename
-        yhat = yhat.to_frame()
+        if isinstance(yhat, pd.Series):
+            yhat = yhat.to_frame()
         yhat.columns = self.Y_names
 
         self.yhat = yhat
@@ -166,12 +167,15 @@ class PureOls(Regression):
 
             # tstat
             tstat = coef / se
+            # R-squared
+            rsq = sm.OLS(endog=self.y, exog=self.X).fit().rsquared_adj
 
             # concat and transpose
             res = pd.DataFrame.from_dict({
                 "coef": coef,
                 "se": se,
                 "tstat": tstat}).T
+            res.loc["adj r2", res.columns[0]] = rsq
 
             return res
 
