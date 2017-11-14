@@ -290,7 +290,7 @@ class DynamicOLS():
         if self.x.name is None:
             self.x.name = "regressor"
 
-    def fit(self, method, **kwargs):
+    def fit(self, method, denom=False, **kwargs):
         """
         Parameters
         ----------
@@ -305,16 +305,16 @@ class DynamicOLS():
         """
         if self.y.shape[1] < 2:
             res = self.fit_to_series(self.y.squeeze(), self.x,
-                method=method, **kwargs)
+                method=method, denom=denom, **kwargs)
         else:
             res = {c: self.fit_to_series(self.y.loc[:, c], self.x,
-                method=method, **kwargs) for c in self.y.columns}
+                method=method, denom=denom, **kwargs) for c in self.y.columns}
             res = pd.Panel.from_dict(res, orient="minor")
 
         return res
 
     @staticmethod
-    def fit_to_series(y, x, method, **kwargs):
+    def fit_to_series(y, x, method, denom=False, **kwargs):
         """Calculate rolling one-factor (+constant) beta of a series."""
 
         assert isinstance(y, pd.Series) & isinstance(x, pd.Series)
@@ -335,6 +335,9 @@ class DynamicOLS():
             # calculate alpha
             a = y.rolling(**kwargs).mean() - b*x.rolling(**kwargs).mean()
 
+            if denom:
+                d = roll_cov_yx.loc[:, x.name, x.name]
+
         elif method == "expanding":
             # expanding covariance
             roll_cov_yx = yx.expanding(**kwargs).cov()
@@ -345,6 +348,9 @@ class DynamicOLS():
 
             # calculate alpha
             a = y.expanding(**kwargs).mean() - b*x.expanding(**kwargs).mean()
+
+            if denom:
+                d = roll_cov_yx.loc[:, x.name, x.name]
 
         elif method == "grouped_by":
             # grouped_by covariance
@@ -357,12 +363,19 @@ class DynamicOLS():
             b = roll_cov_yx.loc[idx[:, y.name], x.name].xs(
                 y.name, level=1, axis=0) /\
                 roll_cov_yx.loc[idx[:, x.name], x.name].xs(
-                x.name, level=1, axis=0)
+                    x.name, level=1, axis=0)
 
             # calculate alpha
             a = y.groupby(**kwargs).mean() - b*x.groupby(**kwargs).mean()
 
+            if denom:
+                d = roll_cov_yx.loc[idx[:, x.name], x.name].xs(
+                    x.name, level=1, axis=0)
+
         res = pd.concat((a.rename("const"), b.rename(x.name)), axis=1)
+
+        if denom:
+            res.loc[:, "denominator"] = d
 
         return res
 
@@ -495,10 +508,10 @@ class PrincipalComponents():
         # for two components only!
 
         # plot x-axis
-        ax[1].plot((-1.0,1.0), (0.0,0.0),
+        ax[1].plot((-1.0,1.0), (0.0,0.0), linewidth=1.5,
             alpha=0.25, label="pc_1")
         # plot y-axis
-        ax[1].plot((0.0,0.0), (-1.0,1.0),
+        ax[1].plot((0.0,0.0), (-1.0,1.0), linewidth=1.5,
             alpha=0.25, label="pc_2")
 
         ax[1].set_xlim((-1.0,1.0))
