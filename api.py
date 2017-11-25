@@ -11,5 +11,5 @@ import foolbox.data_mgmt.set_credentials as set_credentials
 set_credentials.set_r_environment()
 data_path = set_credentials.gdrive_path("research_data/fx_and_events/")
 
-print("imported pickle, plt, poco, taf, EventStudy, data_path." +
-    "\nSet envir for R and matplotlib settings.")
+# print("imported pickle, plt, poco, taf, EventStudy, data_path." +
+#     "\nSet envir for R and matplotlib settings.")

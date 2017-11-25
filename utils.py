@@ -324,22 +324,26 @@ def parse_bloomberg_excel(filename, colnames_sheet, data_sheets):
             res = pd.NaT
         return res
 
-    # read in
-    data_dict_full = pd.read_excel(filename,
-        sheetname=data_sheets+[colnames_sheet,],
-        header=0)
+    # if data_sheets is None, read in all sheets
+    if data_sheets is None:
+        data_dict_full = pd.read_excel(filename,
+            sheetname=None,
+            header=0)
+    else:
+        data_dict_full = pd.read_excel(filename,
+            sheetname=data_sheets+[colnames_sheet],
+            header=0)
 
-    # column names on separate sheet
-    colnames = data_dict_full[colnames_sheet].columns
+    # fetch column names from respective sheet
+    colnames = data_dict_full.pop(colnames_sheet).columns
 
     # take just on sheet with data
-    data_dict = {k: data_dict_full[k] for k in data_sheets}
+    data_dict = {k: data_dict_full[k] for k in data_dict_full.keys()}
 
     # loop over sheetnames
     all_data = dict()
 
-    for s in data_sheets:
-        data_df = data_dict[s]
+    for s, data_df in data_dict_full.items():
         # loop over triplets, map dates, extract
         new_data_df = []
         for p in range((data_df.shape[1]+1)//3):

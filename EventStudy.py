@@ -628,7 +628,7 @@ class EventStudy():
         # # super title
         # fig.suptitle(self.data.name, fontsize=14)
 
-        return fig
+        return fig, ax
 
     @staticmethod
     def mean_fun(method="simple"):
