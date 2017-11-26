@@ -1669,38 +1669,6 @@ class OIS():
 
         return res
 
-    @staticmethod
-    def cumprod_with_ffill(series):
-        """Calculate cumulative product using ffill for OIS.
-
-        Non-trading days are accounted for by forward-filling the rate series
-        and performing the multiplication.
-        """
-        res = (series+1).ffill().prod() - 1
-
-        return res
-
-    @staticmethod
-    def cumprod_with_mult(series):
-        """DEPRECATED Calculate cumulative product using OIS standard formula.
-
-        Non-trading days are accounted for by multiplying the rate on the last
-        trading day by the number of subsequent non-trading days (plus one).
-        """
-        # ffill to arrive at series with consecutive missing values ffilled
-        series_ffilled = series.ffill()
-
-        # count consecutive repeating occurrences
-        cnt = series.expanding().count()
-
-        # multiply rates with the amount of consecutive occurrences
-        series_grouped = series_ffilled.groupby(cnt).sum()
-
-        # this is to be cumprod'ed
-        res = (1+series_grouped).prod() - 1
-
-        return res
-
     def get_return_on_fixed(self, swap_rate):
         """Calculate return on the fixed leg over the lifetime of OIS.
 
