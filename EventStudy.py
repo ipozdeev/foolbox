@@ -1,8 +1,6 @@
 import pandas as pd
 import numpy as np
 from scipy.stats import norm
-import random
-from pandas.tseries.offsets import DateOffset
 import matplotlib.pyplot as plt
 import warnings
 from foolbox.data_mgmt import set_credentials
@@ -18,22 +16,21 @@ path_out = set_credentials.set_path("research_data/fx_and_events/",
 class EventStudy():
     """
     """
-    def __init__(self, data, events, window, mean_type="simple",
+    def __init__(self, data, events, wind, mean_type="simple",
         normal_data=0.0, x_overlaps=False):
         """
         Parameters
         ----------
         data : pandas.DataFrame/pandas.Series
-            of assets
+            of returns (need to be summable)
         events : list/pandas.DataFrame/pandas.Series
-            of events indexed with dates; if DataFrame, must contain one column
-            only
-        window : tuple of int
+            of events (if a pandas object, must be indexed with dates)
+        wind : tuple of int
             [a,b,c,d] where each element is relative (in periods) date of
-            a - start of cumulating returns in `data` before event (neg. int);
-            b - stop of cumulating returns before event (neg. int),
-            c - start of cumulating returns in `data` after event,
-            d - stop of cumulating returns before event;
+            a - start of cumulating `data` before event (usually an int < 0);
+            b - stop of cumulating `data` before event (usually an int < 0),
+            c - start of cumulating `data` after event,
+            d - stop of cumulating `data` before event;
             for example, [-5,-1,1,5] means that one starts to look at returns 5
             periods before each event, ends 1 day before, starts again 1 day
             after and stops 5 days after
@@ -41,21 +38,55 @@ class EventStudy():
             method for calculating cross-sectional average; "simple" or
             "count_weighted" are supported
         normal_data : float/pandas.DataFrame/pandas.Series
-            of 'normal' returns
+            of 'normal' data; must have the same shape, index and column names
+            as `events`.
         x_overlaps : bool
             True for excluding events and days in case of overlaps
         """
+        # conversions of stuff to ensure that everything appears as DataFrames
+        if isinstance(normal_data, (float, np.float, int, np.int)):
+            normal_data = events.notnull()*normal_data
+
+        # indexes better be all of the same type
+        events.index = events.index.map(pd.to_datetime)
+        data.index = data.index.map(pd.to_datetime)
+        normal_data.index = normal_data.index.map(pd.to_datetime)
+
+        if isinstance(data, pd.Series):
+            # ensure `data` has a name
+            data_name = "data" if data.name is None else data.name
+
+            # if `data` is a Series, all else better be too
+            assert isinstance(events, pd.Series)
+            assert isinstance(normal_data, pd.Series)
+            assert normal_data.index.equals(events.index)
+
+            # everything to frames
+            data = data.to_frame(data_name)
+            events = events.to_frame(data_name)
+            normal_data = normal_data.to_frame(data_name)
+
+        elif isinstance(data, pd.DataFrame):
+            if isinstance(events, pd.Series):
+                events = pd.concat(
+                    [events.rename(p) for p in data.columns], axis=1)
+            elif isinstance(events, pd.DataFrame):
+                assert all(data.columns == events.columns)
+
+        assert normal_data.index.equals(events.index)
+        assert normal_data.columns.equals(events.columns)
+
         self._raw = {
             "data": data,
             "events": events}
 
         self._x_overlaps = x_overlaps
-        self._window = window
+        self._wind = wind
         self._normal_data = normal_data
         self._mean_type = mean_type
 
         # break down window, construct index of holding days
-        ta, tb, tc, td = self._window
+        ta, tb, tc, td = self._wind
         self.event_index = \
             np.array(list(range(ta, tb+1)) + list(range(tc, td+1)))
 
@@ -73,6 +104,81 @@ class EventStudy():
         self._the_mean = None
         self._booted = None
 
+    @classmethod
+    def with_normal_data(cls, data, events, wind, mean_type="simple",
+        x_overlaps=False, norm_data_method="rolling", **kwargs):
+        """Construct an  EventStudy with normal data.
+
+        'between_events' is understood to result in the average between event
+        windows, that is, from (previous event + wd) to (this_event + wa)
+
+        Parameters
+        ----------
+        norm_data_method : str
+            'rolling' and 'between_events' are supported
+        kwargs : dict
+            keyword arguments to method (if 'rolling' or 'between_events')
+
+        Returns
+        -------
+        instance of cls (EventStudy)
+        """
+        # break down window
+        ta, tb, tc, td = wind
+
+        # make sure all time indexes in `events` are also in `data`
+        data, _ = data.align(events, axis=0, join="outer")
+
+        # rolling mean method
+        if norm_data_method == "rolling":
+            # rolling mean
+            normal_data = data.rolling(**kwargs).mean()
+            normal_data = normal_data.shift(-ta+1).where(events.notnull())
+            normal_data = normal_data.dropna(how="all")
+
+        elif norm_data_method == "between_events":
+            # between event windows; the idea is to use a temp EventStudy
+            #   instance with normal_data = 0 and its .timeline property
+            tmp_es = cls(data, events, wind, mean_type,
+                normal_data=0.0, x_overlaps=x_overlaps)
+
+            normal_data = list()
+
+            # loop over columns, calculate between-events mean
+            for c in tmp_es.abnormal_data.columns:
+                this_data = tmp_es.abnormal_data.loc[:, c]
+                this_timeline = tmp_es.timeline[c]\
+                    .loc[:, ["inter_evt", "next_evt_no"]]
+
+                both = pd.concat((this_data, this_timeline), axis=1,
+                    join="inner").dropna()
+
+                normal_data.append(both.drop("inter_evt", axis=1)\
+                    .groupby(["next_evt_no"]).mean())
+
+            normal_data = pd.concat(normal_data, axis=1, join="outer")
+            normal_data = normal_data.loc[events.index, :]
+
+        res = cls(data, events, wind, mean_type, normal_data=normal_data,
+            x_overlaps=x_overlaps)
+
+        return res
+
+    @property
+    def data_between_events(self):
+        data = list()
+        for k, v in self.timeline.items():
+            this_data = self.abnormal_data.loc[:, k]
+            this_tml = v.loc[:, "evt_no"].isnull()
+
+            data.append(this_data.where(this_tml))
+
+        res = pd.concat(data, axis=1)
+
+        res = res.loc[:, sorted(res.columns)]
+
+        return res
+
     @property
     def timeline(self):
         if self._timeline is None:
@@ -83,7 +189,7 @@ class EventStudy():
                 this_timeline = self.mark_timeline(
                     data=self.abnormal_data[c],
                     events=this_evt,
-                    window=self._window,
+                    wind=self._wind,
                     x_overlaps=self._x_overlaps)
                 timelines[c] = this_timeline
             self._timeline = timelines
@@ -94,7 +200,7 @@ class EventStudy():
     def evt_avg_ts_sum(self):
         if self._evt_avg_ts_sum is None:
             responses = self.collect_responses()
-            self._evt_avg_ts_sum = self.get_ts_cumsum(responses, self._window)
+            self._evt_avg_ts_sum = self.get_ts_cumsum(responses, self._wind)
 
         return self._evt_avg_ts_sum
 
@@ -128,42 +234,21 @@ class EventStudy():
         return self._booted
 
     def prepare_data(self):
+        """Align, exclude overlapping events, calculate abnormal data.
         """
-        """
-        # calculate abnormal data
-        data = self._raw["data"] - self._normal_data
-
-        # take events as is
+        # events
         events = self._raw["events"].copy()
 
-        # fix index
-        if isinstance(events.index, pd.tseries.index.DatetimeIndex):
-            events.index = events.index.date
-        if isinstance(data.index, pd.tseries.index.DatetimeIndex):
-            data.index = data.index.date
-
-        # type manipulations to ensure that everthing is conformable DataFrames
-        if isinstance(data, pd.Series):
-            assert isinstance(events, pd.Series)
-            data = data.to_frame(
-                "data" if data.name is None else data.name)
-            events = events.to_frame(data.columns[0])
-        elif isinstance(data, pd.DataFrame):
-            if isinstance(events, pd.Series):
-                events = pd.concat(
-                    [events.rename(p) for p in data.columns], axis=1)
-            elif isinstance(events, pd.DataFrame):
-                assert all(data.columns == events.columns)
+        # data: makes sure all data points from `events` are in data too
+        data, _ = self._raw["data"].align(events, axis=0, join="outer")
 
         # check data and events for severe overlaps (not the pre vs. post kind)
         if self._x_overlaps:
             new_evts = dict()
 
-            # ipdb.set_trace()
-
             for c in data.columns:
                 this_evt, this_evt_diff = self.exclude_overlaps(
-                    events[c].dropna(), data[c], self._window)
+                    events[c].dropna(), data[c], self._wind)
 
                 if len(this_evt_diff) > 0:
                     warnings.warn("The following events for {} will be " +
@@ -174,18 +259,25 @@ class EventStudy():
 
             events = pd.DataFrame.from_dict(new_evts)
 
-        return data, events
+        # get normal data to the same dimensionality as `data`
+        normal_data = self._normal_data.reindex(index=data.index)
+        normal_data = normal_data.shift(self._wind[0]).ffill()
+
+        # abnormal data
+        abn_data = data - normal_data
+
+        return abn_data, events
 
     @staticmethod
-    def exclude_overlaps(events, data, window):
+    def exclude_overlaps(events, data, wind):
         """Exclude overlapping data.
 
         Parameters
         ----------
         events : pandas.Series
-        window : tuple
+        wind : tuple
         """
-        ta, tb, tc, td = window
+        ta, tb, tc, td = wind
 
         overlaps = pd.Series(0, index=data.index)
 
@@ -210,7 +302,7 @@ class EventStudy():
         return events, evt_diff
 
     @staticmethod
-    def mark_timeline(data, events, window, x_overlaps):
+    def mark_timeline(data, events, wind, x_overlaps):
         """Mark the timeline by group such as within-event, pre-event etc.
 
         Parameters
@@ -219,7 +311,7 @@ class EventStudy():
             of data
         events : pandas.Series
             of events (collapsed)
-        window : tuple
+        wind : tuple
             ta, tb, tc, td as before
         x_overlaps : bool
             see above
@@ -228,13 +320,13 @@ class EventStudy():
         -------
         timeline : pandas.DataFrame
             with columns
-                evt_no - number of event within event window,
+                evt_no - number of event within event wind,
                 evt_wind_pre - indexes from ta to tb,
                 evt_wind_post - indexes from tc to td
                 inter_evt - 1 for periods between events
                 next_evt_no - number of the next event
         """
-        ta, tb, tc, td = window
+        ta, tb, tc, td = wind
         wind_idx_pre = np.arange(ta, tb+1)
         wind_idx_post = np.arange(tc, td+1)
 
@@ -358,9 +450,9 @@ class EventStudy():
         return res
 
     @staticmethod
-    def get_ts_cumsum(ndframe, window):
+    def get_ts_cumsum(ndframe, wind):
         """Calculate cumulative sum over time."""
-        ta, tb, tc, td = window
+        ta, tb, tc, td = wind
 
         if len(ndframe.shape) > 2:
             ts_cumsum_before = ndframe.loc[:, :tb, :].iloc[:, ::-1, :].\
@@ -420,7 +512,7 @@ class EventStudy():
     def simple_ci(self, ps, variances=None):
         """
         """
-        ta, tb, tc, td = self._window
+        ta, tb, tc, td = self._wind
 
         # get the huge panel of everything stacked together
         the_panel = self.collect_responses()
@@ -490,7 +582,7 @@ class EventStudy():
         n_blocks : int
             size of blocks to use for resampling
         """
-        ta, tb, tc, td = self._window
+        ta, tb, tc, td = self._wind
 
         if n_blocks is None:
             n_blocks = td - ta + 1
@@ -535,7 +627,7 @@ class EventStudy():
             this_evt_study = EventStudy(
                 data=shuffled_data,
                 events=shuffled_evts,
-                window=self._window,
+                wind=self._wind,
                 mean_type=self._mean_type,
                 normal_data=0.0,
                 x_overlaps=self._x_overlaps)
@@ -584,7 +676,7 @@ class EventStudy():
         -------
         fig :
         """
-        ta, tb, tc, td = self._window
+        ta, tb, tc, td = self._wind
 
         ts_mu = self.evt_avg_ts_sum
         cs_ts_mu = self.the_mean
@@ -657,104 +749,21 @@ class EventStudy():
             raise ValueError("type '{}' not implemented".format(method))
 
 
-# def event_study_wrapper(data, events, reix_w_bday=False,
-#     direction="all", crisis="both", window=None, ps=0.9, ci_method="simple",
-#     plot=False, impose_mu=None):
-#     """ Convenience fun to run studies of many series on the same `events`.
-#
-#     Parameters
-#     ----------
-#     data : pandas.DataFrame
-#         of data, with columns for something summable (e.g. log-returns)
-#     events : pandas.Series/DataFrame
-#         of events, indexed by event dates; values can be e.g. interest rates
-#     reix_w_bday : boolean
-#         if `data` should be reindexed with business days
-#     direction : str
-#         'ups' for considering positive changes in `events`.values only;
-#         'downs' for negative changes;
-#         'changes' for positive and negative changes;
-#         'constants' for no changes whatsoever;
-#         everything else for considering all events
-#     crisis : str
-#         'pre' for considering pre-crisis subsample only;
-#         'post' for post-crisis one;
-#         everything else - for the whole sample.
-#         Crisis date is taken to be 2008-06-30.
-#     window : list
-#         of 4 elements as in EventStudy
-#     ps : float/tuple
-#         confidence interval/bands thereof
-#
-#     Returns:
-#     es : EventStudy
-#         isntance of EventStudy with all attributes (cs, ts etc.) calculated
-#
-#     """
-#     data = data.loc[events.index[0]:]
-#     events = events.loc[data.index[0]:]
-#
-#     # window default
-#     if window is None:
-#         window = [-5,-1,0,5]
-#
-#     this_data = data.copy()
-#
-#     # reindex if needed
-#     if reix_w_bday:
-#         bday_idx = pd.date_range(data.index[0], data.index[-1], freq='B')
-#         this_data = this_data.reindex(index=bday_idx)
-#
-#     # subsample events: ups, downs, constants, ups and down or all
-#     if direction == "ups":
-#         events = events.where(events > 0).dropna()
-#     elif direction == "downs":
-#         events = events.where(events < 0).dropna()
-#     elif direction == "changes":
-#         events = events.where(events != 0).dropna()
-#     elif direction == "constants":
-#         events = events.where(events == 0).dropna()
-#     elif direction == "all":
-#         events = events
-#     else:
-#         raise ValueError("direction not implemented")
-#
-#     # index to start data at: needed to discard stuff way too old
-#     start_at = min(events.index) - DateOffset(months=2)
-#
-#     # pre- or post-crisis
-#     if crisis == "pre":
-#         this_data = this_data.loc[start_at:"2008-06-30"]
-#         events = events.loc[:"2008-06-30"]
-#     elif crisis == "post":
-#         this_data = this_data.loc["2008-06-30":]
-#         events = events.loc["2008-06-30":]
-#     else:
-#         this_data = this_data.loc[start_at:]
-#
-#     # init EventStudy
-#     es = EventStudy(data=this_data, events=events, window=window)
-#     # plot
-#     if plot:
-#         es.plot(ps=ps, method=ci_method)
-#
-#     return es
-
-
 if __name__ == "__main__":
 
-    import ipdb
     from foolbox.api import *
+    from pandas.tseries.offsets import BDay
 
     # currency to drop
-    drop_curs = ["jpy","dkk", "nok"]
+    drop_curs = ["jpy","dkk"]
 
     # window
-    wa,wb,wc,wd = -5,-1,1,5
-    window = (wa,wb,wc,wd)
+    wind = (-10, -1, 1, 5)
+    wa, wb, wc, wd = wind
 
-    s_dt = settings["sample_start"]
-    e_dt = settings["sample_end"]
+    # start, end dates
+    s_dt = pd.to_datetime(settings["sample_start"])
+    e_dt = pd.to_datetime(settings["sample_end"])
 
     # data ------------------------------------------------------------------
     data_path = set_credentials.gdrive_path("research_data/fx_and_events/")
@@ -764,77 +773,68 @@ if __name__ == "__main__":
     with open(data_path + settings["fx_data"], mode='rb') as fname:
         fx = pickle.load(fname)
     ret = np.log(fx["spot_mid"].drop(drop_curs,axis=1,errors="ignore")).diff()
-
-    with open(data_path + "bond_data.p", mode='rb') as fname:
-        fx = pickle.load(fname)
-    ret = np.log(fx["3Y"].drop(drop_curs,axis=1,errors="ignore")).diff()
-
-    # with open(data_path+"data_dev_d.p", mode="rb") as fname:
-    #     ret = pickle.load(fname)["msci_ret"].drop(drop_curs, axis=1,
-    #                                               errors="ignore")
+    ret = ret.loc[(s_dt - BDay(22)):, :]
 
     # events + drop currencies ----------------------------------------------
     with open(data_path + settings["events_data"], mode='rb') as fname:
         events_data = pickle.load(fname)
 
-    events = events_data["joint_cbs"].drop(drop_curs, axis=1, errors="ignore")
+    events = events_data["joint_cbs"].drop(drop_curs + ["usd"],
+        axis=1, errors="ignore")
     events = events.loc[s_dt:e_dt]
 
-    # data = ret["nzd"]
-    #ret = ret.mean(axis=1).to_frame("usd")
-    data = ret.copy().loc[s_dt:e_dt]
+    # reindex with business day ---------------------------------------------
+    data = ret.reindex(
+        index=pd.date_range(ret.index[0], ret.index[-1], freq='B'))
 
-    # events = events_perf["nzd"].dropna()
-    events = events.where(events > 0)
+    # normal data, all events sample ----------------------------------------
+    es = EventStudy(data=data*100,
+        events=events,
+        mean_type="count_weighted",
+        wind=wind,
+        x_overlaps=True,
+        normal_data=0.0)
 
-    data=data
-    events=events
+    data_between_events = es.data_between_events
+    norm_data_all_evt = data_between_events.ewm(alpha=0.95).mean().shift(-wa+1)
 
-    wa,wb,wc,wd = -10,-1,1,5
-    window = (wa,wb,wc,wd)
-    # normal_data = data.rolling(22).mean().shift(1)
-    es = EventStudy(data, events, window, mean_type="count_weighted",
-        normal_data=0.0, x_overlaps=True)
-    es.get_ci((0.025, 0.975), method="boot", M=25)
-    es.plot()
+    # hike? cut? status quo? ------------------------------------------------
+    evt = events.where(events < 0).dropna(how="all")
 
-    ci_boot_c = es.get_ci(ps=(0.025, 0.975), method="boot", n_blocks=10,
-        M=25)
+    # normal data
+    normal_data = norm_data_all_evt.where(evt.notnull()).loc[evt.index, :]
 
-    es.booted
-    qs = (0.01, 0.025, 0.05, 0.95, 0.975, 0.99)
-    es.booted.quantile(qs, axis=1).T * 100
+    # event study!
+    es = EventStudy(data=data*100,
+        events=evt,
+        mean_type="count_weighted",
+        wind=wind,
+        x_overlaps=True,
+        normal_data=normal_data)
 
-    #
-    # lol, wut = es.boot_ci(ps=(0.025, 0.975), M=333)
-    # wut.quantile((0.01, 0.025, 0.05, 0.95, 0.975, 0.99), axis=1).T * 100
-    # _
-    #
-    # ci_boot_c_90 = es.get_ci(ps=(0.05, 0.95), method="boot", M=500)
-    # ci_smpl_c = es.get_ci(ps=(0.025, 0.975), method="simple")
-    #
-    # ci_boot_c*100
-    # ci_boot_c_90*100
-    #
-    # pd.concat((ci_boot_c, ci_boot_c_90), axis=1).sort_index("columns")*10000
-    #
-    # ci_smpl_c*100
-    #
-    # es.ci = ci
-    #
-    # # ipdb.set_trace()
-    # res = es.the_mean
-    #
-    # # ipdb.set_trace()
-    # ci = es.get_ci(ps=(0.025, 0.975), method="boot", M=100)
-    # fig = es.plot()
-    # fig.tight_layout()
-    # fig.savefig(out_path + "evt_st_boot_ci.png", dpi=200)
-    #
-    #
-    # import pandas as pd
-    #
-    # data.corr()
-    #
-    # events.count()
-    # (data*100).describe()
+    ci = es.get_ci(ps=0.95, method="boot", M=222)
+    fig, ax = es.plot()
+
+
+
+    # recipe #2: constructor ------------------------------------------------
+    es = EventStudy.with_normal_data(data=data*100,
+        events=evt,
+        mean_type="count_weighted",
+        wind=wind,
+        x_overlaps=True,
+        norm_data_method="between_events")
+
+    fig, ax = es.plot()
+
+    # recipe #3: zero mean --------------------------------------------------
+    es = EventStudy(data=data*100,
+        events=evt,
+        mean_type="count_weighted",
+        wind=wind,
+        x_overlaps=True,
+        normal_data=0)
+
+    ci = es.get_ci(ps=0.95, method="simple")
+    es.the_mean
+    fig, ax = es.plot()
