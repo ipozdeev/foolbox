@@ -804,8 +804,9 @@ class PolicyExpectation():
         # loop over thresholds
         for p in thresholds:
             # p = 0.085
-            cmx = self.assess_forecast_quality(
-                lag=lag, threshold=p, **kwargs)
+            fc = self.forecast_policy_direction(lag=lag,
+                ref_rate=self.reference_rate, h_low=-p, h_high=p)
+            cmx = self.assess_forecast_quality(fc)
             # ipdb.set_trace()
 
             fcast_accy.loc["hike",p,"true_pos"] = \
