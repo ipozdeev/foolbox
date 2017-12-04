@@ -1,5 +1,6 @@
 import pandas as pd
 from foolbox.api import *
+from foolbox.fixed_income import LIBOR
 
 def calculate_implied_rates(ois_data, on_data, events_data):
     """
@@ -48,28 +49,82 @@ def calculate_implied_rates(ois_data, on_data, events_data):
         pickle.dump(implied_rates, hangar)
 
 
+def calculate_libor_implied_rates(libor, libor_on, events_data):
+    """
+    """
+    # space for implied rates
+    implied_rates = dict()
+
+    for c in libor.keys():
+        # c = "usd"
+        print(c)
+
+        # OIS
+        this_libor = LIBOR.from_iso(c, maturity=DateOffset(months=1))
+
+        # this event, to frame + rename
+        this_evt = events_data.loc[:, c].dropna().to_frame("rate_change")
+
+        # this ois
+        this_long_rate = this_libor.reindex_series(libor.loc[:, c],
+            method="ffill")
+
+        # this overnight
+        this_on = this_libor.reindex_series(libor_on.loc[:, c],
+            method="ffill")
+
+        # align
+        this_long_rate, this_on = this_long_rate.loc[
+            this_long_rate.first_valid_index():\
+                this_long_rate.last_valid_index()].align(this_on, axis=0,
+                    join="left")
+
+        # rates expected to prevale before meetings
+        rates_until = this_on.rolling(5).mean().shift(1)
+
+        pe = this_libor.get_forward_rate()
+
+        # store
+        this_ir = pe.rate_expectation.copy()
+        this_ir.name = c
+        implied_rates[c] = pe.rate_expectation
+
+    implied_rates = pd.DataFrame.from_dict(implied_rates)
+
+    with open(data_path + "implied_rates_from_1m.p", mode="wb") as hangar:
+        pickle.dump(implied_rates, hangar)
+
+    with open(data_path + "implied_rates_from_1m.p", mode="rb") as hangar:
+        pickle.dump(implied_rates, hangar)
+
 if __name__ == "__main__":
-    # fetch data ------------------------------------------------------------
-    # ois data
-    with open(data_path + "ois_merged_1m.p", mode="rb") as hangar:
-        ois_data = pickle.load(hangar)
-
-    # overnight rates data
-    with open(data_path + "ois_bloomberg.p", mode="rb") as hangar:
-        on_data = pickle.load(hangar)
-
-    on_data = pd.concat(
-        [p.loc[:, "ON"].to_frame(c) for c, p in on_data.items()],
-        axis=1)
-
+    # # fetch data ------------------------------------------------------------
+    # # ois data
+    # with open(data_path + "ois_merged_1m.p", mode="rb") as hangar:
+    #     ois_data = pickle.load(hangar)
+    #
+    # # overnight rates data
+    # with open(data_path + "ois_bloomberg.p", mode="rb") as hangar:
+    #     on_data = pickle.load(hangar)
+    #
+    # on_data = pd.concat(
+    #     [p.loc[:, "ON"].to_frame(c) for c, p in on_data.items()],
+    #     axis=1)
+    #
     # events
-    with open(data_path + "events.p", mode="rb") as hangar:
-        events_data = pickle.load(hangar)
-
+    events_data = pd.read_pickle(data_path + "events.p")
     events_data = events_data["joint_cbs"]
 
-    calculate_implied_rates(ois_data.drop(["jpy", "dkk"], axis=1), on_data,
-        events_data)
+    # calculate_implied_rates(ois_data.drop(["jpy", "dkk"], axis=1), on_data,
+    #     events_data)
+
+    # fetch libor data
+    libor_data = pd.read_pickle(data_path + "libor_spliced_2000_2007_d.p")
+    libor = libor_data["1m"]
+    libor_on = libor_data["on"]
+
+
+
 
 
 # # data --------------------------------------------------------------------
