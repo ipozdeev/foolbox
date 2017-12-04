@@ -40,6 +40,62 @@ class PolicyExpectation():
 
         self._policy_dir_fcast = None
 
+    @classmethod
+    def from_libor(cls, libor, meetings, long_rates, on_rates):
+        """
+        libor = this_libor
+        long_rates = this_long_rate
+        on_rates = this_on
+        meetings = this_evt
+        """
+        # calculate rate until
+        rates_until = on_rates.rolling(5).mean().shift(1)
+
+        rate_expectation = long_rates.copy()*np.nan
+
+        for t in rate_expectation.index:
+            # t = "2014-01-14"
+            # ipdb.set_trace()
+
+            # set quote date of ois to this t
+            libor.quote_dt = t
+
+            # break if out of range
+            if libor.value_dt >= meetings.last_valid_index():
+                break
+
+            # next closest meeting to ois's effective date
+            very_nx_meet = meetings.index[
+                meetings.index.get_loc(libor.quote_dt, method="bfill")]
+            nx_meet = meetings.index[
+                meetings.index.get_loc(libor.value_dt, method="bfill")]
+
+            # if quote_dt < start_dt < end_dt, implied rate is just ois rate
+            if very_nx_meet < nx_meet:
+                if libor.end_dt < nx_meet:
+                    # TODO: orly?
+                    rate_expectation.loc[t] = long_rates.loc[t]
+
+            # continue if maturity is earlier than next meeting
+            if libor.end_dt < nx_meet:
+                continue
+
+            # extract implied rate
+            rate_expectation.loc[t] = libor.get_forward_rate(
+                rate=long_rates.loc[t],
+                forward_dt=nx_meet,
+                rate_until=rates_until.loc[t])
+
+        this_pe = PolicyExpectation(
+            meetings=meetings,
+            instrument=long_rates,
+            reference_rate=on_rates)
+
+        this_pe.rate_expectation = rate_expectation
+
+        return this_pe
+
+        return
 
     @classmethod
     def from_ois_new(cls, ois, meetings, ois_rates, on_rates, **kwargs):
