@@ -474,7 +474,6 @@ def compute_floating_leg_return(trade_dates, returns, maturity, settings):
 
     return out
 
-
 def next_days_same_rate(dt, b_day=None):
     """
     dt : str/np.datetime64
