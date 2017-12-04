@@ -21,9 +21,9 @@ user_info =\
         },
      "HSG-Spezial": {
         "R_USER": "HSG-Spezial",
-        "R_HOME": "c:/Program Files/R/R-3.2.5",
+        "R_HOME": "c:/R/R-3.2.5",
         "gdrive": "C:/Users/HSG-Spezial/Google Drive/Personal/",
-        "local": "D:/Personal/"
+        "local": "D:/personal/"
         },
     "pozdeev": {
         "R_USER": "pozdeev",
