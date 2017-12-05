@@ -303,24 +303,13 @@ class PureOls(Regression):
 
         # Spectral density for each point in time
         sd = self.X.rolling(forecast_horizon).sum().shift(1)\
-            .mul(resids.squeeze(), axis=0)
-
-        # Aggregate as an average of dot products for each time point
-        for t in np.arange(forecast_horizon, T-1):
-            spectral_density = spectral_density + \
-                               sd.iloc[[t], :].T.dot(sd.iloc[[t], :])
+            .mul(resids.squeeze(), axis=0).dropna()
 
         # Get the time average
-        spectral_density = (1 / T) * spectral_density
+        spectral_density = (1 / T) * sd.T.dot(sd)
 
         # Get the 'sandwich' part of vcv, i.e. E[xx']
-        Z = pd.DataFrame(np.zeros((N, N)), index=self.X.columns,
-                         columns=self.X.columns)
-
-        for t in np.arange(0, T-1):
-            Z = Z + self.X.iloc[[t], :].T.dot(self.X.iloc[[t], :])
-
-        Z = (1 / T) * Z
+        Z = (1 / T) * self.X.T.dot(self.X)
 
         # Get the output
         hodrick_vcv = \
@@ -618,7 +607,7 @@ class PrincipalComponents():
 if __name__ == '__main__':
     pass
     X = pd.DataFrame(data=np.random.normal(size=(1000, 2)), columns=["x", "e"])
-    y = X.dot(pd.Series(data=[2, 0.5], index=X.columns))
+    y = X.dot(pd.Series(data=[0.5, 0.5], index=X.columns))
     y.name = "y"
     mod = PureOls(y, X[["x"]], add_constant=True)
     vcv = mod.hodrick_vcv(1)
