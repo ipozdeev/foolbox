@@ -11,7 +11,7 @@ if __name__ == "__main__":
     order = ["1W", "2W", "1M", "3M", "6M", "9M", "1Y"]
 
     with open(data_path + "ois_rx_w_day_count.p", mode="rb") as hangar:
-        risk_premium_all = pickle.load(hangar)
+        risk_premium_all = pd.read_pickle(data_path + "ois_rx_w_day_count.p")
 
     # analyze
     rp_descr = \

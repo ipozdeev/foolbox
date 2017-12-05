@@ -17,6 +17,9 @@ for currency in ois_diff_maturities.keys():
     ois_diff_maturities[currency].columns = \
      [col.lower() for col in ois_diff_maturities[currency].columns]
 
+    # Convert to float
+    ois_diff_maturities[currency] = ois_diff_maturities[currency].astype(float)
+
 # Extract the overnight rates for a separate file
 on_rates = pd.concat(
     [ois_diff_maturities[curr]["on"] for curr in currencies_to_parse], axis=1)
