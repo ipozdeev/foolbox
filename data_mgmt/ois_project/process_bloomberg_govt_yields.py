@@ -21,6 +21,9 @@ for curr in bonds_diff_maturities["1y"].columns:
             axis=1)
     out_data[curr].columns = maturities_to_parse
 
+    # Convert to float
+    out_data[curr] = out_data[curr].astype(float)
+
 # Dump
 with open(data_path + out_name, mode="wb") as halupa:
     pickle.dump(out_data, halupa)

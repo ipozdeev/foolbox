@@ -6,25 +6,25 @@ from foolbox.wp_tabs_figs.wp_settings import *
 if __name__ == "__main__":
 
     maturity_to_offset = {
-        "1W": DateOffset(weeks=1),
-        "2W": DateOffset(weeks=2),
-        "1M": DateOffset(months=1),
-        "3M": DateOffset(months=3),
-        "6M": DateOffset(months=6),
-        "9M": DateOffset(months=9),
-        "1Y": DateOffset(years=1)
+        "1w": DateOffset(weeks=1),
+        "2w": DateOffset(weeks=2),
+        "1m": DateOffset(months=1),
+        "3m": DateOffset(months=3),
+        "6m": DateOffset(months=6),
+        "9m": DateOffset(months=9),
+        "1y": DateOffset(years=1)
         }
 
-    order = ["1W", "2W", "1M", "3M", "6M", "9M", "1Y"]
+    order = ["1w", "2w", "1m", "3m", "6m", "9m", "1y"]
 
     # data ------------------------------------------------------------------
     # ois data
-    with open(data_path + "ois_bloomberg.p", mode="rb") as hangar:
-        ois_data = pickle.load(hangar)
+    with open(data_path + "ois_all_maturities_bloomberg.p", mode="rb") as hut:
+        ois_data = pickle.load(hut)
 
     # overnight rates
     on_rates = pd.concat(
-        [p.loc[:, "ON"].to_frame(c) for c, p in ois_data.items()],
+        [p.loc[:, "on"].to_frame(c) for c, p in ois_data.items()],
         axis=1).astype(float)
 
     risk_premium_all = dict()

@@ -8,8 +8,8 @@ raw_data = pd.read_excel(file_to_parse, sheetname=None)
 
 # Save the sheets and variables needed
 out_data = dict()
-out_data["msci_pi"] = raw_data["msci"]
-out_data["ted_vix"] = raw_data["ted_vix"][["ted", "vix"]]
+out_data["msci_pi"] = raw_data["msci"].astype(float)
+out_data["ted_vix"] = raw_data["ted_vix"][["ted", "vix"]].astype(float)
 
 # Dump
 with open(data_path + out_name, mode="wb") as halupa:
