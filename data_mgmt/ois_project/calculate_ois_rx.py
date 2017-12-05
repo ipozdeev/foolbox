@@ -82,47 +82,47 @@ if __name__ == "__main__":
     # all_settings = {
     #     "aud": {"start_date": 1,
     #             "fixing_lag": 0,
-    #             "day_count_float": 365,
+    #             "day_count_float_dnm": 365,
     #             "date_rolling": "modified following"},
     #
     #     "cad": {"start_date": 0,
     #             "fixing_lag": 1,
-    #             "day_count_float": 365,
+    #             "day_count_float_dnm": 365,
     #             "date_rolling": "modified following"},
     #
     #     "chf": {"start_date": 2,
     #             "fixing_lag": -1,
-    #             "day_count_float": 360,
+    #             "day_count_float_dnm": 360,
     #             "date_rolling": "modified following"},
     #
     #     "eur": {"start_date": 2,
     #             "fixing_lag": 0,
-    #             "day_count_float": 360,
+    #             "day_count_float_dnm": 360,
     #             "date_rolling": "modified following"},
     #
     #     "gbp": {"start_date": 0,
     #             "fixing_lag": 0,
-    #             "day_count_float": 365,
+    #             "day_count_float_dnm": 365,
     #             "date_rolling": "modified following"},
     #
     #     "jpy": {"start_date": 2,
     #             "fixing_lag": 1,
-    #             "day_count_float": 365,
+    #             "day_count_float_dnm": 365,
     #             "date_rolling": "modified following"},
     #
     #     "nzd": {"start_date": 2,
     #             "fixing_lag": 0,
-    #             "day_count_float": 365,
+    #             "day_count_float_dnm": 365,
     #             "date_rolling": "modified following"},
     #
     #     "sek": {"start_date": 2,
     #             "fixing_lag": -1,
-    #             "day_count_float": 360,
+    #             "day_count_float_dnm": 360,
     #             "date_rolling": "modified following"},
     #
     #     "usd": {"start_date": 2,
     #             "fixing_lag": 0,
-    #             "day_count_float": 360,
+    #             "day_count_float_dnm": 360,
     #             "date_rolling": "modified following"}
     #     }
     #

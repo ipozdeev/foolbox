@@ -1,11 +1,23 @@
 import pandas as pd
+from pandas.tseries.offsets import DateOffset
 import numpy as np
-from foolbox.api import *
-
+import pickle
+from foolbox.api import OIS, PolicyExpectation, set_credentials, data_path
 from foolbox.wp_ois.wp_settings import central_banks_start_dates, end_date,\
     cb_fx_map
 
-fx_cb_map = dict((fx, cb) for cb,fx in cb_fx_map.items())
+
+def vus_table():
+    """
+
+    Returns
+    -------
+
+    """
+
+
+
+fx_cb_map = dict((fx, cb) for cb, fx in cb_fx_map.items())
 
 cur = "usd"
 cb = "fomc"

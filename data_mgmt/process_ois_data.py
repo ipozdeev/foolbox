@@ -1,5 +1,5 @@
 from foolbox.api import *
-from foolbox.data_mgmt.parse_bloomberg_excel import *
+from foolbox.utils import parse_bloomberg_excel
 
 def fetch_datastream_ois_data(data_path=None):
     """

@@ -1,7 +1,7 @@
 import pandas as pd
 import pickle
 from foolbox.data_mgmt.set_credentials import set_path
-from foolbox.data_mgmt.parse_bloomberg_excel import *
+from foolbox.utils import parse_bloomberg_excel
 
 def fetch_libor_data(path_to_data=None, filename=None, data_sheet=None):
     """

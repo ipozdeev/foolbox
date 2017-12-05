@@ -388,7 +388,7 @@ def compute_floating_leg_return(trade_dates, returns, maturity, settings):
 
         {"start_date": 2,
          "fixing_lag": 1,
-         "day_count_float": 360,
+         "day_count_float_dnm": 360,
          "date_rolling": "modified following"}
 
     The items in the dictionary are:
@@ -399,7 +399,7 @@ def compute_floating_leg_return(trade_dates, returns, maturity, settings):
         if the underlyig rate is reported with one period lag, today's rate on
         the floating leg is determined tomorrow. The value is negative if
         today's rate is determined yesterday
-    day_count_float: int
+    day_count_float_dnm: int
         360 or 365 corresponding to Act/360 and Act/365 day count conventions
     date_rolling: str
         specifying date rolling convention if the end date of the contract is
@@ -422,7 +422,7 @@ def compute_floating_leg_return(trade_dates, returns, maturity, settings):
 
     # Prepare the data and get a shrothand notation for settings
     returns = returns.shift(-settings["fixing_lag"])  # publication or t/n lag
-    day_count = settings["day_count_float"]
+    day_count = settings["day_count_float_dnm"]
 
     # Start the main lOOp
     for date in trade_dates:
@@ -565,117 +565,4 @@ def resample_between_events(data, events, fun, mask=None):
 
 
 if __name__ == "__main__":
-    # from foolbox.api import *
-    # fname = data_path + "ois_2000_2017_d.xlsx"
-    # lol = parse_bloomberg_excel(
-    #     filename=fname,
-    #     colnames_sheet="tenor",
-    #     data_sheets=["aud","cad","chf","gbp","nzd","sek","usd","eur"])
-    #
-    # lol = pd.Panel.from_dict(all_data, orient="minor")
-    # instr = lol.loc["1M",:,:]
-
-
-    from foolbox.api import *
-
-    # Get the data
-    with open(data_path + "ois_bloomberg.p", mode="rb") as halupa:
-        ois_data = pickle.load(halupa)
-
-    # Value date, day count convention and fixing lag settings. Note that US
-    # fixing lag is set to 0, since the overnight data (effr) is already lagged
-    # by the New York Fed
-    all_settings = {
-        "aud": {"start_date": 1,
-                "fixing_lag": 0,
-                "day_count_float": 365,
-                "date_rolling": "modified following"},
-
-        "cad": {"start_date": 0,
-                "fixing_lag": 1,
-                "day_count_float": 365,
-                "date_rolling": "modified following"},
-
-        "chf": {"start_date": 2,
-                "fixing_lag": -1,
-                "day_count_float": 360,
-                "date_rolling": "modified following"},
-
-        "eur": {"start_date": 2,
-                "fixing_lag": 0,
-                "day_count_float": 360,
-                "date_rolling": "modified following"},
-
-        "gbp": {"start_date": 0,
-                "fixing_lag": 0,
-                "day_count_float": 365,
-                "date_rolling": "modified following"},
-
-        "jpy": {"start_date": 2,
-                "fixing_lag": 1,
-                "day_count_float": 365,
-                "date_rolling": "modified following"},
-
-        "nzd": {"start_date": 2,
-                "fixing_lag": 0,
-                "day_count_float": 365,
-                "date_rolling": "modified following"},
-
-        "sek": {"start_date": 2,
-                "fixing_lag": -1,
-                "day_count_float": 360,
-                "date_rolling": "modified following"},
-
-        "usd": {"start_date": 2,
-                "fixing_lag": 0,
-                "day_count_float": 360,
-                "date_rolling": "modified following"}
-
-        }
-
-    test_currencies = ["aud", "cad", "chf", "eur", "gbp", "nzd", "sek", "usd"]
-    test_currencies = ["usd"]
-    test_maturity = "1Y"  # corresponds to column names in ois_data dataframes
-    for curr in test_currencies:
-        # Select the data
-        test_curr = curr
-        test_data = ois_data[test_curr]
-        settings = all_settings[test_curr]
-
-        # Create the dataoffset object according to the desired maturity
-        if test_maturity[1] == "M":
-            maturity = DateOffset(months=int(test_maturity[0]))
-
-        if test_maturity[1] == "Y":
-            maturity = DateOffset(months=12*int(test_maturity[0]))
-
-        # Get the inputs for return estimation: trade dates first
-        trade_dates = test_data[test_maturity].dropna().index
-        # Return of the underlying floating rate
-        returns = test_data["ON"].dropna()
-
-        # Compute returns and periods over which the returns realized
-        realized_ret_data = \
-            compute_floating_leg_return(trade_dates, returns, maturity,
-                                        settings)
-
-        # Concatenate the results: fixed, start and end dates, realized
-        res = pd.concat([test_data[test_maturity], realized_ret_data["dates"],
-                         realized_ret_data["ret"]], join="inner", axis=1)
-        res.columns = ["fixed", "start", "end", "realized"]
-
-        # Print something
-        #print(curr, res.head(22))
-
-        # Plot fixed vs realized float
-        to_plot = res[["fixed", "realized"]].dropna()
-        to_plot.plot(title=test_curr + "_" + test_maturity)
-    #plt.show()
-
-    # Test the unbiasedness
-        diff = \
-            (to_plot.fixed - to_plot.realized).to_frame(name="d").astype("float")
-
-        print(test_curr, taf.descriptives(diff, 1))
-    # to_better_latex(coef*100, se*100, fmt_coef="{:3.2f}", fmt_tstat="{:3.2f}",
-        #     buf=out_path+"temp.tex", column_format="l"+"W"*len(se.columns))
+    pass
