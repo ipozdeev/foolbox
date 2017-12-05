@@ -272,6 +272,63 @@ class PureOls(Regression):
 
         return out
 
+    def hodrick_vcv(self, forecast_horizon):
+        """Computes Hodrick (1992) variance-covariance matrix uder the null
+        hypothesis of no predictability for a regression of the following type:
+
+                    y(t -> t+H) = X(t) * beta + epsilon(t -> t+H),
+
+        where t -> t+H, means that y is forecast H-steps ahead
+
+        Parameters
+        ----------
+        forecast_horizon: int
+            specifying forecast horizon H in the example above
+
+        Returns
+        -------
+        hodrick_vcv: pd.DataFrame
+            with Hodrick (1992) VCV estimate
+
+        """
+        # Dimensionality of regressors' matrix
+        (T, N) = self.X.shape
+
+        # Get demeaned residuals from OLS on a constant
+        resids = self.y - self.y.mean()
+
+        # Compute Hodrick's spectral density
+        spectral_density = pd.DataFrame(np.zeros((N, N)), index=self.X.columns,
+                                        columns=self.X.columns)
+
+        # Spectral density for each point in time
+        sd = self.X.rolling(forecast_horizon).sum().shift(1)\
+            .mul(resids.squeeze(), axis=0)
+
+        # Aggregate as an average of dot products for each time point
+        for t in np.arange(forecast_horizon, T-1):
+            spectral_density = spectral_density + \
+                               sd.iloc[[t], :].T.dot(sd.iloc[[t], :])
+
+        # Get the time average
+        spectral_density = (1 / T) * spectral_density
+
+        # Get the 'sandwich' part of vcv, i.e. E[xx']
+        Z = pd.DataFrame(np.zeros((N, N)), index=self.X.columns,
+                         columns=self.X.columns)
+
+        for t in np.arange(0, T-1):
+            Z = Z + self.X.iloc[[t], :].T.dot(self.X.iloc[[t], :])
+
+        Z = (1 / T) * Z
+
+        # Get the output
+        hodrick_vcv = \
+            np.linalg.inv(Z).dot(spectral_density).dot(np.linalg.inv(Z)) / T
+
+        return hodrick_vcv
+
+
 class DynamicOLS():
     """ One-factor (+constant) OLS setting."""
     def __init__(self, y0, x0):
@@ -564,6 +621,8 @@ if __name__ == '__main__':
     y = X.dot(pd.Series(data=[2, 0.5], index=X.columns))
     y.name = "y"
     mod = PureOls(y, X[["x"]], add_constant=True)
+    vcv = mod.hodrick_vcv(1)
+    print(np.diag(vcv)**0.5)
     mod.fit()
     print(mod.get_diagnostics())
     print(mod.linear_restrictions_test(
