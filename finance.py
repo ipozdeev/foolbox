@@ -246,7 +246,6 @@ class PolicyExpectation():
 
         return pe
 
-
     @classmethod
     def from_ois(cls, meetings, instrument, tau, reference_rate=None):
         """ Extract policy expectations from money market instruments.
@@ -405,7 +404,6 @@ class PolicyExpectation():
 
         return pe
 
-
     def ts_plot(self, lag=None, ax=None):
         """ Plot implied rate before vs. realized after meetings.
 
@@ -461,7 +459,6 @@ class PolicyExpectation():
         ax.legend(fontsize=12)
 
         return f, ax
-
 
     def error_plot(self, avg_over=None, ax=None):
         """ Plot predicted vs. realized and the error plot.
@@ -548,7 +545,6 @@ class PolicyExpectation():
 
         return res
 
-
     def forecast_policy_direction(self, lag, ref_rate, h_low=None, h_high=None,
         transf_ref=None, transf_impl=None):
         """
@@ -570,7 +566,6 @@ class PolicyExpectation():
         res = self.classify_direction(dr, h_low=h_low, h_high=h_high)
 
         return res
-
 
     def forecast_policy_change(self,
         lag=1,
@@ -689,7 +684,6 @@ class PolicyExpectation():
 
         return policy_fcast
 
-
     def assess_forecast_quality(self, policy_dir_fcast):
         """
         Parameters
@@ -727,7 +721,6 @@ class PolicyExpectation():
 
         return cmx
 
-
     @staticmethod
     def calculate_vus(measurements, classes, order=None):
         """
@@ -751,7 +744,6 @@ class PolicyExpectation():
 
         return res
 
-
     def get_vus(self, lag, ref_rate, transf_ref=None, transf_impl=None):
         """
         """
@@ -774,7 +766,6 @@ class PolicyExpectation():
         vus = self.calculate_vus(dr, classes, order=[-1, 0, 1])
 
         return vus
-
 
     def plot_roc_surface(self, lag, ref_rate):
         """
@@ -836,7 +827,6 @@ class PolicyExpectation():
         # ax.set_zlabel('0')
 
         return tprs, cmxs
-
 
     def roc_curve(self, lag=1, out_path=None, **kwargs):
         """ Construct ROC curve.
@@ -1012,7 +1002,6 @@ def into_currency(data, new_cur, counter_cur="usd"):
 
     return new_data
 
-
 def pe_backtest(returns, holding_range, threshold_range,
                 data_path, avg_impl_over=2, avg_refrce_over=2, sum=False):
     """
@@ -1126,7 +1115,6 @@ def pe_backtest(returns, holding_range, threshold_range,
     results["aggr"] = aggr
 
     return results
-
 
 def pe_perfect_foresight_strat(returns, holding_range, data_path,
                                forecast_consistent=False,
@@ -1282,7 +1270,6 @@ def event_backtest_wrapper(fx_data, fx_data_us, holding_range, threshold_range,
 
     return strat_ret
 
-
 def event_trading_backtest(fx_data, holding_range, threshold_range,
                            data_path, fomc=False, **kwargs):
     """Backtest using policy forecast and EventTrading strategy, to compute
@@ -1408,7 +1395,6 @@ def event_trading_backtest(fx_data, holding_range, threshold_range,
 
     return results
 
-
 def get_pe_signals(currencies, lag, threshold, data_path, fomc=False,
                    **kwargs):
     """Fetches a dataframe of signals from the 'PolicyExpectation' class, for
@@ -1466,7 +1452,6 @@ def get_pe_signals(currencies, lag, threshold, data_path, fomc=False,
         signals = pd.concat(policy_fcasts, join="outer", axis=1)
 
     return signals
-
 
 class OIS():
     """Perform basic operations with OIS.

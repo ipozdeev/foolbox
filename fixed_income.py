@@ -174,7 +174,7 @@ class LIBOR():
             if tmp_dt.month == dt.month:
                 res = dt + self.b_day*(0)
             else:
-                res = dt - b_day*(0)
+                res = dt - self.b_day*(0)
 
         else:
             raise NotImplementedError(

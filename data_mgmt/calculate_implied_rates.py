@@ -49,14 +49,17 @@ def calculate_implied_rates(ois_data, on_data, events_data):
         pickle.dump(implied_rates, hangar)
 
 
-def calculate_libor_implied_rates(libor, libor_on, events_data):
+def calculate_libor_implied_rates(libor_1m, libor_on, events_data):
     """
     """
     # space for implied rates
     implied_rates = dict()
 
-    for c in libor.keys():
+    for c in libor_1m.keys():
         # c = "usd"
+        if c in ['gbp', 'eur', 'cad', 'aud', 'chf', 'jpy']:
+            continue
+
         print(c)
 
         # OIS
@@ -66,7 +69,7 @@ def calculate_libor_implied_rates(libor, libor_on, events_data):
         this_evt = events_data.loc[:, c].dropna().to_frame("rate_change")
 
         # this ois
-        this_long_rate = this_libor.reindex_series(libor.loc[:, c],
+        this_long_rate = this_libor.reindex_series(libor_1m.loc[:, c],
             method="ffill")
 
         # this overnight
@@ -82,20 +85,21 @@ def calculate_libor_implied_rates(libor, libor_on, events_data):
         # rates expected to prevale before meetings
         rates_until = this_on.rolling(5).mean().shift(1)
 
-        pe = this_libor.get_forward_rate()
+        pe = PolicyExpectation.from_libor(this_libor,
+            this_evt,
+            this_long_rate,
+            this_on)
 
         # store
-        this_ir = pe.rate_expectation.copy()
+        this_ir = pe.rate_expectation.copy().dropna()
         this_ir.name = c
-        implied_rates[c] = pe.rate_expectation
+        implied_rates[c] = this_ir
 
     implied_rates = pd.DataFrame.from_dict(implied_rates)
 
-    with open(data_path + "implied_rates_from_1m.p", mode="wb") as hangar:
-        pickle.dump(implied_rates, hangar)
+    with open(data_path + "implied_rates_from_libor_1m.p", mode="wb") as hgr:
+        pickle.dump(implied_rates, hgr)
 
-    with open(data_path + "implied_rates_from_1m.p", mode="rb") as hangar:
-        pickle.dump(implied_rates, hangar)
 
 if __name__ == "__main__":
     # # fetch data ------------------------------------------------------------
@@ -120,7 +124,7 @@ if __name__ == "__main__":
 
     # fetch libor data
     libor_data = pd.read_pickle(data_path + "libor_spliced_2000_2007_d.p")
-    libor = libor_data["1m"]
+    libor_1m = libor_data["1m"]
     libor_on = libor_data["on"]
 
 
