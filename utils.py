@@ -314,7 +314,7 @@ def parse_bloomberg_excel(filename, colnames_sheet, data_sheets):
         of data
     """
     if isinstance(data_sheets, str):
-        data_sheets = [data_sheets,]
+        data_sheets = [data_sheets, ]
 
     # converter for date
     def converter(x):
@@ -337,9 +337,6 @@ def parse_bloomberg_excel(filename, colnames_sheet, data_sheets):
     # fetch column names from respective sheet
     colnames = data_dict_full.pop(colnames_sheet).columns
 
-    # take just on sheet with data
-    data_dict = {k: data_dict_full[k] for k in data_dict_full.keys()}
-
     # loop over sheetnames
     all_data = dict()
 
@@ -348,16 +345,23 @@ def parse_bloomberg_excel(filename, colnames_sheet, data_sheets):
         new_data_df = []
         for p in range((data_df.shape[1]+1)//3):
             # this triplet
-            this_piece = data_df.iloc[1:,p*3:(p+1)*3-1]
+            this_piece = data_df.iloc[1:, p*3:(p+1)*3-1]
+
             # map date
-            this_piece.iloc[:,0] = this_piece.iloc[:,0].map(converter)
+            this_piece.iloc[:, 0] = this_piece.iloc[:, 0].map(converter)
+
+            # drop nans (with dates)
+            this_piece = this_piece.dropna()
+
             # extract date as index
             this_piece = this_piece.set_index(this_piece.columns[0])
+
             # rename
             this_piece.columns = [colnames[p]]
             this_piece.index.name = "date"
+
             # store
-            new_data_df += [this_piece.dropna(),]
+            new_data_df += [this_piece, ]
 
         # concat
         all_data[s] = pd.concat(new_data_df, axis=1, join="outer")
@@ -573,6 +577,7 @@ if __name__ == "__main__":
 
 
     from foolbox.api import *
+
     # Get the data
     with open(data_path + "ois_bloomberg.p", mode="rb") as halupa:
         ois_data = pickle.load(halupa)
