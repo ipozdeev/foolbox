@@ -28,4 +28,4 @@ with open(data_path + out_name, mode="wb") as halupa:
 
 # And on rates separately
 with open(data_path + out_name_on, mode="wb") as halupa:
-    pickle.dump(ois_diff_maturities, halupa)
+    pickle.dump(on_rates, halupa)
