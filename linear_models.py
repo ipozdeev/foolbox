@@ -185,13 +185,13 @@ class PureOls(Regression):
         eps_var = self.eps.var().values
         XX = self.X.T.dot(self.X)
         vcv = eps_var*np.linalg.inv(XX)
-        se = np.diag(vcv).squeeze()
+        se = (np.diag(vcv) ** 0.5).squeeze()
+        se = pd.DataFrame(se, index=self.coef.index, columns=self.coef.columns)
         tstat = self.coef/se
 
-        res = pd.DataFrame(
-            data=np.vstack((self.coef.values, se, tstat.values)),
-            columns=self.X_names,
-            index=["coef", "se", "tstat"])
+        res = pd.concat([self.coef, se, tstat], axis=1).T
+        res.columns = self.X_names
+        res.index = ["coef", "se", "tstat"]
 
         return res
 
@@ -271,6 +271,55 @@ class PureOls(Regression):
             out = pd.Series([W, p_val], index=["chi_sq", "p_val"])
 
         return out
+
+    def hodrick_vcv(self, forecast_horizon):
+        """Computes Hodrick (1992) variance-covariance matrix uder the null
+        hypothesis of no predictability for a regression of the following type:
+
+                    y(t -> t+H) = X(t) * beta + epsilon(t -> t+H),
+
+        where t -> t+H, means that y is forecast H-steps ahead
+
+        Parameters
+        ----------
+        forecast_horizon: int
+            specifying forecast horizon H in the example above
+
+        Returns
+        -------
+        hodrick_vcv: pd.DataFrame
+            with Hodrick (1992) VCV estimate
+
+        """
+        # Dimensionality of regressors' matrix
+        (T, N) = self.X.shape
+
+        # Get demeaned residuals from OLS on a constant
+        resids = self.y - self.y.mean()
+
+        # Compute Hodrick's spectral density
+        spectral_density = pd.DataFrame(np.zeros((N, N)), index=self.X.columns,
+                                        columns=self.X.columns)
+
+        # Spectral density for each point in time
+        sd = self.X.rolling(forecast_horizon).sum().shift(1)\
+            .mul(resids.squeeze(), axis=0).dropna()
+
+        # Get the time average
+        spectral_density = (1 / T) * sd.T.dot(sd)
+
+        # Get the 'sandwich' part of vcv, i.e. E[xx']
+        Z = (1 / T) * self.X.T.dot(self.X)
+
+        # Get the output
+        hodrick_vcv = \
+            np.linalg.inv(Z).dot(spectral_density).dot(np.linalg.inv(Z)) / T
+
+        hodrick_vcv = pd.DataFrame(hodrick_vcv, index=self.X.columns,
+                                   columns=self.X.columns)
+
+        return hodrick_vcv
+
 
 class DynamicOLS():
     """ One-factor (+constant) OLS setting."""
@@ -561,11 +610,47 @@ class PrincipalComponents():
 if __name__ == '__main__':
     pass
     X = pd.DataFrame(data=np.random.normal(size=(1000, 2)), columns=["x", "e"])
-    y = X.dot(pd.Series(data=[2, 0.5], index=X.columns))
+    y = X.dot(pd.Series(data=[0.5, 0.5], index=X.columns))
     y.name = "y"
     mod = PureOls(y, X[["x"]], add_constant=True)
+    vcv = mod.hodrick_vcv(1)
+    print(np.diag(vcv)**0.5)
     mod.fit()
     print(mod.get_diagnostics())
+
+    mu = 0.08
+    theta = 0.70
+    sigma = 0.16
+    dt = 1/12
+    T = 500
+    M = int(T/dt)
+    r0 = (theta * mu * dt) / (1-theta * dt) # start from unconditional mean
+
+    N = 100
+    out = pd.DataFrame(np.nan, index=range(N), columns=["simple", "hodrick"])
+    for n in np.arange(0, N):
+        ret = pd.Series([r0]*M)
+        epsilon = np.random.standard_normal((M,))
+        for t in np.arange(1, M):
+            ret[t] = mu * (theta - ret[t-1]) * dt + \
+                     np.sqrt(dt) * sigma * epsilon[t]
+
+        y = ret.rolling(6).sum()
+        y.name = "y"
+
+        z = pd.DataFrame(np.random.standard_normal((M, 1)), columns=["x"])
+        mod = PureOls(y, z[["x"]], add_constant=True)
+
+        vcv = mod.hodrick_vcv(6)
+        se_h = vcv.loc["x", "x"] ** 0.5
+        mod.fit()
+        se_s = mod.get_diagnostics(HAC=False).loc["se", "x"]
+
+        out.loc[n, "hodrick"] = se_h
+        out.loc[n, "simple"] = se_s
+        print(n)
+
+
     print(mod.linear_restrictions_test(
         pd.DataFrame([[1, 0], [0, 1]], columns=["const", "x"]),
         pd.Series([0, 2])))
