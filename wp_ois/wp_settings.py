@@ -17,3 +17,7 @@ cb_effective_date_offset = \
 cb_fx_map = \
     {"rba": "aud", "boc": "cad", "snb": "chf", "ecb": "eur", "boe": "gbp",
      "rbnz": "nzd", "riks": "sek", "fomc": "usd"}
+
+fx_cb_map = {
+    'eur': 'ecb', 'nzd': 'rbnz', 'chf': 'snb', 'cad': 'boc', 'usd': 'fomc',
+    'gbp': 'boe', 'aud': 'rba', 'sek': 'riks'}

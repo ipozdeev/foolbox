@@ -4,7 +4,8 @@ from foolbox.api import data_path, PolicyExpectation
 from foolbox.fixed_income import OIS, LIBOR
 import pickle
 
-def calculate_implied_rates(ois_data, on_data, events_data):
+
+def calculate_ois_implied_rates(ois_data, on_data, events_data):
     """
     """
     # space for implied rates
@@ -30,7 +31,12 @@ def calculate_implied_rates(ois_data, on_data, events_data):
         s_dt = this_ois_rate.first_valid_index()
         e_dt = this_ois_rate.last_valid_index()
         this_ois_rate, this_on = this_ois_rate.loc[s_dt:e_dt].align(
-                this_on, axis=0, join="left")
+                this_on, axis=0, join="outer")
+
+        # reindex
+        this_ois_rate = ois_object.reindex_series(
+            this_ois_rate, method="ffill")
+        this_on = ois_object.reindex_series(this_on, method="ffill")
 
         # rates expected to prevail before meetings
         rate_on_const = this_on.rolling(5, min_periods=1).mean().shift(1)
@@ -61,20 +67,20 @@ def calculate_libor_implied_rates(libor_1m, libor_on, events_data):
     # space for implied rates
     implied_rates = dict()
 
-    for c in libor_1m.keys():
+    for c in libor_1m.columns:
         # c = "usd"
         if c in ['jpy']:
             continue
 
         print(c)
 
-        # OIS
+        # LIBOR
         this_libor = LIBOR.from_iso(c, maturity=DateOffset(months=1))
 
         # this event, to frame + rename
         this_evt = events_data.loc[:, c].dropna().to_frame("rate_change")
 
-        # this ois
+        # this libor rate
         this_long_rate = this_libor.reindex_series(libor_1m.loc[:, c],
             method="ffill")
 
@@ -106,6 +112,68 @@ def calculate_libor_implied_rates(libor_1m, libor_on, events_data):
     return implied_rates
 
 
+def calculate_libor_implied_rates_smart(libor_1m, libor_on, events_data):
+    """
+    """
+    # space for implied rates
+    implied_rates = dict()
+
+    for c in libor_1m.columns:
+        # c = "usd"
+        if c in ['jpy']:
+            continue
+
+        print(c)
+
+        # LIBOR
+        this_libor = LIBOR.from_iso(c, maturity=DateOffset(months=1))
+        this_ois = OIS.from_iso(c, maturity=DateOffset(months=1))
+        this_ois.day_count_fix_dnm = this_libor.day_count_dnm
+        this_ois.day_count_float_dnm = this_libor.day_count_dnm
+        this_ois.day_count_fix_num = this_libor.day_count_num
+        this_ois.day_count_float_num = this_libor.day_count_num
+        this_ois.value_dt_lag = this_libor.value_dt_lag
+        this_ois.day_roll = this_libor.day_roll
+        this_ois.fixing_lag = 1
+        this_ois.new_rate_lag = 0
+
+        # this event, to frame + rename
+        this_evt = events_data.loc[:, c].dropna().to_frame("rate_change")
+
+        # this ois
+        this_ois_rate = libor_1m.loc[:, c].astype(float)
+
+        # this overnight
+        this_on = libor_on.loc[:, c].astype(float)
+
+        # align
+        s_dt = this_ois_rate.first_valid_index()
+        e_dt = this_ois_rate.last_valid_index()
+        this_ois_rate, this_on = this_ois_rate.loc[s_dt:e_dt].align(
+            this_on, axis=0, join="left")
+
+        # rates expected to prevail before meetings
+        rate_on_const = this_on.rolling(5, min_periods=1).mean().shift(1)
+
+        # # rates expected to prevail before meetings
+        # rate_on_const = ois_object.get_rates_until(this_on, this_evt,
+        #     method="g_average")
+
+        pe = PolicyExpectation.from_ois(
+            meetings=this_evt,
+            ois_object=this_ois,
+            ois_rate=this_ois_rate,
+            rate_on_const=rate_on_const)
+
+        # store
+        this_ir = pe.expected_proxy_rate.copy()
+        this_ir.name = c
+        implied_rates[c] = this_ir
+
+    ir = pd.DataFrame.from_dict(implied_rates)
+
+    return ir
+
 if __name__ == "__main__":
     # fetch data ------------------------------------------------------------
     # ois data
@@ -135,13 +203,22 @@ if __name__ == "__main__":
     libor_on = libor_data["on"]
 
     # from ois --------------------------------------------------------------
-    ir = calculate_implied_rates(ois_rate, on_rate, events)
+    ir = calculate_ois_implied_rates(ois_rate, on_rate, events)
 
-    with open(data_path + "implied_rates_1m_ois.p", mode="wb") as h:
+    with open(data_path + "implied_rates_from_1m_ois.p", mode="wb") as h:
         pickle.dump(ir, h)
 
-    # from libor ------------------------------------------------------------
-    ir = calculate_libor_implied_rates(libor_1m, libor_on, events)
+    ir = pd.read_pickle(data_path + "implied_rates_from_1m_ois.p")
 
-    with open(data_path + "implied_rates_from_1m_libor_1m.p", mode="wb") as h:
-        pickle.dump(ir, h)
+    # # from libor ------------------------------------------------------------
+    # ir = calculate_libor_implied_rates(libor_1m, libor_on, events)
+    #
+    # with open(data_path + "implied_rates_from_1m_libor.p", mode="wb") as h:
+    #     pickle.dump(ir, h)
+
+    # # from libor in a smart ois way -----------------------------------------
+    # ir = calculate_libor_implied_rates_smart(libor_1m, libor_on, events)
+    #
+    # with open(data_path + "implied_rates_from_1m_libor_smart.p", mode="wb") \
+    #     as h:
+    #     pickle.dump(ir, h)

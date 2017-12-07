@@ -513,7 +513,7 @@ def to_better_latex(df_coef, df_tstat, fmt_coef="{}", fmt_tstat="{}",
     mask_coef = df_coef.applymap(np.isfinite)
     mask_tstat = df_tstat.applymap(np.isfinite)
 
-    df_coef_fmt = df_coef.applymap(fmt_tstat.format)
+    df_coef_fmt = df_coef.applymap(fmt_coef.format)
     df_tstat_fmt = df_tstat.applymap(('('+fmt_tstat+')').format)
 
     new_df = []
