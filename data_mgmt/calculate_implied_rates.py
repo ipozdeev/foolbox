@@ -143,5 +143,5 @@ if __name__ == "__main__":
     # from libor ------------------------------------------------------------
     ir = calculate_libor_implied_rates(libor_1m, libor_on, events)
 
-    with open(data_path + "implied_rates_from_1m_libor_1m.p", mode="wb") as h:
+    with open(data_path + "implied_rates_1m_libor.p", mode="wb") as h:
         pickle.dump(ir, h)

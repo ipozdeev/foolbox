@@ -17,7 +17,7 @@ from foolbox.portfolio_construction import multiple_timing
 from foolbox.api import *
 from foolbox.trading import EventTradingStrategy
 
-import ipdb
+# import ipdb
 
 my_red = "#ce3300"
 my_blue = "#2f649e"
@@ -1546,6 +1546,6 @@ if __name__  == "__main__":
 
     pe = PolicyExpectation.from_pickles(data_path, currency="usd",
         meetings_pickle="ois_project_events.p", start_dt="2001-12",
-        e_proxy_rate_pickle="implied_rates_from_libor_1m.p")
+        e_proxy_rate_pickle="implied_rates_1m_ois.p")
 
     pe.get_vus(10, lambda x: x.rolling(5, min_periods=1).mean().shift(1))
