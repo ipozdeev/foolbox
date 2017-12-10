@@ -11,8 +11,6 @@ from matplotlib import cm
 from matplotlib.ticker import MultipleLocator
 from mpl_toolkits.mplot3d import Axes3D
 
-from scipy.optimize import fsolve
-
 from foolbox.utils import *
 from foolbox.bankcalendars import *
 from foolbox.portfolio_construction import multiple_timing
@@ -31,123 +29,155 @@ plt.rc("font", family="serif", size=12)
 class PolicyExpectation():
     """
     """
-    def __init__(self, meetings, instrument=None, reference_rate=None):
+    def __init__(self, meetings=None, policy_rate=None, proxy_rate=None,
+                 expected_proxy_rate=None):
         """
         """
         self.meetings = meetings
-        self.instrument = instrument
-        self.reference_rate = reference_rate
-
-        self._policy_dir_fcast = None
+        self.policy_rate = policy_rate
+        self.proxy_rate = proxy_rate
+        self.expected_proxy_rate = expected_proxy_rate
 
     @classmethod
-    def from_libor(cls, libor, meetings, long_rates, on_rates):
+    def from_forward_rates(cls, meetings, rate_object, rate_long,
+                           rate_on_const, **kwargs):
+        """Construct PolicyExpectation from forward rates.
+
+        Parameters
+        ----------
+        meetings : pandas.Series
+            of events, without nans
+        rate_object : FixedIncome instance
+            e.g. LIBOR
+        rate_long : pandas.Series
+            e.g. 1-month libor rate
+        rate_on_const : pandas.Series
+            rate to prevail from value date to meeting date
+        kwargs : dict
+            arguments to PolicyExpectation.__init__ such as
+            policy_rate and proxy_rate
+
+        Returns
+        -------
+        pe : PolicyExpectation instance
+
         """
-        libor = this_libor
-        long_rates = this_long_rate
-        on_rates = this_on
-        meetings = this_evt
-        """
-        # calculate rate until
-        rates_until = on_rates.rolling(5).mean().shift(1)
+        # allocate space
+        expected_proxy_rate = rate_long.copy() * np.nan
 
-        rate_expectation = long_rates.copy()*np.nan
-
-        for t in rate_expectation.index:
-            # t = "2014-01-14"
-            # ipdb.set_trace()
-
-            # set quote date of ois to this t
-            libor.quote_dt = t
+        # loop over time
+        for t in expected_proxy_rate.index:
+            # t = "2015-01-23"
+            # set quote date to this t
+            rate_object.quote_dt = t
 
             # break if out of range
-            if libor.value_dt >= meetings.last_valid_index():
+            if rate_object.value_dt >= meetings.last_valid_index():
                 break
 
-            # next closest meeting to ois's effective date
+            # meetings ------------------------------------------------------
+            # next closest to the quote date
             very_nx_meet = meetings.index[
-                meetings.index.get_loc(libor.quote_dt, method="bfill")]
+                meetings.index.get_loc(rate_object.quote_dt, method="bfill")]
+
+            # next closest to the value date
             nx_meet = meetings.index[
-                meetings.index.get_loc(libor.value_dt, method="bfill")]
+                meetings.index.get_loc(rate_object.value_dt, method="bfill")]
 
-            # if quote_dt < start_dt < end_dt, implied rate is just ois rate
+            # sometimes there is a meeting between quote and value dates
             if very_nx_meet < nx_meet:
-                if libor.end_dt < nx_meet:
-                    # TODO: orly?
-                    rate_expectation.loc[t] = long_rates.loc[t]
+                # if quote_dt < meeting < end_dt < another meeting, perfect
+                if rate_object.end_dt < nx_meet:
+                    expected_proxy_rate.loc[t] = rate_long.loc[t]
+                else:
+                    continue
+            else:
+                # end_dt < next meeting, cannot tell anything
+                if rate_object.end_dt < nx_meet:
+                    continue
 
-            # continue if maturity is earlier than next meeting
-            if libor.end_dt < nx_meet:
-                continue
-
-            # extract implied rate
-            rate_expectation.loc[t] = libor.get_forward_rate(
-                rate=long_rates.loc[t],
+            # extract implied rate ------------------------------------------
+            expected_proxy_rate.loc[t] = rate_object.get_forward_rate(
+                rate=rate_long.loc[t],
                 forward_dt=nx_meet,
-                rate_until=rates_until.loc[t])
+                rate_until=rate_on_const.loc[t])
 
-        this_pe = PolicyExpectation(
+        # constructor
+        pe = PolicyExpectation(
             meetings=meetings,
-            instrument=long_rates,
-            reference_rate=on_rates)
+            expected_proxy_rate=expected_proxy_rate,
+            **kwargs)
 
-        this_pe.rate_expectation = rate_expectation
-
-        return this_pe
-
-        return
+        return pe
 
     @classmethod
-    def from_ois_new(cls, ois, meetings, ois_rates, on_rates, **kwargs):
-        """
-        """
-        # calculate rate until
-        rates_until = ois.get_rates_until(on_rates, meetings, **kwargs)
+    def from_ois(cls, meetings, ois_object, ois_rate, rate_on_const, **kwargs):
+        """Construct PolicyExpectation from ois rates.
 
-        rate_expectation = ois_rates.copy()*np.nan
+        Parameters
+        ----------
+        meetings : pandas.Series
+            of events, without nans
+        ois_object : OIS instance
+        ois_rate : pandas.Series
+            e.g. 1-month ois rates
+        rate_on_const : pandas.Series
+            rate to prevail from value date to meeting date
+        kwargs : dict
+            arguments to PolicyExpectation.__init__ such as
+            policy_rate and proxy_rate
 
-        for t in rate_expectation.index:
+        Returns
+        -------
+        pe : PolicyExpectation instance
+
+        """
+        # allocate space
+        expected_proxy_rate = ois_rate.copy() * np.nan
+
+        # loop over time
+        for t in expected_proxy_rate.index:
             # t = "2017-01-31"
-            # print(t)
-            # if t > pd.to_datetime("2017-03-13"):
-            # ipdb.set_trace()
 
-            # set quote date of ois to this t
-            ois.quote_dt = t
+            # set quote date to this t
+            ois_object.quote_dt = t
 
             # break if out of range
-            if ois.start_dt >= meetings.last_valid_index():
+            if ois_object.value_dt >= meetings.last_valid_index():
                 break
 
-            # next closest meeting to ois's effective date
+            # meetings ------------------------------------------------------
+            # next closest to the quote date
             very_nx_meet = meetings.index[
-                meetings.index.get_loc(ois.quote_dt, method="bfill")]
+                meetings.index.get_loc(ois_object.quote_dt, method="bfill")]
+
+            # next closest to the value date
             nx_meet = meetings.index[
-                meetings.index.get_loc(ois.start_dt, method="bfill")]
+                meetings.index.get_loc(ois_object.value_dt, method="bfill")]
 
-            # if quote_dt < start_dt < end_dt, implied rate is just ois rate
+            # # sometimes there is a meeting between quote and value dates
             if very_nx_meet < nx_meet:
-                if ois.end_dt < nx_meet:
-                    rate_expectation.loc[t] = ois_rates.loc[t]
-
-            # continue if maturity is earlier than next meeting
-            if ois.end_dt < nx_meet:
-                continue
+                if ois_object.end_dt < nx_meet:
+                    expected_proxy_rate.loc[t] = ois_rate.loc[t]
+                else:
+                    continue
+            else:
+                # end_dt < next meeting, cannot tell anything
+                if ois_object.end_dt < nx_meet:
+                    continue
 
             # extract implied rate
-            rate_expectation.loc[t] = ois.get_implied_rate(
+            expected_proxy_rate.loc[t] = ois_object.get_implied_rate(
                 event_dt=nx_meet,
-                swap_rate=ois_rates.loc[t],
-                rate_until=rates_until.loc[t])
+                swap_rate=ois_rate.loc[t],
+                rate_until=rate_on_const.loc[t])
 
-        this_pe = PolicyExpectation(
+        pe = PolicyExpectation(
             meetings=meetings,
-            instrument=ois_rates,
-            reference_rate=on_rates)
+            expected_proxy_rate=expected_proxy_rate,
+            **kwargs)
 
-        this_pe.rate_expectation = rate_expectation
-
-        return this_pe
+        return pe
 
     @classmethod
     def from_funds_futures(cls, meetings, funds_futures):
@@ -180,15 +210,14 @@ class PolicyExpectation():
         Returns
         -------
         pe : PolicyExpectation instance
-            with attribute `rate_expectation` for expectation of the new rate
         """
         # fill na forward (today's na equals yesterday's value)
         funds_futures = funds_futures.fillna(method="ffill", limit=30)
 
         # space for stuff
-        rate_expectation = pd.Series(index=funds_futures.index)
+        expected_proxy_rate = pd.Series(index=funds_futures.index)
 
-        for t in rate_expectation.index:
+        for t in expected_proxy_rate.index:
             # t = rate_exp.index[0]
             # next meeting
             try:
@@ -219,8 +248,8 @@ class PolicyExpectation():
                 nx_nx_fomc_mend = MonthEnd().rollforward(nx_nx_fomc)
 
                 # rate decision
-                rate_expectation.loc[t] = \
-                    100-funds_futures.loc[t,nx_nx_fomc_mend]
+                expected_proxy_rate.loc[t] = \
+                    100-funds_futures.loc[t, nx_nx_fomc_mend]
             else:
                 # Scenario 2
                 # previos month
@@ -228,181 +257,225 @@ class PolicyExpectation():
                 M = nx_fomc.day
 
                 # implied rate
-                impl_rate = 100 - funds_futures.loc[t,nx_fomc_mend]
+                impl_rate = 100 - funds_futures.loc[t, nx_fomc_mend]
                 # rate at start of fomc month
-                start_rate = 100 - funds_futures.loc[t,nx_fomc_mbefore]
+                start_rate = 100 - funds_futures.loc[t, nx_fomc_mbefore]
 
                 # rate decision
-                rate_expectation.loc[t] = days_in_m/(days_in_m-M)*(
+                expected_proxy_rate.loc[t] = days_in_m/(days_in_m-M)*(
                     impl_rate - (M/days_in_m)*start_rate)
 
         # create a new PolicyExpectation instance to return
         pe = PolicyExpectation(
             meetings=meetings,
-            reference_rate=meetings.loc[:,"rate_level"])
-
-        # supply it with policy expectation
-        pe.rate_expectation = rate_expectation
+            expected_proxy_rate=expected_proxy_rate)
 
         return pe
 
     @classmethod
-    def from_ois(cls, meetings, instrument, tau, reference_rate=None):
-        """ Extract policy expectations from money market instruments.
-
-        For each date when an instrument observation is available, it is
-        possible to extract the expectation of the rate to be set at the next
-        policy meeting. Assumptions: the regulator targets the rate which
-        `instrument` is derivative of; the rate stays constant at the
-        previosuly set policy level (`reference_rate` is None) or at the most
-        recent level of `reference_rate` (`reference_rate` is not None) until the next
-        meeting; at the expiry of the `instrument` the buyer receives the
-        accumulated short rate; expectation hypothesis holds.
+    def from_pickles(cls, data_path, currency, start_dt="1990",
+                     proxy_rate_pickle="ois_bloomberg.p",
+                     e_proxy_rate_pickle="implied_rates_from_1m.p",
+                     meetings_pickle="events.p"):
+        """Construct PolicyExpectation from existing pickled rates.
 
         Parameters
         ----------
-        meetings : pd.DataFrame
-            indexed with meeting dates, containing respective policy rates
-            (column "rate_level") and rate changes (column "rate_change"),
-            in percentage points
-        instrument : pd.Series
-            of instrument (e.g. OIS) values, in frac of 1
-        tau : int
-            maturity of `instrument`, in months
-        reference_rate : pd.Series, optional
-            of the rate which the `instrument` is derivative of (if differs
-            from the rate in `meetings`), in frac of 1
+        data_path : str
+        currency : str
+            e.g. 'usd'
+        start_dt : str
+        proxy_rate_pickle : str
+        e_proxy_rate_pickle : str
+        meetings_pickle : str
 
         Returns
         -------
-        pe : PolicyExpectation instance
-            with attribute `rate_expectation` for expectation of the next set rate
 
         """
-        assert isinstance(meetings, pd.DataFrame)
-        assert isinstance(instrument, pd.Series)
+        # meetings
+        meetings_data = pd.read_pickle(data_path + meetings_pickle)
+        meetings = meetings_data["joint_cbs"].loc[start_dt:, currency]
+        policy_rate = meetings_data["joint_cbs_lvl"].loc[start_dt:, currency]
 
-        if instrument.name is None:
-            raise AttributeError("instrument must be called with ISO of "+
-                "respective currency")
+        # drop nans from policy rates
+        meetings = meetings.dropna()
+        policy_rate = policy_rate.dropna()
 
-        # day count convention
-        day_count = {
-            "gbp": 365,
-            "cad": 365,
-            "usd": 360,
-            "eur": 360,
-            "chf": 360,
-            "jpy": 365,
-            "nzd": 365,
-            "aud": 365,
-            "sek": 360}
+        # proxy rates
+        proxy_rate_data = pd.read_pickle(data_path + proxy_rate_pickle)
+        proxy_rate = proxy_rate_data[currency].loc[start_dt:, "ON"].rename(
+            currency)
 
-        # days in year for this currency:
-        days_in_year = day_count[instrument.name]
+        # implied rates
+        e_proxy_rate_data = pd.read_pickle(data_path + e_proxy_rate_pickle)
+        e_proxy_rate = e_proxy_rate_data.loc[start_dt:, currency]
 
-        # # do not let instrument be too full of nans
-        # min_start = max((meetings.index[0], instrument.index[0]))
-        # instrument = instrument.loc[min_start:]
-        # meetings = meetings.loc[min_start:]
-
-        # if no rate provided, meetings must contain a rate; in this case
-        #   reference_rate be the rate set at meetings projected onto the
-        #   dates of
-        #   instrument.
-        if reference_rate is None:
-            reference_rate = meetings.loc[:,"rate_level"].reindex(
-                index=instrument.index, method="ffill")
-        else:
-            # project onto the dates too
-            reference_rate = reference_rate.reindex(
-                index=instrument.index, method="ffill")
-
-        # make sure meeting dates have corresponding dates in instrument
-        reference_rate = reference_rate.reindex(
-            index=reference_rate.index.union(meetings.index),
-            method="ffill")
-
-        # from percentage points to frac of 1
-        meetings = meetings.copy()/100
-        reference_rate = reference_rate.copy()/100
-        instrument = instrument.copy()/100
-
-        # main loop ---------------------------------------------------------
-        # allocate space for forward rates
-        rate_expectation = instrument.copy()*np.nan
-
-        # loop over dates in instrument
-        for t in rate_expectation.index:
-            # t = rate_expectation.index[3000]
-            # t = pd.to_datetime("2016-02-08")
-
-            # break if out of range
-            if t > meetings.last_valid_index():
-                break
-
-            # continue if too early
-            if t < meetings.first_valid_index():
-                continue
-
-            # find two meeting dates: the previous, whose rate will serve as
-            #   reference rate, and the next, which will possibly set a new
-            #   rate
-            # previous
-            prev_meet = \
-                meetings.index[meetings.index.get_loc(t, method="ffill")]
-
-            # next closest
-            nx_meet = \
-                meetings.index[meetings.index.get_loc(t, method="bfill")]
-
-            # maturity date of instrument: contract starts tomorrow; final
-            #   date is then today tau month forward
-            setl_date = t + DateOffset(months=tau)
-
-            # if next meeting is earlier than maturity, skip
-            if setl_date <= nx_meet:
-                continue
-
-            # number of days between them
-            ndays = (setl_date - t).days
-
-            # number of days until next meeting
-            ndays_until = (nx_meet - t).days
-
-            # previously set rate, to be effective until next meeting
-            # TODO: not prev_meet, but prev_meet + 1
-            idx = reference_rate.index[reference_rate.index.get_loc(
-                prev_meet + DateOffset(days=1), "bfill")]
-            bench_reixed = reference_rate.loc[idx:t].reindex(
-                index=pd.date_range(idx,t,freq='D'),
-                method="ffill")
-            prev_rate = (
-                (1+bench_reixed/days_in_year).product()**\
-                (1/bench_reixed.count())-1)*days_in_year
-
-            # implied rate
-            r_instr = instrument.loc[t]
-
-            impl_rate = (
-                (
-                    (1+r_instr/days_in_year*ndays)/
-                    (1+prev_rate/days_in_year)**(ndays_until)
-                )**(1/(ndays-ndays_until))-1)*days_in_year
-
-            # store
-            rate_expectation.loc[t] = impl_rate
-
-        # create a new PolicyExpectation instance to return
-        pe = PolicyExpectation(
-            meetings=meetings*100,
-            instrument=instrument*100,
-            reference_rate=reference_rate*100)
-
-        # supply it with policy expectation
-        pe.rate_expectation = rate_expectation*100
+        # init class, manually insert policy expectation
+        pe = cls(meetings=meetings,
+                 proxy_rate=proxy_rate,
+                 policy_rate=policy_rate,
+                 expected_proxy_rate=e_proxy_rate)
 
         return pe
+
+    # @classmethod
+    # def from_ois(cls, meetings, instrument, tau, reference_rate=None):
+    #     """ Extract policy expectations from money market instruments.
+    #
+    #     For each date when an instrument observation is available, it is
+    #     possible to extract the expectation of the rate to be set at the next
+    #     policy meeting. Assumptions: the regulator targets the rate which
+    #     `instrument` is derivative of; the rate stays constant at the
+    #     previosuly set policy level (`reference_rate` is None) or at the most
+    #     recent level of `reference_rate` (`reference_rate` is not None) until the next
+    #     meeting; at the expiry of the `instrument` the buyer receives the
+    #     accumulated short rate; expectation hypothesis holds.
+    #
+    #     Parameters
+    #     ----------
+    #     meetings : pd.DataFrame
+    #         indexed with meeting dates, containing respective policy rates
+    #         (column "rate_level") and rate changes (column "rate_change"),
+    #         in percentage points
+    #     instrument : pd.Series
+    #         of instrument (e.g. OIS) values, in frac of 1
+    #     tau : int
+    #         maturity of `instrument`, in months
+    #     reference_rate : pd.Series, optional
+    #         of the rate which the `instrument` is derivative of (if differs
+    #         from the rate in `meetings`), in frac of 1
+    #
+    #     Returns
+    #     -------
+    #     pe : PolicyExpectation instance
+    #         with attribute `rate_expectation` for expectation of the next set rate
+    #
+    #     """
+    #     assert isinstance(meetings, pd.DataFrame)
+    #     assert isinstance(instrument, pd.Series)
+    #
+    #     if instrument.name is None:
+    #         raise AttributeError("instrument must be called with ISO of "+
+    #             "respective currency")
+    #
+    #     # day count convention
+    #     day_count = {
+    #         "gbp": 365,
+    #         "cad": 365,
+    #         "usd": 360,
+    #         "eur": 360,
+    #         "chf": 360,
+    #         "jpy": 365,
+    #         "nzd": 365,
+    #         "aud": 365,
+    #         "sek": 360}
+    #
+    #     # days in year for this currency:
+    #     days_in_year = day_count[instrument.name]
+    #
+    #     # # do not let instrument be too full of nans
+    #     # min_start = max((meetings.index[0], instrument.index[0]))
+    #     # instrument = instrument.loc[min_start:]
+    #     # meetings = meetings.loc[min_start:]
+    #
+    #     # if no rate provided, meetings must contain a rate; in this case
+    #     #   reference_rate be the rate set at meetings projected onto the
+    #     #   dates of
+    #     #   instrument.
+    #     if reference_rate is None:
+    #         reference_rate = meetings.loc[:,"rate_level"].reindex(
+    #             index=instrument.index, method="ffill")
+    #     else:
+    #         # project onto the dates too
+    #         reference_rate = reference_rate.reindex(
+    #             index=instrument.index, method="ffill")
+    #
+    #     # make sure meeting dates have corresponding dates in instrument
+    #     reference_rate = reference_rate.reindex(
+    #         index=reference_rate.index.union(meetings.index),
+    #         method="ffill")
+    #
+    #     # from percentage points to frac of 1
+    #     meetings = meetings.copy()/100
+    #     reference_rate = reference_rate.copy()/100
+    #     instrument = instrument.copy()/100
+    #
+    #     # main loop ---------------------------------------------------------
+    #     # allocate space for forward rates
+    #     rate_expectation = instrument.copy()*np.nan
+    #
+    #     # loop over dates in instrument
+    #     for t in rate_expectation.index:
+    #         # t = rate_expectation.index[3000]
+    #         # t = pd.to_datetime("2016-02-08")
+    #
+    #         # break if out of range
+    #         if t > meetings.last_valid_index():
+    #             break
+    #
+    #         # continue if too early
+    #         if t < meetings.first_valid_index():
+    #             continue
+    #
+    #         # find two meeting dates: the previous, whose rate will serve as
+    #         #   reference rate, and the next, which will possibly set a new
+    #         #   rate
+    #         # previous
+    #         prev_meet = \
+    #             meetings.index[meetings.index.get_loc(t, method="ffill")]
+    #
+    #         # next closest
+    #         nx_meet = \
+    #             meetings.index[meetings.index.get_loc(t, method="bfill")]
+    #
+    #         # maturity date of instrument: contract starts tomorrow; final
+    #         #   date is then today tau month forward
+    #         setl_date = t + DateOffset(months=tau)
+    #
+    #         # if next meeting is earlier than maturity, skip
+    #         if setl_date <= nx_meet:
+    #             continue
+    #
+    #         # number of days between them
+    #         ndays = (setl_date - t).days
+    #
+    #         # number of days until next meeting
+    #         ndays_until = (nx_meet - t).days
+    #
+    #         # previously set rate, to be effective until next meeting
+    #         # TODO: not prev_meet, but prev_meet + 1
+    #         idx = reference_rate.index[reference_rate.index.get_loc(
+    #             prev_meet + DateOffset(days=1), "bfill")]
+    #         bench_reixed = reference_rate.loc[idx:t].reindex(
+    #             index=pd.date_range(idx,t,freq='D'),
+    #             method="ffill")
+    #         prev_rate = (
+    #             (1+bench_reixed/days_in_year).product()**\
+    #             (1/bench_reixed.count())-1)*days_in_year
+    #
+    #         # implied rate
+    #         r_instr = instrument.loc[t]
+    #
+    #         impl_rate = (
+    #             (
+    #                 (1+r_instr/days_in_year*ndays)/
+    #                 (1+prev_rate/days_in_year)**(ndays_until)
+    #             )**(1/(ndays-ndays_until))-1)*days_in_year
+    #
+    #         # store
+    #         rate_expectation.loc[t] = impl_rate
+    #
+    #     # create a new PolicyExpectation instance to return
+    #     pe = PolicyExpectation(
+    #         meetings=meetings*100,
+    #         instrument=instrument*100,
+    #         reference_rate=reference_rate*100)
+    #
+    #     # supply it with policy expectation
+    #     pe.rate_expectation = rate_expectation*100
+    #
+    #     return pe
 
     def ts_plot(self, lag=None, ax=None):
         """ Plot implied rate before vs. realized after meetings.
@@ -529,7 +602,7 @@ class PolicyExpectation():
         """
         """
         if (h_low is None) and (h_high is None):
-            raise ValueError("One of h_low and h_hiigh must be set.")
+            raise ValueError("One of h_low and h_high must be set.")
 
         if h_low is None:
             h_low = h_high*-1
@@ -537,193 +610,228 @@ class PolicyExpectation():
         if h_high is None:
             h_high = h_low*-1
 
+        # allocate space
         res = pd.Series(index=dr.index, dtype=float)
 
+        # classify!
         res.ix[dr < h_low] = -1
         res.ix[dr > h_high] = 1
         res.ix[(dr <= h_high) & (dr >= h_low)] = 0
 
         return res
 
-    def forecast_policy_direction(self, lag, ref_rate, h_low=None, h_high=None,
-        transf_ref=None, transf_impl=None):
+    def forecast_policy_direction(self, lag, h_low=None, h_high=None,
+        map_proxy_rate=None, map_expected_rate=None):
         """
-        """
-        if transf_ref is None:
-            transf_ref = lambda x: x
-        if transf_impl is None:
-            transf_impl = lambda x: x
-
-        impl_rate, _ = self.rate_expectation.align(self.meetings, join="outer")
-
-        ref_rate, impl_rate = ref_rate.align(impl_rate, join="outer")
-
-        ref_rate = transf_ref(ref_rate)
-        impl_rate = transf_impl(impl_rate)
-
-        dr = (impl_rate - ref_rate).shift(lag).loc[self.meetings.index]
-
-        res = self.classify_direction(dr, h_low=h_low, h_high=h_high)
-
-        return res
-
-    def forecast_policy_change(self,
-        lag=1,
-        threshold=0.125,
-        avg_impl_over=1,
-        avg_refrce_over=None,
-        bday_reindex=False):
-        """ Predict +1, -1 or 0 for every meeting date.
-
-        Some periods before each event (`lag`) we take the implied rate
-        smoothed over the previous `avg_impl_over` periods and compare it to
-        the reference rate smoothed over the previous `avg_refrce_over`
-        periods. Should the difference between the two exceed the `threshold`,
-        we predict the next set rate be higher and so on.
 
         Parameters
         ----------
         lag : int
-            such that the forecast is made at t-`lag` with t being the meeting
-            date
-        threshold : float
-            the maximum absolute difference (in %) between the implied rate
-            and the reference rate such that no policy change is predicted;
-            values above that would signal a hike, below - cut
-        avg_impl_over : int
-            such that the implied rate that is compared to the reference rate
-            is first smoothed over this number of periods
-        avg_refrce_over : int
-            the number of periods to average the reference rate over before
-            comparing it to the implied rate
-        bday_reindex : boolean
-            True if the rates are reindexed with business days ('B' in pandas)
+        h_low : float
+        h_high : float
+        map_proxy_rate : callable
+            a good idea is to at least lag the rate, since e.g. in the US it is
+            published with a 1-day lag
+        map_expected_rate : callable
 
         Returns
         -------
-        policy_fcast : pd.Series
-            of forecasts: -1 for cut, +1 for hike, 0 for no change; indexed
-            with the index of self.meetings
-
-        Example
-        -------
-        data_path = set_credentials.gdrive_path("research_data/fx_and_events/")
-        pe = PolicyExpectation.from_pickles(data_path, "gbp")
-        fcast = pe.forecast_policy_change(10, 0.1250, 2)
 
         """
-        # take implied rate `lag` periods before
-        impl_rate = self.rate_expectation.copy()
-        refrce_rate = self.reference_rate.copy()
+        # default maps are mickey mouse
+        if map_proxy_rate is None:
+            map_proxy_rate = lambda x: x
+        if map_expected_rate is None:
+            map_expected_rate = lambda x: x
 
-        # reindex if asked to
-        if bday_reindex:
-            first_dt = min((impl_rate.index[0], refrce_rate.index[0]))
-            last_dt = max((impl_rate.index[-1], refrce_rate.index[-1]))
-            bday_dt = pd.date_range(first_dt, last_dt, freq='B')
+        # make sure all meeting dates are there, even if rates are not
+        e_proxy_rate, _ = self.expected_proxy_rate.align(
+            self.meetings, join="outer")
 
-            impl_rate = impl_rate.reindex(index=bday_dt, method="ffill")
-            refrce_rate = refrce_rate.reindex(index=bday_dt, method="ffill")
+        # align two rates
+        proxy_rate, e_proxy_rate = self.proxy_rate.align(
+            e_proxy_rate, join="outer")
 
-        # will need to compare it to either some rolling average of the
-        #   reference rate or the previously set policy rate (avg_refrce_over
-        #   is None)
-        # 1) asked to smooth over several periods
-        if isinstance(avg_refrce_over, int):
-            # fill some NAs
-            avg_refrce = refrce_rate.fillna(method="ffill", limit=2)
-            # smooth
-            avg_refrce = avg_refrce.rolling(
-                avg_refrce_over, min_periods=1).mean()
-            # shift to alighn with the event dates
-            avg_refrce = avg_refrce.shift(lag)\
-                .reindex(index=self.meetings.index, method="ffill")
+        # apply transforms
+        proxy_rate = map_proxy_rate(proxy_rate)
+        e_proxy_rate = map_expected_rate(e_proxy_rate)
 
-        elif isinstance(avg_refrce_over, str):
-            # collect everything between events
-            refrce_aligned, meets_aligned = refrce_rate.align(
-                self.meetings, join="outer", axis=0)
-            refrce_aligned = refrce_aligned.to_frame()
-            refrce_aligned.loc[:,"dates"] = meets_aligned.index
-            refrce_aligned.loc[:,"dates"].fillna(method="bfill")
+        # difference, reindex with meeting dates
+        dr = (e_proxy_rate - proxy_rate).shift(lag).loc[self.meetings.index]
 
-            for dt in range(1,len(self.meetings.index)):
-                this_dt = self.meetings.index[dt]
-                prev_dt = self.meetings.index[dt-1] + DateOffset(days=2)
-                this_piece = refrce_aligned.ix[
-                    refrce_aligned.loc[:,"dates"]==this_dt,0]
-                refrce_aligned.ix[
-                    refrce_aligned.loc[:,"dates"]==this_dt,0].loc[prev_dt:] = \
-                        this_piece.loc[prev_dt:].expanding().mean()
+        # call to direction classifier
+        res = self.classify_direction(dr, h_low=h_low, h_high=h_high)
 
-                # shift to alighn with the event dates
-                avg_refrce = refrce_aligned.shift(lag).\
-                    reindex(index=self.meetings.index, method="ffill")
+        return res
 
-        else:
-            # else, if None, take the last meetings decision
-            avg_refrce = self.meetings.loc[:,"rate_level"].shift(1)
-            # rename!
-            avg_refrce.name = refrce_rate.name
-
-        # smooth implied rate
-        avg_impl = impl_rate.rolling(avg_impl_over, min_periods=1).mean()\
-            .shift(lag).reindex(index=self.meetings.index, method="ffill")
-
-        # difference between rate implied some periods earlier and the
-        #   reference_rate rate
-        impl_less_bench = (avg_impl-avg_refrce).dropna()
-
-        # forecast is the sign of the difference if it is large enough
-        #   (as measured by `threshold`)
-        policy_fcast = np.sign(impl_less_bench).where(
-            abs(impl_less_bench) > threshold).fillna(0.0)
-
-        # add name
-        policy_fcast.name = impl_rate.name
-
-        return policy_fcast
+    # def forecast_policy_change(self,
+    #     lag=1,
+    #     threshold=0.125,
+    #     avg_impl_over=1,
+    #     avg_refrce_over=None,
+    #     bday_reindex=False):
+    #     """ Predict +1, -1 or 0 for every meeting date.
+    #
+    #     Some periods before each event (`lag`) we take the implied rate
+    #     smoothed over the previous `avg_impl_over` periods and compare it to
+    #     the reference rate smoothed over the previous `avg_refrce_over`
+    #     periods. Should the difference between the two exceed the `threshold`,
+    #     we predict the next set rate be higher and so on.
+    #
+    #     Parameters
+    #     ----------
+    #     lag : int
+    #         such that the forecast is made at t-`lag` with t being the meeting
+    #         date
+    #     threshold : float
+    #         the maximum absolute difference (in %) between the implied rate
+    #         and the reference rate such that no policy change is predicted;
+    #         values above that would signal a hike, below - cut
+    #     avg_impl_over : int
+    #         such that the implied rate that is compared to the reference rate
+    #         is first smoothed over this number of periods
+    #     avg_refrce_over : int
+    #         the number of periods to average the reference rate over before
+    #         comparing it to the implied rate
+    #     bday_reindex : boolean
+    #         True if the rates are reindexed with business days ('B' in pandas)
+    #
+    #     Returns
+    #     -------
+    #     policy_fcast : pd.Series
+    #         of forecasts: -1 for cut, +1 for hike, 0 for no change; indexed
+    #         with the index of self.meetings
+    #
+    #     Example
+    #     -------
+    #     data_path = set_credentials.gdrive_path("research_data/fx_and_events/")
+    #     pe = PolicyExpectation.from_pickles(data_path, "gbp")
+    #     fcast = pe.forecast_policy_change(10, 0.1250, 2)
+    #
+    #     """
+    #     # take implied rate `lag` periods before
+    #     impl_rate = self.rate_expectation.copy()
+    #     refrce_rate = self.reference_rate.copy()
+    #
+    #     # reindex if asked to
+    #     if bday_reindex:
+    #         first_dt = min((impl_rate.index[0], refrce_rate.index[0]))
+    #         last_dt = max((impl_rate.index[-1], refrce_rate.index[-1]))
+    #         bday_dt = pd.date_range(first_dt, last_dt, freq='B')
+    #
+    #         impl_rate = impl_rate.reindex(index=bday_dt, method="ffill")
+    #         refrce_rate = refrce_rate.reindex(index=bday_dt, method="ffill")
+    #
+    #     # will need to compare it to either some rolling average of the
+    #     #   reference rate or the previously set policy rate (avg_refrce_over
+    #     #   is None)
+    #     # 1) asked to smooth over several periods
+    #     if isinstance(avg_refrce_over, int):
+    #         # fill some NAs
+    #         avg_refrce = refrce_rate.fillna(method="ffill", limit=2)
+    #         # smooth
+    #         avg_refrce = avg_refrce.rolling(
+    #             avg_refrce_over, min_periods=1).mean()
+    #         # shift to alighn with the event dates
+    #         avg_refrce = avg_refrce.shift(lag)\
+    #             .reindex(index=self.meetings.index, method="ffill")
+    #
+    #     elif isinstance(avg_refrce_over, str):
+    #         # collect everything between events
+    #         refrce_aligned, meets_aligned = refrce_rate.align(
+    #             self.meetings, join="outer", axis=0)
+    #         refrce_aligned = refrce_aligned.to_frame()
+    #         refrce_aligned.loc[:,"dates"] = meets_aligned.index
+    #         refrce_aligned.loc[:,"dates"].fillna(method="bfill")
+    #
+    #         for dt in range(1,len(self.meetings.index)):
+    #             this_dt = self.meetings.index[dt]
+    #             prev_dt = self.meetings.index[dt-1] + DateOffset(days=2)
+    #             this_piece = refrce_aligned.ix[
+    #                 refrce_aligned.loc[:,"dates"]==this_dt,0]
+    #             refrce_aligned.ix[
+    #                 refrce_aligned.loc[:,"dates"]==this_dt,0].loc[prev_dt:] = \
+    #                     this_piece.loc[prev_dt:].expanding().mean()
+    #
+    #             # shift to alighn with the event dates
+    #             avg_refrce = refrce_aligned.shift(lag).\
+    #                 reindex(index=self.meetings.index, method="ffill")
+    #
+    #     else:
+    #         # else, if None, take the last meetings decision
+    #         avg_refrce = self.meetings.loc[:,"rate_level"].shift(1)
+    #         # rename!
+    #         avg_refrce.name = refrce_rate.name
+    #
+    #     # smooth implied rate
+    #     avg_impl = impl_rate.rolling(avg_impl_over, min_periods=1).mean()\
+    #         .shift(lag).reindex(index=self.meetings.index, method="ffill")
+    #
+    #     # difference between rate implied some periods earlier and the
+    #     #   reference_rate rate
+    #     impl_less_bench = (avg_impl-avg_refrce).dropna()
+    #
+    #     # forecast is the sign of the difference if it is large enough
+    #     #   (as measured by `threshold`)
+    #     policy_fcast = np.sign(impl_less_bench).where(
+    #         abs(impl_less_bench) > threshold).fillna(0.0)
+    #
+    #     # add name
+    #     policy_fcast.name = impl_rate.name
+    #
+    #     return policy_fcast
 
     def assess_forecast_quality(self, policy_dir_fcast):
         """
         Parameters
         ----------
+        policy_dir_fcast : pd.Series
+            e.g. from self.`forecast_policy_direction`
 
         """
         policy_dir_fcast.name = "fcast"
 
         # policy change: should already be expressed as difference
-        #   (see __init__)
-        policy_diff = self.meetings.loc[:,"rate_change"]
-        policy_actual = np.sign(policy_diff)
-        policy_actual.name = "actual"
+        policy_dir_actual = np.sign(self.meetings)
+        policy_dir_actual.name = "actual"
 
         # concat to be able to drop NAs
-        both = pd.concat((policy_actual, policy_dir_fcast), axis=1).\
-            dropna(how="any")
+        both = pd.concat((policy_dir_actual, policy_dir_fcast), axis=1)
+        both = both.dropna(how="any")
 
         # percentage of correct guesses
         # rho = (both.loc[:,"fcast"] == both.loc[:,"actual"]).mean()
 
         # confusion matrix
-        cmx = confusion_matrix(both.loc[:,"fcast"], both.loc[:,"actual"])
+        cmx = confusion_matrix(both.loc[:, "fcast"], both.loc[:, "actual"])
 
+        # all possible outcomes
         idx = sorted(list(set(
-            list(pd.unique(both.loc[:,"fcast"])) + \
-            list(pd.unique(both.loc[:,"actual"])))))
+            list(pd.unique(both.loc[:, "fcast"])) +\
+            list(pd.unique(both.loc[:, "actual"])))))
 
-        cmx = pd.DataFrame(cmx,
-            index=idx,
-            columns=idx)
+        # confusion matrix to dataframe
+        cmx = pd.DataFrame(cmx, index=idx, columns=idx)
 
-        cmx = cmx.reindex(index=[-1, 0, 1], columns=[-1, 0, 1]).fillna(0)
-        cmx = cmx.astype(np.int16)
+        # # TODO: why?
+        # cmx = cmx.reindex(index=[-1, 0, 1], columns=[-1, 0, 1]).fillna(0)
+        cmx = cmx.astype(np.int8)
 
         return cmx
 
     @staticmethod
     def calculate_vus(measurements, classes, order=None):
         """
+
+        Parameters
+        ----------
+        measurements : pd.Series
+        classes : pd.Series
+        order : list
+
+        Returns
+        -------
+
         """
         # measurements = (ir_us - r_until).shift(5).loc[evt_us.index]
         # measurements = pd.Series(np.random.random((186,)),index=evt_us.index)
@@ -744,24 +852,47 @@ class PolicyExpectation():
 
         return res
 
-    def get_vus(self, lag, ref_rate, transf_ref=None, transf_impl=None):
+    def get_vus(self, lag, map_proxy_rate=None, map_expected_rate=None):
         """
+
+        Parameters
+        ----------
+        lag : int
+        map_proxy_rate : callable
+        map_expected_rate : callable
+
+        Returns
+        -------
+
         """
-        if transf_ref is None:
-            transf_ref = lambda x: x
-        if transf_impl is None:
-            transf_impl = lambda x: x
-        # ipdb.set_trace()
-        classes = np.sign(self.meetings.loc[:, "rate_change"].dropna())
+        if map_proxy_rate is None:
+            map_proxy_rate = lambda x: x
+        if map_expected_rate is None:
+            map_expected_rate = lambda x: x
 
-        impl_rate, _ = self.rate_expectation.align(classes, join="outer")
+        # define classes
+        classes = np.sign(self.meetings.dropna())
 
-        ref_rate, impl_rate = ref_rate.align(impl_rate, join="outer")
+        # ensure all meeting dates are in the expected rate, even if nan
+        e_proxy_rate, _ = self.expected_proxy_rate.align(classes, join="outer")
 
-        ref_rate = transf_ref(ref_rate)
-        impl_rate = transf_impl(impl_rate)
+        # align two rates
+        proxy_rate, e_proxy_rate = self.proxy_rate.align(
+            e_proxy_rate, join="outer")
 
-        dr = (impl_rate - ref_rate).shift(lag).loc[classes.index]
+        proxy_rate = map_proxy_rate(proxy_rate)
+        e_proxy_rate = map_expected_rate(e_proxy_rate)
+
+        # difference
+        dr = (e_proxy_rate - proxy_rate).shift(lag).loc[classes.index]
+
+        # watch out for nans!
+        if dr.isnull().any():
+            nans_df = dr.isnull().where(dr.isnull()).dropna()
+            nans_dates = [str(p.date()) for p in nans_df.index]
+            n_nans = len(nans_df)
+            warnings.warn(("there are nans on some meeting dates: "+\
+                          "{}, "*(n_nans-1) + "{}.").format(*nans_dates))
 
         vus = self.calculate_vus(dr, classes, order=[-1, 0, 1])
 
@@ -844,8 +975,8 @@ class PolicyExpectation():
         # allocate space
         fcast_accy = pd.Panel(
             major_axis=thresholds,
-            minor_axis=["true_pos","false_pos"],
-            items=["hike","cut"])
+            minor_axis=["true_pos", "false_pos"],
+            items=["hike", "cut"])
 
         # loop over thresholds
         for p in thresholds:
@@ -938,50 +1069,6 @@ class PolicyExpectation():
 
         return
 
-    @classmethod
-    def from_pickles(cls, data_path, currency, s_dt="1990",
-        impl_rates_pickle="implied_rates_bloomberg.p",
-        events_pickle="events.p"):
-        """
-        Parameters
-        ----------
-        currency : str
-            lowercase 3-letter, e.g. "gbp"
-        impl_rates_pickle : str
-            name of the pickle file: "implied_rates", "implied_rates_ffut" or
-            "implied_rates_bloomberg"
-        Returns
-        -------
-        pe : PolicyExpectation()
-            with rate expectation set
-        """
-        # meetings
-        with open(data_path + events_pickle, mode='rb') as hangar:
-            events = pickle.load(hangar)
-
-        # concat level and change, trim -------------------------------------
-        meetings = pd.concat((
-            events["joint_cbs_lvl"].loc[:,currency],
-            events["joint_cbs"].loc[:,currency]), axis=1)
-        meetings.columns = ["rate_level", "rate_change"]
-        meetings = meetings.dropna(how="all").loc[s_dt:,:]
-
-        # reference rates
-        with open(data_path + "overnight_rates.p", mode='rb') as hangar:
-            overnight_rates = pickle.load(hangar)
-
-        # implied rates
-        with open(data_path + impl_rates_pickle, mode='rb') as hangar:
-            implied_rates = pickle.load(hangar)
-
-        # init class, manually insert policy expectation
-        pe = cls(
-            meetings=meetings,
-            reference_rate=overnight_rates.loc[s_dt:,currency])
-
-        pe.rate_expectation = implied_rates.loc[s_dt:,currency]
-
-        return pe
 
 def into_currency(data, new_cur, counter_cur="usd"):
     """
@@ -1453,486 +1540,12 @@ def get_pe_signals(currencies, lag, threshold, data_path, fomc=False,
 
     return signals
 
-class OIS():
-    """Perform basic operations with OIS.
-
-    Keeps all information relevant for an OIS: maturity, offsets, conventions
-    etc. Methods allow to calculate floating and fixed leg return, rate
-    implied before event etc. Construction of the class is easiest
-    performed through usage of `.from_iso` factory.
-
-    To each contract, there is quote date, start (=effective) date and end
-    date. Quote date is when the OIS price (=OIS rate) is negotiated and
-    reported. Start date is usually determined as T+2 and corresponds to the
-    first date when the floating rate is fixed (accrues) for the first time.
-    End date is the last date when the floating rate is fixed, and is usually
-    determined as the last trading date before T+2+maturity.
-
-    Parameters
-    ----------
-    b_day : pandas.tseries.offsets.DateOffset
-        business day (usually related to a calendar), e.g. BDay(); this will
-        influence all business day-related date offsets
-    start_offset : int
-        number of business days until the first accrual of floating rate
-    fixing_lag : int
-        number of periods to shift returns _*forward*_, that is, if the
-        underlying rate is reported with one period lag, today's rate on
-        the floating leg is determined tomorrow. The value is negative if
-        today's rate is determined yesterday (as with CHF)
-    day_roll : str
-        specifying date rolling convention if the end date of the contract
-        is not a business day. Typical conventions are: "previous",
-        "following", and "modified following". Currently only the latter
-        two are implemented
-    maturity : pandas.tseries.offsets.DateOffset
-        maturity of the contract, e.g. DateOffset(months=1)
-    day_cnt_flt : int
-        360 or 365 corresponding to Act/360 and Act/365 day count
-        conventions for the floating leg
-    day_cnt_fix : int
-        360 or 365 corresponding to Act/360 and Act/365 day count
-        conventions for the fixed leg; by default equals `day_cnt_flt`
-    new_rate_lag : int
-        lag with which newly announced rates (usually on monetary policy
-        meetings) become effective; this impacts calculation of implied rates
-    """
-    def __init__(self, start_offset, fixing_lag, day_roll, maturity,
-        day_cnt_flt, new_rate_lag, day_cnt_fix=None, b_day=None):
-        """
-        """
-        if b_day is None:
-            b_day = BDay()
-        if day_cnt_fix is None:
-            day_cnt_fix = day_cnt_flt
-
-        self.b_day = b_day
-        self.start_offset = start_offset
-        self.fixing_lag = fixing_lag
-        self.day_roll = day_roll
-        self.maturity = maturity
-        self.new_rate_lag = new_rate_lag
-
-        # day count: is float always = fixed?
-        self.day_cnt_flt = day_cnt_flt
-        self.day_cnt_fix = day_cnt_fix
-
-        # properties to be set later
-        self._quote_dt = None
-        self._start_dt = None
-        self._end_dt = None
-
-    # start date ------------------------------------------------------------
-    @property
-    def start_dt(self):
-        if self._start_dt is None:
-            raise ValueError("Define start date first!")
-        return self._start_dt
-
-    @start_dt.setter
-    def start_dt(self, value):
-        """Set start date `start_dt`.
-
-        Sets start date to the provided value, then calculates end date by
-        adding maturity to start date, then creates a sequence of business
-        days from start to end dates, then for each of these days calculates
-        the number of subsequent days over which the rate will stay the same,
-        finally, calculates the lifetime of OIS.
-
-        Parameters
-        ----------
-        value : str/np.datetime64
-            date to use as start date
-        """
-        # set start date as is
-        self._start_dt = pd.to_datetime(value)
-
-        # set end date by adding maturity to start date and rolling to b/day
-        #   TODO: offsetting by 1 day necessary?
-        self._end_dt = self.roll_day(
-            self._start_dt + self.maturity,
-            convention=self.day_roll,
-            b_day=self.b_day) - self.b_day*(1)
-
-        # calculation period: range of business days from start to end dates
-        self.calculation_period = pd.date_range(self._start_dt, self._end_dt,
-            freq=self.b_day*(1))
-
-        # number of days to multiply rate with: uses function from utils.py
-        self.rate_multiplicators = pd.Series(
-            index=self.calculation_period,
-            data=self.calculation_period.map(
-                lambda x: next_days_same_rate(x, b_day=self.b_day*(1))))
-
-        # calculation period length
-        self.lifetime = self.rate_multiplicators.sum()
-
-    # end date --------------------------------------------------------------
-    @property
-    def end_dt(self):
-        if self._end_dt is None:
-            raise ValueError("Define start date first!")
-        return self._end_dt
-
-    # quote date ------------------------------------------------------------
-    @property
-    def quote_dt(self):
-        if self._quote_dt is None:
-            raise ValueError("Define quote date first!")
-        return self._quote_dt
-
-    @quote_dt.setter
-    def quote_dt(self, value):
-        """Set quote date.
-
-        Sets quote date, then sets start date as T+`self.start_offset`. In
-        doing so calls to the setter of start date.
-        """
-        # set quote date as is
-        self._quote_dt = pd.to_datetime(value)
-
-        # envoke start_dt setter
-        self.start_dt = self.roll_day(
-            dt=self._quote_dt + self.b_day*(self.start_offset),
-            convention=self.day_roll,
-            b_day=self.b_day)
-
-    @staticmethod
-    def roll_day(dt, convention, b_day=None):
-        """Offset `dt` making sure that the result is a business day.
-
-        Parameters
-        ----------
-        dt : np.datetime64
-            date to offset
-        convention : str
-            specifying date rolling convention if the end date of the contract
-            is not a business day. Typical conventions are: "previous",
-            "following", and "modified following". Currently only the latter
-            two are implemented
-        b_day : pandas.tseries.offsets.DateOffset
-            business day (usually related to a calendar), e.g. BDay()
-
-        Returns
-        -------
-        res : np.datetime64
-            offset date
-        """
-        if b_day is None:
-            b_day = BDay()
-
-        # try to adjust to the working day
-        if convention == "previous":
-            # Roll to the previous business day
-            res = dt - b_day*(0)
-
-        elif convention == "following":
-            # Roll to the next business day
-            res = dt + b_day*(0)
-
-        elif convention == "modified following":
-            # Try to roll forward
-            tmp_dt = dt + b_day*(0)
-
-            # If the dt is in the following month roll backwards instead
-            if tmp_dt.month == dt.month:
-                res = dt + b_day*(0)
-            else:
-                res = dt - b_day*(0)
-
-        else:
-            raise NotImplementedError(
-                "{} date rolling is not supported".format(convention))
-
-        return res
-
-    def get_return_of_floating(self, on_rate, dt_since=None, dt_until=None):
-        """Calculate return on the floating leg.
-
-        The payoff of the floating leg is determined as the cumproduct of the
-        underlying rate. For days followed by K non-business days, the rate on
-        that day is multiplied by (K+1): for example, the 0.35% p.a. rate on
-        Friday will contribute (1+0.35/100/365*3) to the floating leg payoff.
-
-        Parameters
-        ----------
-        on_rate : float/pandas.Series
-            overnight rate (in which case will be broadcasted over the
-            calcualtion period) or series thereof, in percent p.a.
-        dt_since : str/date
-            date to use instead of `self.start_dt` because... reasons!
-        dt_until : str/date
-            date to use instead of `self.end_dt` because... reasons!
-
-        Returns
-        -------
-        res : float
-            cumulative payoff, in frac of 1, not annualized
-        """
-        if dt_until is None:
-            dt_until = self.end_dt
-        if dt_since is None:
-            dt_since = self.start_dt
-
-        # three possible data types for on_rate: float, NDFrame and anythg else
-        # if float, convert to pd.Series
-        if isinstance(on_rate, (np.floating, float)):
-            if np.isnan(on_rate):
-                return np.nan
-            on_rate_series = pd.Series(on_rate, index=self.calculation_period)
-        elif isinstance(on_rate, pd.core.generic.NDFrame):
-            # for the series case, need to ffill if missing and shift by the
-            #   fixing lag
-            on_rate_series = on_rate.shift(self.fixing_lag).ffill()
-        else:
-            return np.nan
-
-        # return nan if the end date has already happened
-        if dt_until not in on_rate_series.index:
-            return np.nan
-        if dt_since not in on_rate_series.index:
-            return np.nan
-
-        # Reindex to calendar day, carrying rates forward over non b-days
-        # NB: watch over missing values in the data: here is the last chance
-        #   to keep them as is
-        tmp_ret = on_rate_series.reindex(index=self.calculation_period)
-
-        # deannualize etc.
-        tmp_ret /= (100 * self.day_cnt_flt)
-
-        # Compute the cumulative floating leg return over the period
-        # res = self.cumprod_with_mult(tmp_ret / self.day_cnt_flt / 100)
-        ret_mult = (1 + tmp_ret * self.rate_multiplicators)
-        res = ret_mult.loc[dt_since:dt_until].prod() - 1
-
-        # # annualize etc.
-        # res *= (100 * self.day_cnt_flt / self.lifetime)
-
-        return res
-
-    def get_return_on_fixed(self, swap_rate):
-        """Calculate return on the fixed leg over the lifetime of OIS.
-
-        Parameters
-        ----------
-        swap_rate : float
-            in percent per year
-        """
-        res = swap_rate / 100 / self.day_cnt_fix * self.lifetime
-
-        return res
-
-    def get_implied_rate(self, event_dt, swap_rate, rate_until):
-        """Calculate the rate expected to prevail after `event_dt`.
-
-        First, given `rate_until`, calculates the more or less sure part of
-        the total floating leg payoff that will have accrued until the new
-        rate enters the floating leg for the first time
-        (at `event_dt`+`self.fixing_lag`+`self.new_rate_lag`). Then, divides
-        the sure payoff of the fixed leg through this to arrive at the
-        expected floating leg payoff that will have accrued after the new rate
-        is in place.
-
-        Parameters
-        ----------
-        event_dt : str/numpy.datetime64
-            date of event
-        on_rate : pandas.Series
-            containing rates around `event_dt`
-        rate_until : float
-            rate to prevail before event; default is to take correct today's
-        """
-        event_dt = pd.to_datetime(event_dt)
-
-        # number of days between: for the US case, the new rate is effective
-        #   one day after announcement, and also there is one day fixing lag
-        # days_until = (event_dt - self.start_dt).days + self.fixing_lag + \
-        #     self.new_rate_lag
-        # TODO: set rule to determine since when new rate becomes effective
-        dt_until = event_dt + \
-            self.b_day*(self.fixing_lag + self.new_rate_lag - 1)
-
-        # total return from entering this OIS
-        cumprod_total = self.get_return_on_fixed(swap_rate) + 1
-
-        # part prior to event -----------------------------------------------
-        # cumulative rate before the new rate will be introduced
-        cumprod_until = self.get_return_of_floating(rate_until,
-            dt_until=dt_until) + 1
-
-        # expected part after event -----------------------------------------
-        # expected_cumprod_after = cumprod_total / cumprod_until
-
-        # implied daily rate after event
-        dt_since = event_dt + self.b_day*(self.fixing_lag + self.new_rate_lag)
-        obj_fun = lambda x: cumprod_total - \
-            (1 + self.get_return_of_floating(x[0], dt_since=dt_since)) *\
-                cumprod_until
-
-        # solve thingy
-        res = fsolve(obj_fun, x0=np.array([swap_rate]), xtol=1e-04)[0]
-
-        return res
-
-    def get_rates_until(self, on_rate, meetings, method="g_average"):
-        """Calculate rates to be considered as prevailing until next meeting.
-
-        Parameters
-        ----------
-        on_rate : pandas.Series
-            of underlying rates
-        meetings : pandas.Series/pandas.DataFrame
-            of meetings; only index matters, values can be whatever
-        method : str
-            "average" to calcualte the prevailing rate as geometric avg since
-            the last meeting;
-
-        Returns
-        -------
-        res : float
-            rate, in percent p.a.
-        """
-        on_rate = on_rate.copy() / 100
-
-        # with this method, take the fixing rate at `self.quote_dt`
-        if method == "last":
-            res = on_rate.shift(self.fixing_lag)
-
-        elif method == "g_average":
-            # expanding geometric average starting from events
-            res = on_rate * np.nan
-            for t in list(meetings.index)[::-1] + list(on_rate.index[[0]]):
-                to_fill_with = np.exp(
-                    np.log(1 + on_rate.shift(-self.new_rate_lag).loc[t:])\
-                        .expanding().mean())
-                res.fillna(to_fill_with.shift(self.new_rate_lag), inplace=True)
-
-            res -= 1.0
-
-        elif method == "a_average":
-            # expanding geometric average starting from events
-            res = on_rate * np.nan
-            for t in list(meetings.index)[::-1] + list(on_rate.index[[0]]):
-                to_fill_with = on_rate.shift(-self.new_rate_lag).loc[t:]\
-                        .expanding().mean()
-                res.fillna(to_fill_with.shift(self.new_rate_lag), inplace=True)
-
-        else:
-            raise ValueError(
-                "Method not implemented: choose 'g_average' or " +
-                "'a_average' or 'last'")
-
-        res *= 100
-
-        return res
-
-    def annualize(self, value, relates_to_float=True):
-        """Annualize and multiply by 100."""
-        res = value * \
-            (self.day_cnt_flt if relates_to_float else self.day_cnt_fix) * 100
-
-        return res
-
-    @staticmethod
-    def implied_rate_formula(rate_before, swap_rate, days_until, days_after):
-        """
-        Parameters
-        ----------
-        rate_before : float
-            rate prevailing before the possible change, in frac of 1 per period
-        swap_rate : float
-            swap rate, in frac of 1 per period
-        days_until : int
-            days before the possible change when `rate_before` applies
-        days_after : int
-            days after the possible change when the new rate applies
-        """
-        res = (
-            (1+swap_rate*days_until)/(1+rate_before)**(days_until)
-            )**(1/(days_after))-1
-
-        return res
-
-    @classmethod
-    def from_iso(cls, iso, maturity):
-        """Return OIS class instance with specifications of currency `iso`."""
-        # calendars
-        calendars = {
-            "usd": CustomBusinessDay(calendar=USTradingCalendar()),
-            "aud": CustomBusinessDay(calendar=AustraliaTradingCalendar()),
-            "cad": CustomBusinessDay(calendar=CanadaTradingCalendar()),
-            "chf": CustomBusinessDay(calendar=SwitzerlandTradingCalendar()),
-            "eur": CustomBusinessDay(calendar=EuropeTradingCalendar()),
-            "gbp": CustomBusinessDay(calendar=UKTradingCalendar()),
-            "jpy": BDay(),
-            "nzd": CustomBusinessDay(calendar=NewZealandTradingCalendar()),
-            "sek": CustomBusinessDay(calendar=SwedenTradingCalendar())
-        }
-
-        all_settings = {
-            "aud": {"start_offset": 1,
-                    "fixing_lag": 0,
-                    "day_cnt_flt": 365,
-                    "day_roll": "modified following",
-                    "new_rate_lag": 1},
-
-            "cad": {"start_offset": 0,
-                    "fixing_lag": 1,
-                    "day_cnt_flt": 365,
-                    "day_roll": "modified following",
-                    "new_rate_lag": 0},
-
-            "chf": {"start_offset": 2,
-                    "fixing_lag": -1,
-                    "day_cnt_flt": 360,
-                    "day_roll": "modified following",
-                    "new_rate_lag": 0},
-
-            "eur": {"start_offset": 2,
-                    "fixing_lag": 0,
-                    "day_cnt_flt": 360,
-                    "day_roll": "modified following",
-                    "new_rate_lag": 1},
-
-            "gbp": {"start_offset": 0,
-                    "fixing_lag": 0,
-                    "day_cnt_flt": 365,
-                    "day_roll": "modified following",
-                    "new_rate_lag": 1},
-
-            "jpy": {"start_offset": 2,
-                    "fixing_lag": 1,
-                    "day_cnt_flt": 365,
-                    "day_roll": "modified following",
-                    "new_rate_lag": None},
-
-            "nzd": {"start_offset": 2,
-                    "fixing_lag": 0,
-                    "day_cnt_flt": 365,
-                    "day_roll": "modified following",
-                    "new_rate_lag": 0},
-
-            "sek": {"start_offset": 2,
-                    "fixing_lag": -1,
-                    "day_cnt_flt": 360,
-                    "day_roll": "modified following",
-                    "new_rate_lag": 1},
-
-            "usd": {"start_offset": 2,
-                    "fixing_lag": 1,
-                    "day_cnt_flt": 360,
-                    "day_roll": "modified following",
-                    "new_rate_lag": 1}
-        }
-
-        this_setting = all_settings[iso]
-        this_setting.update({"maturity": maturity})
-        this_setting.update({"b_day": calendars.get(iso)})
-
-        return cls(**this_setting)
 
 
 if __name__  == "__main__":
 
-    pass
+    pe = PolicyExpectation.from_pickles(data_path, currency="usd",
+        meetings_pickle="ois_project_events.p", start_dt="2001-12",
+        e_proxy_rate_pickle="implied_rates_1m_ois.p")
+
+    pe.get_vus(10, lambda x: x.rolling(5, min_periods=1).mean().shift(1))
