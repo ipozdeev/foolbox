@@ -2,18 +2,33 @@ from foolbox.api import *
 from utils import parse_bloomberg_excel
 # Parse the following bugger
 file_to_parse = data_path + "ois_2000_2017_d.xlsx"
-out_name = "ois_bloomberg.p"
+out_name = "ois_all_maturities_bloomberg.p"
+out_name_on = "on_ois_rates_bloomberg.p"  # separate file for overnight rates
 
 currencies_to_parse = \
-    ["usd", "eur", "jpy", "chf", "gbp", "aud", "cad", "nzd", "sek"]
-currencies_to_parse = ["chf"]
+    ["aud", "cad", "chf", "eur", "gbp", "jpy", "nzd", "sek", "usd"]
 
-ois_diff_maturities = dict()
-for curr in currencies_to_parse:
-    print(curr)
-    ois_diff_maturities[curr] = \
-        parse_bloomberg_excel(file_to_parse, curr, "tenor")
+# Parse the data
+ois_diff_maturities = parse_bloomberg_excel(file_to_parse, "tenor",
+                                            currencies_to_parse)
 
+# Make columns lower case
+for currency in ois_diff_maturities.keys():
+    ois_diff_maturities[currency].columns = \
+     [col.lower() for col in ois_diff_maturities[currency].columns]
 
+    # Convert to float
+    ois_diff_maturities[currency] = ois_diff_maturities[currency].astype(float)
+
+# Extract the overnight rates for a separate file
+on_rates = pd.concat(
+    [ois_diff_maturities[curr]["on"] for curr in currencies_to_parse], axis=1)
+on_rates.columns = currencies_to_parse
+
+# Dump all maturities together
 with open(data_path + out_name, mode="wb") as halupa:
     pickle.dump(ois_diff_maturities, halupa)
+
+# And on rates separately
+with open(data_path + out_name_on, mode="wb") as halupa:
+    pickle.dump(on_rates, halupa)

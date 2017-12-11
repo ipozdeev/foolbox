@@ -1,6 +1,9 @@
 import pandas as pd
 import numpy as np
 import statsmodels.api as sm
+import matplotlib.pyplot as plt
+import seaborn.apionly as sns
+from foolbox.data_mgmt.set_credentials import *
 
 import rpy2.robjects as robj
 from rpy2.robjects.packages import importr
@@ -26,7 +29,6 @@ class Regression():
     lag_x: int/list
         if some lags of X should be added
     """
-
     def __init__(self, y0, X0, add_constant=False, lag_x=0):
         """ Prepare data for regression
         """
@@ -43,14 +45,16 @@ class Regression():
         if not hasattr(lag_x, "__iter__"):
             lag_x = range(lag_x)
 
-        X = pd.concat([X,]+[X.shift(p) for p in lag_x], axis=1)
+        X = pd.concat([X, ] + [X.shift(p) for p in lag_x], axis=1)
 
         # save originally-shaped inputs
         y_orig = y.copy()
         X_orig = sm.add_constant(X) if add_constant else X.copy()
 
         # align data if needed
-        X, y = X.dropna(how="any").align(y.dropna(), join="inner", axis=0)
+        X, y = X.dropna(how="any").align(y.dropna(how="any"),
+            join="inner",
+            axis=0)
 
         # add constant
         if add_constant:
@@ -63,6 +67,48 @@ class Regression():
         self.X_orig = X_orig
         self.y_orig = y_orig
 
+    def fit(self, **kwargs):
+        """
+        """
+        pass
+
+    def get_yhat(self, original=True):
+        """
+        """
+        if not hasattr(self, "coef"):
+            _ = self.fit()
+
+        if original:
+            yhat = self.X_orig.dot(self.coef).reindex(index=self.y_orig.index)
+        else:
+            yhat = self.X.dot(self.coef)
+
+        # to frame + rename
+        if isinstance(yhat, pd.Series):
+            yhat = yhat.to_frame()
+        yhat.columns = self.Y_names
+
+        self.yhat = yhat
+
+        return yhat.squeeze()
+
+    def get_residuals(self, original=True):
+        """Retrieve residuals from regression."""
+        if not hasattr(self, "yhat"):
+            _ = self.get_yhat(original=original)
+
+        if original:
+            eps = self.y_orig - self.yhat
+        else:
+            eps = self.y - self.yhat
+
+        # rename
+        eps.columns = self.Y_names
+
+        self.eps = eps
+
+        return eps.squeeze()
+
 class PureOls(Regression):
     """
     Performs the purest old-school no-nonsence OLS, inv(X'X)(X'Y), just like
@@ -74,13 +120,14 @@ class PureOls(Regression):
 
         Returns
         -------
-        coef: {(N,), (N, K)} ndarray
-            coefficients of N regressors for K columns in Y
-
+        coef: pandas.DataFrame
+            where (K, N)-th value is coef of asset N w.r.t. factor K
         """
-        coef, _, _, _ = np.linalg.lstsq(self.X.values, self.y.values)
+        coef_arr, _, _, _ = np.linalg.lstsq(self.X.values, self.y.values)
 
-        coef = pd.Series(data=coef.squeeze(), index=self.X_names)
+        coef = pd.DataFrame(data=coef_arr,
+            index=self.X.columns,
+            columns=self.y.columns)
 
         self.coef = coef
 
@@ -120,12 +167,15 @@ class PureOls(Regression):
 
             # tstat
             tstat = coef / se
+            # R-squared
+            rsq = sm.OLS(endog=self.y, exog=self.X).fit().rsquared_adj
 
             # concat and transpose
             res = pd.DataFrame.from_dict({
                 "coef": coef,
                 "se": se,
                 "tstat": tstat}).T
+            res.loc["adj r2", res.columns[0]] = rsq
 
             return res
 
@@ -135,13 +185,13 @@ class PureOls(Regression):
         eps_var = self.eps.var().values
         XX = self.X.T.dot(self.X)
         vcv = eps_var*np.linalg.inv(XX)
-        se = np.diag(vcv).squeeze()
+        se = (np.diag(vcv) ** 0.5).squeeze()
+        se = pd.DataFrame(se, index=self.coef.index, columns=self.coef.columns)
         tstat = self.coef/se
 
-        res = pd.DataFrame(
-            data=np.vstack((self.coef.values, se, tstat.values)),
-            columns=self.X_names,
-            index=["coef", "se", "tstat"])
+        res = pd.concat([self.coef, se, tstat], axis=1).T
+        res.columns = self.X_names
+        res.index = ["coef", "se", "tstat"]
 
         return res
 
@@ -222,107 +272,161 @@ class PureOls(Regression):
 
         return out
 
-    def get_yhat(self, original=True):
+    def hodrick_vcv(self, forecast_horizon):
+        """Computes Hodrick (1992) variance-covariance matrix uder the null
+        hypothesis of no predictability for a regression of the following type:
+
+                    y(t -> t+H) = X(t) * beta + epsilon(t -> t+H),
+
+        where t -> t+H, means that y is forecast H-steps ahead
+
+        Parameters
+        ----------
+        forecast_horizon: int
+            specifying forecast horizon H in the example above
+
+        Returns
+        -------
+        hodrick_vcv: pd.DataFrame
+            with Hodrick (1992) VCV estimate
+
         """
-        """
-        if not hasattr(self, "coef"):
-            _ = self.fit()
+        # Dimensionality of regressors' matrix
+        (T, N) = self.X.shape
 
-        if original:
-            yhat = self.X_orig.dot(self.coef).reindex(index=self.y_orig.index)
-        else:
-            yhat = self.X.dot(self.coef)
+        # Get demeaned residuals from OLS on a constant
+        resids = self.y - self.y.mean()
 
-        # to frame + rename
-        yhat = yhat.to_frame()
-        yhat.columns = self.Y_names
+        # Compute Hodrick's spectral density
+        spectral_density = pd.DataFrame(np.zeros((N, N)), index=self.X.columns,
+                                        columns=self.X.columns)
 
-        self.yhat = yhat
+        # Spectral density for each point in time
+        sd = self.X.rolling(forecast_horizon).sum().shift(1)\
+            .mul(resids.squeeze(), axis=0).dropna()
 
-        return yhat.squeeze()
+        # Get the time average
+        spectral_density = (1 / T) * sd.T.dot(sd)
 
-    def get_residuals(self, original=True):
-        """
-        Retrieves residuals from regression
-        """
-        if not hasattr(self, "yhat"):
-            _ = self.get_yhat(original=original)
+        # Get the 'sandwich' part of vcv, i.e. E[xx']
+        Z = (1 / T) * self.X.T.dot(self.X)
 
-        if original:
-            eps = self.y_orig - self.yhat
-        else:
-            eps = self.y - self.yhat
+        # Get the output
+        hodrick_vcv = \
+            np.linalg.inv(Z).dot(spectral_density).dot(np.linalg.inv(Z)) / T
 
-        # rename
-        eps.columns = self.Y_names
+        hodrick_vcv = pd.DataFrame(hodrick_vcv, index=self.X.columns,
+                                   columns=self.X.columns)
 
-        self.eps = eps
+        return hodrick_vcv
 
-        return eps.squeeze()
 
 class DynamicOLS():
-    """ One-factor (+constant) OLS setting.
-    """
-    def __init__(self, method, y0, x0, **kwargs):
+    """ One-factor (+constant) OLS setting."""
+    def __init__(self, y0, x0):
         """
         """
-        self.method = method
-        self.kwargs = kwargs
+        assert isinstance(x0.squeeze(), pd.Series)
 
-        self.y, self.x = y0.align(x0, join="inner", axis=0)
+        self.y, self.x = y0.align(x0.squeeze(), axis=0, join="inner")
+
+        if isinstance(self.y, pd.Series):
+            if self.y.name is None:
+                self.y.name = "response"
+            self.y = self.y.to_frame()
 
         # add name in case `y` does not have one
-        if self.y.name is None:
-            self.y.name = "response"
         if self.x.name is None:
             self.x.name = "regressor"
 
-    def fit(self):
-        """ Calculate rolling one-factor (+constant) beta of `y` wrt `x`.
+    def fit(self, method, denom=False, **kwargs):
         """
-        x = self.x.copy()
-        y = self.y.copy()
+        Parameters
+        ----------
+        method : str
+            'simple', 'rolling', 'expanding', 'grouped_by';
+            example with grouped_by: by=TimeGrouper(freq='M')
+
+        Returns
+        -------
+        res : pandas.core.generic.NDFrame
+            with betas: DataFrame or Panel, depending on the input
+        """
+        if self.y.shape[1] < 2:
+            res = self.fit_to_series(self.y.squeeze(), self.x,
+                method=method, denom=denom, **kwargs)
+        else:
+            res = {c: self.fit_to_series(self.y.loc[:, c], self.x,
+                method=method, denom=denom, **kwargs) for c in self.y.columns}
+            res = pd.Panel.from_dict(res, orient="minor")
+
+        return res
+
+    @staticmethod
+    def fit_to_series(y, x, method, denom=False, **kwargs):
+        """Calculate rolling one-factor (+constant) beta of a series."""
+
+        assert isinstance(y, pd.Series) & isinstance(x, pd.Series)
 
         # align y and x, keep names (important because of name of `y` mostly)
         yx = pd.concat((y, x), axis=1, ignore_index=False)
 
         # calculate covariance:
         #   items is time, major_axis and minor_axis are y.name + x.columns
-        if self.method == "rolling":
-            roll_cov_yx = yx.rolling(**self.kwargs).cov()
+        if method == "rolling":
+            # rolling covariance
+            roll_cov_yx = yx.rolling(**kwargs).cov()
+
             # calculate beta
-            b = roll_cov_yx.loc[:,y.name,x.name]/\
-                roll_cov_yx.loc[:,x.name,x.name]
-            # add name to `b`
-            b.name = y.name
-            # calculate alpha
-            a = self.y.rolling(**self.kwargs).mean()-\
-                b*self.x.rolling(**self.kwargs).mean()
+            b = roll_cov_yx.loc[:, y.name, x.name]/\
+                roll_cov_yx.loc[:, x.name, x.name]
 
-        elif self.method == "expanding":
-            roll_cov_yx = yx.expanding(**self.kwargs).cov()
+            # calculate alpha
+            a = y.rolling(**kwargs).mean() - b*x.rolling(**kwargs).mean()
+
+            if denom:
+                d = roll_cov_yx.loc[:, x.name, x.name]
+
+        elif method == "expanding":
+            # expanding covariance
+            roll_cov_yx = yx.expanding(**kwargs).cov()
+
             # calculate beta
-            b = roll_cov_yx.loc[:,y.name,x.name]/\
-                roll_cov_yx.loc[:,x.name,x.name]
-            # add name to `b`
-            b.name = y.name
-            # calculate alpha
-            a = self.y.expanding(**self.kwargs).mean()-\
-                b*self.x.expanding(**self.kwargs).mean()
+            b = roll_cov_yx.loc[:, y.name, x.name] /\
+                roll_cov_yx.loc[:, x.name, x.name]
 
-        elif self.method == "grouped_by":
-            # ipdb.set_trace()
-            roll_cov_yx = yx.groupby(**self.kwargs).cov()
-            # TODO: [:,x.name] probably?
-            b = roll_cov_yx[y.name][:,x.name]/\
-                roll_cov_yx[x.name][:,x.name]
-            # add name to `b`
-            b.name = y.name
             # calculate alpha
-            a = self.y.groupby(**self.kwargs).mean()-\
-                b*self.x.groupby(**self.kwargs).mean()
+            a = y.expanding(**kwargs).mean() - b*x.expanding(**kwargs).mean()
 
-        return a, b
+            if denom:
+                d = roll_cov_yx.loc[:, x.name, x.name]
+
+        elif method == "grouped_by":
+            # grouped_by covariance
+            roll_cov_yx = yx.groupby(**kwargs).cov()
+            if roll_cov_yx.index.nlevels > 2:
+                raise ValueError("Ensure the grouper returns two levels!")
+
+            idx = pd.IndexSlice
+
+            b = roll_cov_yx.loc[idx[:, y.name], x.name].xs(
+                y.name, level=1, axis=0) /\
+                roll_cov_yx.loc[idx[:, x.name], x.name].xs(
+                    x.name, level=1, axis=0)
+
+            # calculate alpha
+            a = y.groupby(**kwargs).mean() - b*x.groupby(**kwargs).mean()
+
+            if denom:
+                d = roll_cov_yx.loc[idx[:, x.name], x.name].xs(
+                    x.name, level=1, axis=0)
+
+        res = pd.concat((a.rename("const"), b.rename(x.name)), axis=1)
+
+        if denom:
+            res.loc[:, "denominator"] = d
+
+        return res
 
 def get_dynamic_betas(Y, x, method, **kwargs):
     """
@@ -338,13 +442,239 @@ def get_dynamic_betas(Y, x, method, **kwargs):
 
     return res
 
+class PrincipalComponents():
+    """
+    """
+    def __init__(self, X, n_comps):
+        """
+        """
+        self.X_orig = X.copy()
+        self.X = X.dropna(how="any")
+        self.n_comps = n_comps
+
+    @property
+    def loadings(self):
+        """
+        """
+        return self._loadings
+
+    @loadings.getter
+    def loadings(self):
+        """
+        """
+        if not hasattr(self, "_loadings"):
+            return None
+
+        return self._loadings.loc[:,:("pc_"+str(self.n_comps))]
+
+    def estimate(self):
+        """
+        """
+        # principal components: model
+        # vcv
+        # ipdb.set_trace()
+        vcv = self.X.cov()
+
+        # eigenvalues + -vectors
+        eigval, eigvec = np.linalg.eig(vcv)
+
+        # sort eigenvalues (real is there just in case)
+        arg_sort = np.argsort(-1*np.real(eigval))
+
+        # construct matrix of loadings
+        loadings = pd.DataFrame(
+            data=eigvec[:,arg_sort],
+            index=self.X_orig.columns,
+            columns=["pc_"+str(p) for p in range(1,len(eigval)+1)])
+
+        self._loadings = loadings
+
+    def fit(self, newdata=None):
+        """
+
+        # variance ratio
+        var_ratio = mod.explained_variance_ratio_
+
+        """
+        if not hasattr(self, "_loadings"):
+            self.estimate()
+
+        if newdata is None:
+            newdata = self.X_orig
+
+        # principal components: fit
+        fitted = newdata.dot(self.loadings)
+
+        # X_d.dot(loadings)
+        # mod.fit_transform(X)
+
+        return fitted
+
+    def rotate_components(self, criterion="varimax", **kwargs):
+        """
+        """
+        if not hasattr(self, "_loadings"):
+            self.estimate()
+
+        # compute the new matrix of loadings
+        if criterion == "varimax":
+            new_loadings = self.varimax(self.loadings.values, **kwargs)
+        else:
+            raise NotImplementedError("only varimax currently implemented!")
+
+        # to dataframe
+        new_loadings = pd.DataFrame(
+            data=new_loadings,
+            index=self.X_orig.columns,
+            columns=["pc_"+str(p) for p in range(1,new_loadings.shape[1]+1)])
+
+        self._loadings = new_loadings
+
+    def plot(self, cumsum=False, newdata=None):
+        """
+        """
+        pcs = self.fit(newdata=newdata)
+        lds = self.loadings
+
+        if lds.shape[1] < 2:
+            lds.loc[:,"pc_2"] = 0.0
+
+        # plot
+        f, ax = plt.subplots(3, figsize=(8.4*0.9,11.7*0.9), sharex=False)
+
+        # plot dynamics -----------------------------------------------------
+        if cumsum:
+            pcs.cumsum().plot(ax=ax[0])
+        else:
+            pcs.plot(ax=ax[0])
+
+        ax[0].set_xlabel('', visible=False)
+
+        # ax[0].set_title(k, fontsize=14)
+        # ax[0].legend_.remove()
+
+        # plot structure ----------------------------------------------------
+        # for two components only!
+
+        # plot x-axis
+        ax[1].plot((-1.0,1.0), (0.0,0.0), linewidth=1.5,
+            alpha=0.25, label="pc_1")
+        # plot y-axis
+        ax[1].plot((0.0,0.0), (-1.0,1.0), linewidth=1.5,
+            alpha=0.25, label="pc_2")
+
+        ax[1].set_xlim((-1.0,1.0))
+        ax[1].set_ylim((-1.0,1.0))
+
+        for idx, row in lds.loc[:,:"pc_2"].iterrows():
+            ax[1].scatter(row["pc_1"], row["pc_2"],
+                marker='.', s=10, color='k')
+            ax[1].annotate(r"{}".format(idx),
+                xy=(row["pc_1"], row["pc_2"]+0.025),
+                rotation=45, ha="left", va="bottom")
+
+        # ax[1].set_title("structure")
+        ax[1].legend()
+
+        # correlation structure of the raw data
+        plt.setp(ax[2].get_xticklabels(), rotation=90, fontsize=10)
+        plt.setp(ax[2].get_yticklabels(), rotation=0, fontsize=10)
+
+        sns.heatmap(self.X.corr(),
+            ax=ax[2], center=0, annot=True, linewidths=.25,
+            cmap=sns.cubehelix_palette(light=1, as_cmap=True))
+
+        # ax[2].set_title("correlation between factors")
+
+        return ax, f
+
+    @staticmethod
+    def varimax(Phi, gamma = 1.0, q = 10, tol = 1e-6):
+        """
+        """
+        p,k = Phi.shape
+        R = np.eye(k)
+        d=0
+        for i in range(q):
+            d_old = d
+            Lambda = np.dot(Phi, R)
+            u,s,vh = np.linalg.svd(np.dot(Phi.T,np.asarray(Lambda)**3 - \
+                (gamma/p)*np.dot(Lambda,
+                    np.diag(np.diag(np.dot(Lambda.T,Lambda))))))
+            R = np.dot(u,vh)
+            d = np.sum(s)
+            if d_old!=0 and d/d_old < 1 + tol: break
+
+        return np.dot(Phi, R)
+
 if __name__ == '__main__':
     pass
     X = pd.DataFrame(data=np.random.normal(size=(1000, 2)), columns=["x", "e"])
-    y = X.dot(pd.Series(data=[2, 0.5], index=X.columns))
+    y = X.dot(pd.Series(data=[0.5, 0.5], index=X.columns))
     y.name = "y"
     mod = PureOls(y, X[["x"]], add_constant=True)
+    vcv = mod.hodrick_vcv(1)
+    print(np.diag(vcv)**0.5)
+    mod.fit()
     print(mod.get_diagnostics())
+
+    mu = 0.08
+    theta = 0.70
+    sigma = 0.16
+    dt = 1/12
+    T = 500
+    M = int(T/dt)
+    r0 = (theta * mu * dt) / (1-theta * dt) # start from unconditional mean
+
+    N = 100
+    out = pd.DataFrame(np.nan, index=range(N), columns=["simple", "hodrick"])
+    for n in np.arange(0, N):
+        ret = pd.Series([r0]*M)
+        epsilon = np.random.standard_normal((M,))
+        for t in np.arange(1, M):
+            ret[t] = mu * (theta - ret[t-1]) * dt + \
+                     np.sqrt(dt) * sigma * epsilon[t]
+
+        y = ret.rolling(6).sum()
+        y.name = "y"
+
+        z = pd.DataFrame(np.random.standard_normal((M, 1)), columns=["x"])
+        mod = PureOls(y, z[["x"]], add_constant=True)
+
+        vcv = mod.hodrick_vcv(6)
+        se_h = vcv.loc["x", "x"] ** 0.5
+        mod.fit()
+        se_s = mod.get_diagnostics(HAC=False).loc["se", "x"]
+
+        out.loc[n, "hodrick"] = se_h
+        out.loc[n, "simple"] = se_s
+        print(n)
+
+
     print(mod.linear_restrictions_test(
         pd.DataFrame([[1, 0], [0, 1]], columns=["const", "x"]),
         pd.Series([0, 2])))
+
+    Y = pd.concat((y,y), axis=1)
+    np.linalg.lstsq(X.values, y.values)
+
+    X.index = pd.date_range("2000-01-01", periods=1000, freq="B")
+    y.index = pd.date_range("2000-01-01", periods=1000, freq="B")
+    mod = DynamicOLS(y0=y, x0=X.loc[:, "x"])
+    from pandas.tseries.resample import TimeGrouper
+    lol=mod.fit(method="grouped_by", by=TimeGrouper(freq='M'))
+    idx = pd.IndexSlice
+    lol["y", :]
+    lol.loc[idx[:, :, 'x'], :]
+    lol[y.name][:, 'x']
+    lol.index.get_level_values(0)
+
+    lol.loc[idx[:, :, "x"], :]
+
+    lol.index.droplevel()
+
+    lol.loc[idx[:, "y"], "x"].index.droplevel(1)
+
+    lol.loc[idx[:, "y"], "x"].xs("y", level=1, axis=0)
+
+    lol.loc[(slice(None), 'x'), 'x']

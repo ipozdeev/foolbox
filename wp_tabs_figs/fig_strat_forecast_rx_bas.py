@@ -167,6 +167,13 @@ fcst_strat.columns = ["fcst"]
 descr_fcst = taf.descriptives(
     pd.concat([strat_ret, usd_ret], axis=1).mean(axis=1).to_frame(), 1)
 
+# Drop the period from June 2008 to June 2009, repeat descriptives
+tmp_df_descr = pd.concat([strat_ret, usd_ret], axis=1).mean(axis=1).to_frame()
+tmp_df_descr = pd.concat([tmp_df_descr[:"2008-06"],
+                          tmp_df_descr["2009-06":]], axis=0)
+tmp_df_descr = taf.descriptives(tmp_df_descr, 1)
+
+
 
 # Construct the perfect foresight, forecastablility consistent signals
 # Start with all countries

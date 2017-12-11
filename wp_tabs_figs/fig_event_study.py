@@ -15,85 +15,47 @@ majorLocator = MultipleLocator(5)
 # matplotlib settings -------------------------------------------------------
 plt.rc("font", family="serif", size=12)
 gr_1 = "#8c8c8c"
+# gr_2 = "#595959"
 
 # %matplotlib
 
 def fig_event_study(events, ret, direction,
-    wght="equal",
+    mean_type="count_weighted",
     ci_width=0.95,
+    normal_data=0.0,
     window=(-10,-1,1,5)):
     """
     """
     # unpack window
-    wa,wb,wc,wd = window
+    wa, wb, wc, wd = window
 
-    # space for -------------------------------------------------------------
-    # variances
-    avg_vars = pd.Series(index=events.columns)*np.nan
-    # cumsums
-    cumsums = pd.DataFrame(
-        columns=events.columns,
-        index=np.concatenate((np.arange(wa,wb+1), np.arange(wc,wd+1))))*np.nan
-    # number of events
-    n_events = pd.Series(index=events.columns)*np.nan
+    # choose direction
+    if direction == "cut":
+        events = events.copy().where(events < 0).dropna(how="all")
+    elif direction == "hike":
+        events = events.copy().where(events > 0).dropna(how="all")
+    else:
+        raise ValueError("Not implemented.")
 
-    # loop over currencies --------------------------------------------------
-    for cur in events.columns:
-        # cur = "jpy"
-        # fetch this event
-        this_evt = events.loc[:,cur].dropna()
+    es = EventStudy(data=ret,
+        events=events,
+        window=window,
+        mean_type=mean_type,
+        normal_data=normal_data,
+        x_overlaps=True)
 
-        # signal
-        this_sig = (this_evt < 0) if direction == "cuts" else (this_evt > 0)
+    cumsums = es.evt_avg_ts_sum.mean(axis="items")
+    cumsums.loc[0, :] = np.nan
+    cumsums = cumsums.sort_index()
 
-        # fetch return
-        this_ret = ret[cur]*100
+    # ci_2 = es.get_ci(ps=0.9, method="simple")
+    ci = es.get_ci(ps=ci_width, method="simple")
+    # ci.loc[0, :] = np.nan
+    # ci = ci.sort_index()
 
-        # run event study
-        this_es = event_study_wrapper(this_ret, this_evt,
-            reix_w_bday=False,
-            direction=direction,
-            crisis="both",
-            window=window,
-            ci_method="simple",
-            plot=False,
-            impose_mu=0.0)
-
-        # store
-        cumsums.loc[:,cur] = this_es.get_cs_ts(this_es.before, this_es.after)
-        avg_vars.loc[cur] = this_es.grp_var.sum()/this_es.grp_var.count()**2
-        n_events.loc[cur] = this_evt.where(this_sig).dropna().count()
-
-    # reindex to delete the missing observarions
-    cumsums = cumsums.reindex(index=np.arange(wa,wd+1))
-    cumsum_a = cumsums.iloc[0,:]
-    cumsum_d = cumsums.iloc[-1,:]
-
-    # average across event-currency pairs -----------------------------------
-    if wght == "equal":
-        w = pd.Series(1.0, index=cumsums.columns)/len(cumsums.columns)
-    elif wght == "by_event":
-        w = n_events/n_events.sum()
-
-    # confidence interval ---------------------------------------------------
-    cl = (1-ci_width)/2
-    ch = ci_width + cl
-
-    # average std of CARs
-    # avg_avg_std = np.sqrt(avg_vars.sum()/avg_vars.count()**2)
-    avg_avg_std = np.sqrt(avg_vars.dot(w**2))
-
-    # sqrt of multiples
-    q = np.sqrt(np.hstack(
-        (np.arange(-(wa)+(wb)+1,0,-1), np.arange(1,(wd)-(wc)+2))))
-
-    ci_lo = norm.ppf(cl)*q*avg_avg_std
-    ci_hi = norm.ppf(ch)*q*avg_avg_std
-
-    ci = pd.DataFrame(index=cumsums.dropna().index, columns=[cl,ch])
-
-    ci.loc[:,cl] = ci_lo
-    ci.loc[:,ch] = ci_hi
+    the_mean = es.the_mean.copy()
+    the_mean.loc[0] = np.nan
+    the_mean = the_mean.sort_index()
 
     # plot ------------------------------------------------------------------
     # plot individual
@@ -101,7 +63,6 @@ def fig_event_study(events, ret, direction,
 
     # individual currencies
     cumsums.plot(ax=ax_individ, color=gr_1)
-    # cumsums[drop_what].plot(ax=ax[0], color=gr_1, linestyle='--')
 
     # black dots at the "inception"
     cumsums.loc[[wb],:].plot(ax=ax_individ, color="k",
@@ -112,27 +73,31 @@ def fig_event_study(events, ret, direction,
     ax_individ.legend_.remove()
 
     # plot ------------------------------------------------------------------
-    # plot individual
+    # plot average
     fig_avg, ax_avg = plt.subplots(figsize=(8.4,11.7/3))
 
-    cumsums.dot(w).plot(ax=ax_avg, color='k', linestyle="-", linewidth=1.5)
-    # cumsums.drop(drop_what, axis=1).mean(axis=1).plot(
-    #     ax=ax[1], color='k', linewidth=1.5)
+    the_mean.plot(ax=ax_avg, color='k', linestyle="-", linewidth=1.5)
 
     # plot confidence interval
-    ax_avg.fill_between(cumsums.dropna().index,
-        ci.iloc[:,0].values,
-        ci.iloc[:,1].values,
+    ax_avg.fill_between(es.the_mean.index,
+        es.ci.iloc[:,0].values,
+        es.ci.iloc[:,1].values,
         color=gr_1, alpha=0.5, label="conf. interval")
+    # ax_avg.fill_between(es.the_mean.index,
+    #     ci_2.iloc[:,0].values,
+    #     ci_2.iloc[:,1].values,
+    #     color=gr_2, alpha=0.5, label="conf. interval")
 
     # final retouche --------------------------------------------------------
     furbish_plot(ax_individ, arrows=True,
-        tot_curs={"a": cumsum_a, "d": cumsum_d})
+        tot_curs={"a": cumsums.iloc[0, :], "d": cumsums.iloc[-1, :]})
 
     furbish_plot(ax_avg, set_xlabel=True, arrows=False)
     black_line = mlines.Line2D([], [],
         linewidth=1.5, color='k', label="cross-currency CAR")
     gray_patch = mpatches.Patch(color=gr_1, label='95% conf. int.')
+    # gray_patch_2 = mpatches.Patch(color=gr_2, label='90% conf. int.')
+    # lines = [black_line, gray_patch, gray_patch_2]
     lines = [black_line, gray_patch]
     labels = [line.get_label() for line in lines]
     ax_avg.legend(lines, labels, fontsize=12, loc="upper right")
@@ -245,7 +210,8 @@ if __name__ == "__main__":
 
     # data path -------------------------------------------------------------
     data_path = set_credentials.gdrive_path("research_data/fx_and_events/")
-    out_path = set_credentials.gdrive_path("opec_meetings/tex/figs/")
+    out_path = set_credentials.gdrive_path(
+        "research_data/fx_and_events/wp_figures_limbo/")
 
     # currency to drop
     drop_curs = settings["drop_currencies"]
@@ -262,7 +228,7 @@ if __name__ == "__main__":
     with open(data_path + settings["fx_data"], mode='rb') as fname:
         fx_data = pickle.load(fname)
 
-    ds = np.log(fx_data["spot_mid"]).diff()
+    ds = np.log(fx_data["spot_mid"]).diff()*100
     ds = ds.loc[s_dt:e_dt, :]
 
     # events ----------------------------------------------------------------
@@ -272,67 +238,63 @@ if __name__ == "__main__":
     events = events_data["joint_cbs"]
     events = events.loc[s_dt:e_dt, :]
 
+    # fomc --------------------------------------------------------------
+    with open(data_path + "fx_by_tz_sp_fixed.p", mode='rb') as fname:
+        fx_data_us = pickle.load(fname)
+    ret_fomc = np.log(fx_data_us["spot_mid"].loc[:, :, "NYC"]\
+        .drop(drop_curs, axis=1, errors="ignore")).diff()*100
+
+    fomc = pd.concat([events.loc[:, "usd"], ]*\
+        events.drop(drop_curs + ["usd"], axis=1, errors="ignore").shape[1],
+            axis=1)*-1
+    fomc.columns = events.drop(
+        drop_curs + ["usd"], axis=1, errors="ignore").columns
+
     # loop over direction of rate decision: "ups" or "downs"
-    for d in ["ups", "downs"]:
-        # d = "downs"
+    for d in ["hike", "cut"]:
+        # d = "cut"
         # and over counter currencies
-        for c in ["usd", "jpy", "gbp"]:
-            # c = "jpy"
-            ret = into_currency(ds, c).drop(
-                [p for p in drop_curs if p != c], axis=1, errors="ignore"))
-            ret = ds
+        for c in ["jpy", "gbp"]:
+            # c = "usd"
+            # trim returns
+            this_ret = into_currency(ds, c).drop(
+                [p for p in drop_curs if p != c], axis=1, errors="ignore")
 
+            # and events accordingly
+            this_evt = events.loc[:, this_ret.columns]
 
+            # event study ---------------------------------------------------
+            f_i, f_a = fig_event_study(this_evt, this_ret,
+                direction=d,
+                mean_type="count_weighted",
+                ci_width=0.95,
+                normal_data=0.0
+                window=window)
 
-        events_perf = events_perf.loc[s_dt:e_dt]
+            # save ----------------------------------------------------------
+            f_i.tight_layout()
+            f_a.tight_layout()
 
-        # # events: forecast ------------------------------------------------------
-        # events_fcast = events_perf.drop(["nok",], axis=1)*np.nan
-        # for cur in events_fcast.columns:
-        #     # cur = "sek"
-        #     pe = PolicyExpectation.from_pickles(data_path, cur)
-        #     events_fcast.loc[:,cur] = pe.forecast_policy_change(
-        #         lag=lag,
-        #         threshold=settings["base_threshold"],
-        #         avg_impl_over=settings["avg_impl_over"],
-        #         avg_refrce_over=settings["avg_refrce_over"])
+            f_i.savefig(out_path +\
+                '_'.join(("xxx", c,  "before", d, "wght_indv.pdf")))
+            f_a.savefig(out_path +\
+                '_'.join(("xxx", c,  "before", d, "wght_avg.pdf")))
 
-        # fomc ------------------------------------------------------------------
-        with open(data_path + "fx_by_tz_sp_fixed.p", mode='rb') as fname:
-            fx_all = pickle.load(fname)
-        ret_fomc = np.log(fx_all["spot_mid"].loc[:,:,"NYC"]\
-            .drop(drop_curs,axis=1,errors="ignore")).diff()
-
-        fomc = events["joint_cbs"].loc[:,"usd"]
-        fomc = pd.concat([fomc,]*events_perf.shape[1], axis=1)
-        fomc.columns = events_perf.columns
-        fomc = fomc.loc[s_dt:e_dt]
-
-        # event study -----------------------------------------------------------
-        f_i, f_a = fig_event_study(events_perf, ret,
-            direction=direction,
-            wght="by_event",
-            ci_width=0.95,
-            window=window)
-
-        # fomc ------------------------------------------------------------------
-        f_i, f_a = fig_event_study(fomc, ret_fomc,
-            direction=direction,
-            wght="by_event",
-            ci_width=0.95,
-            window=window)
-
-        # save ------------------------------------------------------------------
-        f_i.tight_layout()
-        f_a.tight_layout()
-
-        f_i.savefig(
-            out_path+"xxxusd_before_"+direction+"_weighted_indiv.pdf",
-            bbox_inches="tight")
-        f_a.savefig(
-            out_path+"xxxusd_before_"+direction+"_weighted_avg.pdf",
-            bbox_inches="tight")
-
+            # fomc ----------------------------------------------------------
+            if c == "usd":
+                f_i_fomc, f_a_fomc = fig_event_study(fomc, ret_fomc,
+                    direction=d,
+                    mean_type="count_weighted",
+                    ci_width=0.95,
+                    window=window)
+                f_i_fomc.tight_layout()
+                f_a_fomc.tight_layout()
+                f_i_fomc.savefig(out_path +\
+                    '_'.join(
+                        ("xxx", c,  "before", "fomc", d, "wght_indv.pdf")))
+                f_a_fomc.savefig(out_path +\
+                    '_'.join(
+                        ("xxx", c,  "before", "fomc", d, "wght_avg.pdf")))
 
 
 # # event study for all banks in a loop ---------------------------------------

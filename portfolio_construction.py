@@ -1021,7 +1021,8 @@ def risk_parity(returns, volas):
 
     return risk_parity
 
-def get_carry(pickle_name, key_name="spot_ret", transform=None, n_portf=3):
+def get_carry(pickle_name, key_name="spot_ret", transform=None,
+    x_curs=[], n_portf=3):
     """ Construct carry using sorts on forward discounts.
     """
     if transform is None:
@@ -1032,8 +1033,8 @@ def get_carry(pickle_name, key_name="spot_ret", transform=None, n_portf=3):
     with open(data_path + pickle_name + ".p", mode='rb') as fname:
         data = pickle.load(fname)
 
-    s = data[key_name]
-    f = data["fwd_disc"]
+    s = data[key_name].drop(x_curs, axis=1, errors="ignore")
+    f = data["fwd_disc"].drop(x_curs, axis=1, errors="ignore")
 
     pfs = rank_sort(s, transform(f).shift(1), n_portfolios=n_portf)
 

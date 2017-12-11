@@ -889,6 +889,7 @@ if __name__ == "__main__":
     # Set the output path, input data and sample
     start_date = pd.to_datetime(settings["sample_start"])
     end_date = pd.to_datetime(settings["sample_end"])
+    drop_curs = settings["drop_currencies"]
     avg_impl_over = settings["avg_impl_over"]
     avg_refrce_over = settings["avg_refrce_over"]
     base_lag = settings["base_holding_h"] + 2
@@ -907,7 +908,7 @@ if __name__ == "__main__":
             "ask": data_d["tnswap_ask"].loc[:, start_date:, "NYC"]}
             )
 
-    fx_tr_env.drop(labels=["dkk"], axis="minor_axis", errors="ignore")
+    fx_tr_env.drop(labels=drop_curs, axis="minor_axis", errors="ignore")
     fx_tr_env.remove_swap_outliers()
     fx_tr_env.reindex_with_freq('D')
     fx_tr_env.align_spot_and_swap()
@@ -919,7 +920,7 @@ if __name__ == "__main__":
     dr = -1*np.log((fdisc_d + spot_d)/spot_d).rolling(22).mean()
 
     fx_tr_str_carry = FXTradingStrategy.monthly_from_daily_signals(
-        signals_d=dr.drop("dkk", axis=1), n_portf=3, leverage="net")
+        signals_d=dr, n_portf=3, leverage="net")
 
     # ois-implied forecasts
     curs = [p for p in dr.columns if p not in ["dkk", "nok", "jpy"]]
@@ -930,6 +931,16 @@ if __name__ == "__main__":
         avg_impl_over=avg_impl_over,
         avg_refrce_over=avg_refrce_over,
         bday_reindex=True)
+
+    signals_fomc = get_pe_signals(curs, base_lag, base_th*100, data_path,
+        fomc=True,
+        avg_impl_over=avg_impl_over,
+        avg_refrce_over=avg_refrce_over,
+        bday_reindex=True)
+
+    signals_fcast, signals_fomc = signals_fcast.align(signals_fomc, axis=0,
+        join="outer")
+    signals_fcast = signals_fcast.fillna(signals_fomc)
 
     signals_fcast.loc[:, "nok"] = np.nan
     signals_fcast.loc[:, "jpy"] = np.nan
@@ -942,14 +953,25 @@ if __name__ == "__main__":
 
     combined_strat = fx_tr_str_carry + strategy_fcast
 
-    # fx_tr = FXTrading(environment=fx_tr_env, strategy=fx_tr_str_carry)
-    # fx_tr = FXTrading(environment=fx_tr_env, strategy=strategy_fcast)
+    fx_tr = FXTrading(environment=fx_tr_env, strategy=fx_tr_str_carry)
+    fx_tr = FXTrading(environment=fx_tr_env, strategy=strategy_fcast)
     fx_tr = FXTrading(environment=fx_tr_env, strategy=combined_strat)
 
-    res_unr = fx_tr.backtest("unrealiz")
-    res_bal = fx_tr.backtest("balance")
+    car = fx_tr.backtest("unrealiz")
+    strat = fx_tr.backtest("unrealiz")
 
-    res_unr.dropna().plot()
+    car.dropna().plot()
+    strat.dropna().plot()
+    strat = strat.loc[
+        strategy_fcast.position_flags.dropna(how="all").index]
+
+    car_r = np.log(car).diff()
+    strat_r = np.log(strat).diff()
+
+    pd.concat((car_r, strat_r), axis=1).cumsum().plot()
+
+    pd.concat((car_r, strat_r), axis=1).corr()
+
     taf.descriptives(np.log(res_unr.dropna()).diff().to_frame()*100, scale=1)
 
     res_bal.dropna().plot()
