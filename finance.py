@@ -1468,6 +1468,7 @@ def event_trading_backtest(fx_data, holding_range, threshold_range,
                 signals=signals,
                 prices={"mid": spot_mid, "bid": spot_bid, "ask": spot_ask},
                 settings=trade_strat_settings)
+            strat = EventTradingStrategy
 
             # Adjust for transaction costs and swap points, get returns
             strat = strat.bas_adjusted()\
@@ -1523,13 +1524,19 @@ def get_pe_signals(currencies, lag, threshold, data_path, fomc=False,
         of predicted policy changes (+1 - hike, 0 - no change, -1 - cut)
 
     """
+    # Transformation applied to reference and implied rates
+    map_expected_rate = lambda x: x.rolling(kwargs["avg_impl_over"]).mean()
+    map_proxy_rate = lambda x: x.rolling(kwargs["avg_refrce_over"]).mean()
+
     # For the US get the fomc announcements and use them for every currency
     if fomc:
         # Construct signals for the dollar index
         us_pe = PolicyExpectation.from_pickles(data_path, "usd")
         us_fcast = \
-            us_pe.forecast_policy_change(lag=lag, threshold=threshold/100,
-                                         **kwargs)
+            us_pe.forecast_policy_direction(
+                lag=lag, h_low=threshold/100,
+                map_proxy_rate=map_proxy_rate,
+                map_expected_rate=map_expected_rate)
 
         # Create inverse signals for every currency around FOMC announcements
         signals = pd.concat([-1*us_fcast]*len(currencies), axis=1)
@@ -1541,11 +1548,18 @@ def get_pe_signals(currencies, lag, threshold, data_path, fomc=False,
         # Get signals for each currency in the list
         for curr in currencies:
             tmp_pe = PolicyExpectation.from_pickles(data_path, curr)
+            # policy_fcasts.append(
+            #     tmp_pe.forecast_policy_change(lag=lag,threshold=threshold/100,
+            #                                   **kwargs))
             policy_fcasts.append(
-                tmp_pe.forecast_policy_change(lag=lag,threshold=threshold/100,
-                                              **kwargs))
+                tmp_pe.forecast_policy_direction(
+                    lag=lag, h_low=threshold/100,
+                    map_proxy_rate=map_proxy_rate,
+                    map_expected_rate=map_expected_rate))
+
         # Pool signals into a single dataframe
         signals = pd.concat(policy_fcasts, join="outer", axis=1)
+        signals.columns = currencies
 
     return signals
 
