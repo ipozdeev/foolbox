@@ -307,7 +307,7 @@ class PolicyExpectation():
         proxy_rate_data = pd.read_pickle(data_path + proxy_rate_pickle)
         # proxy_rate = proxy_rate_data[currency].loc[start_dt:, "ON"].rename(
         #     currency)
-        proxy_rate = proxy_rate_data["on"].loc[start_dt:, currency]
+        proxy_rate = proxy_rate_data[currency].loc[start_dt:, "ON"]
 
         # implied rates
         e_proxy_rate_data = pd.read_pickle(data_path + e_proxy_rate_pickle)
@@ -1547,7 +1547,8 @@ def get_pe_signals(currencies, lag, threshold, data_path, fomc=False,
         policy_fcasts = list()
         # Get signals for each currency in the list
         for curr in currencies:
-            tmp_pe = PolicyExpectation.from_pickles(data_path, curr)
+            tmp_pe = PolicyExpectation.from_pickles(data_path,
+                proxy_rate_pickle="ois_bloomberg.p", currency=curr)
             # policy_fcasts.append(
             #     tmp_pe.forecast_policy_change(lag=lag,threshold=threshold/100,
             #                                   **kwargs))
