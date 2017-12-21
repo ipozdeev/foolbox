@@ -315,6 +315,7 @@ def parse_bloomberg_excel(filename, colnames_sheet, data_sheets):
     """
     if isinstance(data_sheets, str):
         data_sheets = [data_sheets, ]
+        flag_single_input = True
 
     # converter for date
     def converter(x):
@@ -365,6 +366,10 @@ def parse_bloomberg_excel(filename, colnames_sheet, data_sheets):
 
         # concat
         all_data[s] = pd.concat(new_data_df, axis=1, join="outer")
+
+    # if only one sheet was asked for
+    if flag_single_input:
+        all_data = list(all_data.values())[0]
 
     return all_data
 
