@@ -216,9 +216,5 @@ if __name__ == "__main__":
     # with open(data_path + "implied_rates_from_1m_libor.p", mode="wb") as h:
     #     pickle.dump(ir, h)
 
-    # # from libor in a smart ois way -----------------------------------------
-    # ir = calculate_libor_implied_rates_smart(libor_1m, libor_on, events)
-    #
-    # with open(data_path + "implied_rates_from_1m_libor_smart.p", mode="wb") \
-    #     as h:
-    #     pickle.dump(ir, h)
+    with open(data_path + "implied_rates_1m_libor.p", mode="wb") as h:
+        pickle.dump(ir, h)

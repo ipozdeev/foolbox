@@ -74,7 +74,7 @@ def fetch_the_data(path_to_data, drop_curs=[], align=False, add_usd=False):
     return prices, swap_points
 
 
-def align_and_fillna(data, reindex_freq=None, **kwargs):
+def align_and_fillna(data, reindex_freq=None, common_index="outer", **kwargs):
     """
     Parameters
     ----------
@@ -82,6 +82,9 @@ def align_and_fillna(data, reindex_freq=None, **kwargs):
         of pandas.DataFrames or pandas.Series
     reindex_freq : str
         pandas frequency string, e.g. 'B' for business day
+    common_index: str
+        argument of 'pd.concat()' inner or outer index concatenation. Default
+        is outer
     kwargs : dict
         arguments to .fillna()
     """
