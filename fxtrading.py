@@ -2,7 +2,7 @@ import pandas as pd
 import numpy as np
 import warnings
 from foolbox import portfolio_construction as poco
-# import ipdb
+
 
 class StrategyFactory():
     """Factory for constructing strategies."""
@@ -67,6 +67,7 @@ class StrategyFactory():
         actions = position_weights.diff().shift(-1)
 
         return actions
+
 
 class FXTradingStrategy():
     """
@@ -254,6 +255,7 @@ class FXTradingStrategy():
             np.sign(new_strat.position_weights)
 
         return new_strat
+
 
 class FXTradingEnvironment():
     """
@@ -668,6 +670,7 @@ class FXPortfolio():
 
         return res
 
+
 class FXPosition():
     """Position in foreign currency vs.
 
@@ -911,7 +914,7 @@ if __name__ == "__main__":
 
     fx_tr_env.drop(labels=["dkk"], axis="minor_axis", errors="ignore")
     fx_tr_env.remove_swap_outliers()
-    fx_tr_env.reindex_with_freq('D')
+    fx_tr_env.reindex_with_freq('B')
     fx_tr_env.align_spot_and_swap()
     fx_tr_env.fillna(which="both", method="ffill")
 
@@ -945,7 +948,6 @@ if __name__ == "__main__":
 
     signals_fcast, signals_fomc = signals_fcast.align(signals_fomc, axis=0,
         join="outer")
-    signals_fcast = signals_fcast.fillna(signals_fomc)
 
     signals_fcast = signals_fcast.loc[start_date:end_date].reindex(
         index=pd.date_range(start_date, end_date, freq='B'))
