@@ -15,7 +15,7 @@ if __name__ == "__main__":
 
     # Set up the parameters of trading strategies
     holding_range = [1, 5, 10, 15]
-    threshold_range = [5, 10, 15, 20]
+    threshold_range = [10, 15, 20]
     scale_to = 10  # rescale returns to 'scale_to' holding period
 
     # Policy expectations keyword arguments
@@ -81,5 +81,21 @@ ret_xus = event_trading_backtest(fx_data, holding_range, threshold_range,
 
 ret_us = event_trading_backtest(fx_data_us, holding_range, threshold_range,
                                 data_path, fomc=True, **pol_exp_args)["aggr"]
+
+# Get the all-events returns
+ret_all = ret_xus.add(ret_us, axis=1)\
+    .fillna(value=ret_xus).fillna(value=ret_us)[start_date:end_date]
+
+descr = pd.concat(
+    [taf.descriptives(ret_all[[k]].dropna() * 10000, scale=1)
+     for k in ret_all.columns],
+    axis=1)
+
+
+descr = pd.concat(
+    [taf.descriptives(
+        pd.concat([ret_xus[[k]],ret_us[[k]]], axis=1).mean(axis=1).to_frame(k),
+        scale=1) for k in ret_xus.columns],
+    axis=1)
 
 print("kek")
