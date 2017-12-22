@@ -134,7 +134,7 @@ class EventStudy():
             # rolling mean
             normal_data = data.rolling(**kwargs).mean()
             normal_data = normal_data.shift(-ta+1).where(events.notnull())
-            normal_data = normal_data.dropna(how="all")
+            normal_data = normal_data.loc[events.index]
 
         elif norm_data_method == "between_events":
             # between event windows; the idea is to use a temp EventStudy
