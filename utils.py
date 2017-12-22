@@ -319,6 +319,8 @@ def parse_bloomberg_excel(filename, colnames_sheet, data_sheets):
     if isinstance(data_sheets, str):
         data_sheets = [data_sheets, ]
         flag_single_input = True
+    else:
+        flag_single_input = False
 
     # converter for date
     def converter(x):
@@ -331,11 +333,11 @@ def parse_bloomberg_excel(filename, colnames_sheet, data_sheets):
     # if data_sheets is None, read in all sheets
     if data_sheets is None:
         data_dict_full = pd.read_excel(filename,
-            sheetname=None,
+            sheet_name=None,
             header=0)
     else:
         data_dict_full = pd.read_excel(filename,
-            sheetname=data_sheets+[colnames_sheet],
+            sheet_name=data_sheets+[colnames_sheet],
             header=0)
 
     # fetch column names from respective sheet
