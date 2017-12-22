@@ -8,24 +8,29 @@ def fetch_datastream_ois_data(data_path=None):
         data_path = set_credentials.set_path("research_data/fx_and_events/")
 
     # Parse the following bugger
-    file_to_parse = data_path + "ois_data.xlsm"
+    file_to_parse = data_path + "ois_tr_icap_1999_2017_d.xlsm"
 
     # Define the file name for pickling
-    pickle_name = "ois_datastream.p"
+    pickle_name = "ois_tr_icap_1m_3m.p"
 
     # Load sheets from excel into a dictionary of dataframes
     raw_data = pd.read_excel(file_to_parse, sheetname=None, index_col=0)
 
+    # columns to lowercase
+    for key in raw_data.keys():
+        raw_data[key].columns = [col.lower() for col in raw_data[key].columns]
+
     # Populate the output
     ois_data = dict()
 
-    ois_data["tr_1m"] = raw_data["ois_1m_tr"]
-    ois_data["tr_3m"] = raw_data["ois_3m_tr"]
-    ois_data["icap_1m"] = raw_data["ois_1m_icap"]
-    ois_data["icap_3m"] = raw_data["ois_3m_icap"]
-
-    for key in ois_data.keys():
-        ois_data[key].columns = [col.lower() for col in ois_data[key].columns]
+    ois_data["tr"] = {
+        "1m": raw_data["ois_1m_tr"],
+        "3m": raw_data["ois_3m_tr"]
+    }
+    ois_data["icap"] = {
+        "1m": raw_data["ois_1m_icap"],
+        "3m": raw_data["ois_3m_icap"]
+    }
 
     # Pickle the bastard
     with open(data_path + pickle_name, mode="wb") as fname:
@@ -40,22 +45,36 @@ def fetch_bloomberg_ois_data(data_path=None):
 
     fname = data_path + "ois_2000_2017_d.xlsx"
 
+    curs = ["aud", "cad", "chf", "eur", "gbp", "jpy", "nzd", "sek", "usd"]
+
     # read in ---------------------------------------------------------------
     ois_data = parse_bloomberg_excel(
         filename=fname,
         colnames_sheet="tenor",
-        data_sheet=["aud", "cad", "chf", "eur","gbp", "jpy", "nzd", "sek",
-            "usd"])
+        data_sheets=curs)
+
+    # pivot -----------------------------------------------------------------
+    ois_data_xarr = {(tau.lower(), c.lower()): ois_data[c].loc[:, tau]
+                     for c in ois_data.keys() for tau in ois_data[c].columns}
+    ois_data_xarr = pd.DataFrame(ois_data_xarr).astype(float)
+
+    ois_data_dict = {
+        k: ois_data_xarr.loc[:, k] for k in ois_data_xarr.columns.levels[0]
+    }
 
     # Pickle the bastard ----------------------------------------------------
     # Define the file name for pickling
-    pickle_name = "ois_bloomberg.p"
+    on_pickle_name = "overnight_rates.p"
+    ois_pickle_name = "ois_bloomi_1w_30y.p"
 
-    with open(data_path + pickle_name, mode="wb") as fname:
-        pickle.dump(ois_data, fname)
+    with open(data_path + on_pickle_name, mode="wb") as fname:
+        pickle.dump(ois_data_dict.pop("on"), fname)
+    with open(data_path + ois_pickle_name, mode="wb") as fname:
+        pickle.dump(ois_data_dict, fname)
 
-def merge_ois_data(datastream_pkl=None, bloomberg_pkl=None, maturity='1M',
-    priority="bit"):
+
+def merge_ois_data(ds_pkl=None, bloomi_pkl=None, priority="bit",
+                   data_path=None):
     """
     Parameters
     ----------
@@ -63,57 +82,59 @@ def merge_ois_data(datastream_pkl=None, bloomberg_pkl=None, maturity='1M',
         of 3 letter: 'i' for ICAP, 't' for Thomson Reuters and 'b' for Bloomi;
         the order that the letters obey determines the priority
     """
-    if datastream_pkl is None:
+    if data_path is None:
         data_path = set_credentials.set_path("research_data/fx_and_events/")
-        datastream_pkl = data_path + "ois_datastream.p"
 
-    if bloomberg_pkl is None:
-        data_path = set_credentials.set_path("research_data/fx_and_events/")
-        bloomberg_pkl = data_path + "ois_bloomberg.p"
+    if ds_pkl is None:
+        ds_pkl = data_path + "ois_tr_icap_1m_3m.p"
+
+    if bloomi_pkl is None:
+        bloomi_pkl = data_path + "ois_bloomi_1w_30y.p"
 
     # read in both
-    with open(datastream_pkl, mode='rb') as fname:
-        ois_datastream = pickle.load(fname)
-    with open(bloomberg_pkl, mode='rb') as fname:
-        ois_bloomberg = pickle.load(fname)
+    ois_ds = pd.read_pickle(ds_pkl)
+    ois_bloomi = pd.read_pickle(bloomi_pkl)
 
-    # for each data provider, select maturity
-    ois_ds_tr = ois_datastream["tr_"+maturity.lower()]
-    ois_ds_icap = ois_datastream["icap_"+maturity.lower()]
-    ois_bl = pd.concat(
-        [p.loc[:,maturity].rename(c) for c, p in ois_bloomberg.items()],
-        axis=1)
+    # for each data provider (bloomi already a dict)
+    ois_ds_tr = ois_ds["tr"]
+    ois_ds_icap = ois_ds["icap"]
 
-    # collect into dictionary to be able to prioritize
-    all_three = {
-        'i': ois_ds_icap,
-        't': ois_ds_tr,
-        'b': ois_bl}
+    data = dict()
 
-    # reindex data (according to what is given highest priority)
-    priority = list(priority)
+    # loop over maturities
+    for m in ois_bloomi.keys():
 
-    new_idx = ois_bl.index.union(ois_ds_icap.index.union(ois_ds_tr.index))
-    new_col = \
-        ois_bl.columns.union(ois_ds_icap.columns.union(ois_ds_tr.columns))
+        # collect into dictionary to be able to prioritize
+        all_three = {
+            'i': ois_ds_icap.get(m, pd.DataFrame()),
+            't': ois_ds_tr.get(m, pd.DataFrame()),
+            'b': ois_bloomi.get(m, pd.DataFrame())}
 
-    new_data = all_three[priority[0]].reindex(index=new_idx, columns=new_col)\
-            .fillna(all_three[priority[1]])\
-            .fillna(all_three[priority[2]])
+        # reindex data (according to what is given highest priority)
+        priority = list(priority)
 
-    # dropna
-    new_data.dropna(how="all", inplace=True)
+        new_idx = all_three['b'].index\
+            .union(all_three['i'].index.union(all_three['t'].index))
+        new_col = all_three['b'].columns\
+            .union(all_three['i'].columns.union(all_three['t'].columns))
+
+        new_data = all_three[priority[0]].reindex(index=new_idx, columns=new_col)\
+                                         .fillna(all_three[priority[1]])\
+                                         .fillna(all_three[priority[2]])
+
+        # dropna
+        data[m] = new_data.dropna(how="all").astype(float)
 
     # pickle
-    pickle_name = "ois_merged_" + maturity.lower() + ".p"
-
-    # return new_data
+    pickle_name = "ois_merged.p"
 
     with open(data_path + pickle_name, mode="wb") as fname:
-        pickle.dump(new_data, fname)
+        pickle.dump(data, fname)
+
+    return data
 
 
 if __name__ == "__main__":
-    fetch_datastream_ois_data(data_path=data_path)
-    fetch_bloomberg_ois_data(data_path=data_path)
-    res = merge_ois_data(priority="bit")
+    # fetch_datastream_ois_data(data_path=data_path)
+    # fetch_bloomberg_ois_data(data_path=data_path)
+   res = merge_ois_data(priority="bit")
