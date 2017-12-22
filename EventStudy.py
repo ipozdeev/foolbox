@@ -59,7 +59,7 @@ class EventStudy():
             # if `data` is a Series, all else better be too
             assert isinstance(events, pd.Series)
             assert isinstance(normal_data, pd.Series)
-            assert normal_data.index.equals(events.index)
+            # assert normal_data.index.equals(events.index)
 
             # everything to frames
             data = data.to_frame(data_name)
@@ -73,8 +73,8 @@ class EventStudy():
             elif isinstance(events, pd.DataFrame):
                 assert all(data.columns == events.columns)
 
-        assert normal_data.index.equals(events.index)
-        assert normal_data.columns.equals(events.columns)
+        # assert normal_data.index.equals(events.index)
+        # assert normal_data.columns.equals(events.columns)
 
         self._raw = {
             "data": data,
@@ -134,7 +134,7 @@ class EventStudy():
             # rolling mean
             normal_data = data.rolling(**kwargs).mean()
             normal_data = normal_data.shift(-ta+1).where(events.notnull())
-            normal_data = normal_data.dropna(how="all")
+            normal_data = normal_data.loc[events.index]
 
         elif norm_data_method == "between_events":
             # between event windows; the idea is to use a temp EventStudy
@@ -261,7 +261,7 @@ class EventStudy():
 
         # get normal data to the same dimensionality as `data`
         normal_data = self._normal_data.reindex(index=data.index)
-        normal_data = normal_data.shift(self._wind[0]).ffill()
+        # normal_data = normal_data.shift(self._wind[0]).ffill()
 
         # abnormal data
         abn_data = data - normal_data

@@ -60,6 +60,7 @@ class Regression():
         if add_constant:
             X = sm.add_constant(X)
 
+        self.add_constant = add_constant
         self.X = X
         self.y = y
         self.X_names = X.columns
@@ -72,13 +73,17 @@ class Regression():
         """
         pass
 
-    def get_yhat(self, original=True):
+    def get_yhat(self, newdata=None, original=True):
         """
         """
         if not hasattr(self, "coef"):
             _ = self.fit()
 
-        if original:
+        if newdata is not None:
+            if self.add_constant:
+                newdata = sm.add_constant(newdata.copy())
+            yhat = newdata.dot(self.coef)
+        elif original is True:
             yhat = self.X_orig.dot(self.coef).reindex(index=self.y_orig.index)
         else:
             yhat = self.X.dot(self.coef)
@@ -86,6 +91,7 @@ class Regression():
         # to frame + rename
         if isinstance(yhat, pd.Series):
             yhat = yhat.to_frame()
+
         yhat.columns = self.Y_names
 
         self.yhat = yhat

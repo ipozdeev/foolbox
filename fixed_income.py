@@ -458,7 +458,7 @@ class OIS(FixedIncome):
             cumulative payoff, in frac of 1, not annualized
         """
         if dt_until is None:
-            dt_until = self.end_dt
+            dt_until = self.calculation_period[-1]
         if dt_since is None:
             dt_since = self.value_dt
 
@@ -564,7 +564,9 @@ class OIS(FixedIncome):
                 cumprod_until
 
         # solve thingy
-        res = fsolve(obj_fun, x0=np.array([swap_rate]), xtol=1e-04)[0]
+        res = fsolve(obj_fun, x0=np.array([swap_rate]), xtol=1e-05)[0]
+        if np.abs(res - swap_rate) < 1e-06:
+            res = np.nan
 
         return res
 

@@ -41,7 +41,7 @@ class PolicyExpectation():
 
     @classmethod
     def from_forward_rates(cls, meetings, rate_object, rate_long,
-                           rate_on_const, **kwargs):
+        rate_on_const, **kwargs):
         """Construct PolicyExpectation from forward rates.
 
         Parameters
@@ -276,8 +276,9 @@ class PolicyExpectation():
     @classmethod
     def from_pickles(cls, data_path, currency, start_dt="1990",
                      proxy_rate_pickle="ois_bloomberg.p",
-                     e_proxy_rate_pickle="implied_rates_from_1m.p",
-                     meetings_pickle="events.p"):
+                     e_proxy_rate_pickle="implied_rates_from_1m_ois.p",
+                     meetings_pickle="events.p",
+                     ffill=False):
         """Construct PolicyExpectation from existing pickled rates.
 
         Parameters
@@ -305,12 +306,18 @@ class PolicyExpectation():
 
         # proxy rates
         proxy_rate_data = pd.read_pickle(data_path + proxy_rate_pickle)
-        proxy_rate = proxy_rate_data[currency].loc[start_dt:, "ON"].rename(
-            currency)
+        # proxy_rate = proxy_rate_data[currency].loc[start_dt:, "ON"].rename(
+        #     currency)
+        proxy_rate = proxy_rate_data[currency].loc[start_dt:, "ON"]
 
         # implied rates
         e_proxy_rate_data = pd.read_pickle(data_path + e_proxy_rate_pickle)
         e_proxy_rate = e_proxy_rate_data.loc[start_dt:, currency]
+
+        if ffill:
+            e_proxy_rate = e_proxy_rate.reindex(index=pd.date_range(
+                e_proxy_rate.index[0], e_proxy_rate.index[-1], freq='B'),
+                method="ffill")
 
         # init class, manually insert policy expectation
         pe = cls(meetings=meetings,
@@ -886,6 +893,7 @@ class PolicyExpectation():
 
         # difference
         dr = (e_proxy_rate - proxy_rate).shift(lag).loc[classes.index]
+        print("{:d} non-na markers".format(len(dr.dropna())))
 
         # watch out for nans!
         if dr.isnull().any():
@@ -894,6 +902,7 @@ class PolicyExpectation():
             n_nans = len(nans_df)
             warnings.warn(("there are nans on some meeting dates: "+\
                           "{}, "*(n_nans-1) + "{}.").format(*nans_dates))
+            print(classes.loc[nans_df.index])
 
         vus = self.calculate_vus(dr, classes, order=[-1, 0, 1])
 
@@ -1549,7 +1558,8 @@ def get_pe_signals(currencies, lag, threshold, data_path, fomc=False,
         policy_fcasts = list()
         # Get signals for each currency in the list
         for curr in currencies:
-            tmp_pe = PolicyExpectation.from_pickles(data_path, curr)
+            tmp_pe = PolicyExpectation.from_pickles(data_path,
+                proxy_rate_pickle="ois_bloomberg.p", currency=curr)
             # policy_fcasts.append(
             #     tmp_pe.forecast_policy_change(lag=lag,threshold=threshold/100,
             #                                   **kwargs))
@@ -1564,7 +1574,6 @@ def get_pe_signals(currencies, lag, threshold, data_path, fomc=False,
         signals.columns = currencies
 
     return signals
-
 
 
 if __name__  == "__main__":

@@ -318,6 +318,7 @@ def parse_bloomberg_excel(filename, colnames_sheet, data_sheets):
     """
     if isinstance(data_sheets, str):
         data_sheets = [data_sheets, ]
+        flag_single_input = True
 
     # converter for date
     def converter(x):
@@ -368,6 +369,10 @@ def parse_bloomberg_excel(filename, colnames_sheet, data_sheets):
 
         # concat
         all_data[s] = pd.concat(new_data_df, axis=1, join="outer")
+
+    # if only one sheet was asked for
+    if flag_single_input:
+        all_data = list(all_data.values())[0]
 
     return all_data
 
@@ -516,7 +521,7 @@ def to_better_latex(df_coef, df_tstat, fmt_coef="{}", fmt_tstat="{}",
     mask_coef = df_coef.applymap(np.isfinite)
     mask_tstat = df_tstat.applymap(np.isfinite)
 
-    df_coef_fmt = df_coef.applymap(fmt_tstat.format)
+    df_coef_fmt = df_coef.applymap(fmt_coef.format)
     df_tstat_fmt = df_tstat.applymap(('('+fmt_tstat+')').format)
 
     new_df = []

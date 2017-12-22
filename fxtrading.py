@@ -2,7 +2,7 @@ import pandas as pd
 import numpy as np
 import warnings
 from foolbox import portfolio_construction as poco
-# import ipdb
+
 
 class StrategyFactory():
     """Factory for constructing strategies."""
@@ -67,6 +67,7 @@ class StrategyFactory():
         actions = position_weights.diff().shift(-1)
 
         return actions
+
 
 class FXTradingStrategy():
     """
@@ -254,6 +255,7 @@ class FXTradingStrategy():
             np.sign(new_strat.position_weights)
 
         return new_strat
+
 
 class FXTradingEnvironment():
     """
@@ -666,6 +668,7 @@ class FXPortfolio():
 
         return res
 
+
 class FXPosition():
     """Position in foreign currency vs.
 
@@ -910,20 +913,20 @@ if __name__ == "__main__":
 
     fx_tr_env.drop(labels=drop_curs, axis="minor_axis", errors="ignore")
     fx_tr_env.remove_swap_outliers()
-    fx_tr_env.reindex_with_freq('D')
+    fx_tr_env.reindex_with_freq('B')
     fx_tr_env.align_spot_and_swap()
     fx_tr_env.fillna(which="both", method="ffill")
 
     fdisc_d = fx_tr_env.swap_points.mean(axis="items")
     spot_d = fx_tr_env.spot_prices.mean(axis="items")
 
-    dr = -1*np.log((fdisc_d + spot_d)/spot_d).rolling(22).mean()
+    # dr = -1*np.log((fdisc_d + spot_d)/spot_d).rolling(22).mean()
 
-    fx_tr_str_carry = FXTradingStrategy.monthly_from_daily_signals(
-        signals_d=dr, n_portf=3, leverage="net")
+    # fx_tr_str_carry = FXTradingStrategy.monthly_from_daily_signals(
+    #     signals_d=dr, n_portf=5, leverage="net")
 
     # ois-implied forecasts
-    curs = [p for p in dr.columns if p not in ["dkk", "nok", "jpy"]]
+    curs = [p for p in spot_d.columns if p not in ["dkk", "nok", "jpy"]]
 
     # forecast direction
     signals_fcast = get_pe_signals(curs, base_lag, base_th*100, data_path,
@@ -940,10 +943,12 @@ if __name__ == "__main__":
 
     signals_fcast, signals_fomc = signals_fcast.align(signals_fomc, axis=0,
         join="outer")
-    signals_fcast = signals_fcast.fillna(signals_fomc)
 
     signals_fcast.loc[:, "nok"] = np.nan
     signals_fcast.loc[:, "jpy"] = np.nan
+    signals_fcast.loc[:, "dkk"] = np.nan
+
+    signals_fcast = signals_fcast.fillna(signals_fomc)
 
     signals_fcast = signals_fcast.loc[start_date:end_date].reindex(
         index=pd.date_range(start_date, end_date, freq='B'))
@@ -951,14 +956,32 @@ if __name__ == "__main__":
     strategy_fcast = FXTradingStrategy.from_events(signals_fcast,
         blackout=1, hold_period=10, leverage="net")
 
-    combined_strat = fx_tr_str_carry + strategy_fcast
+    # combined_strat = fx_tr_str_carry + strategy_fcast
 
-    fx_tr = FXTrading(environment=fx_tr_env, strategy=fx_tr_str_carry)
+    # fx_tr = FXTrading(environment=fx_tr_env, strategy=fx_tr_str_carry)
     fx_tr = FXTrading(environment=fx_tr_env, strategy=strategy_fcast)
-    fx_tr = FXTrading(environment=fx_tr_env, strategy=combined_strat)
+    # fx_tr = FXTrading(environment=fx_tr_env, strategy=combined_strat)
 
-    car = fx_tr.backtest("unrealiz")
+    # car = fx_tr.backtest("unrealiz")
     strat = fx_tr.backtest("unrealiz")
+
+    strat.plot()
+
+    pd.concat((car.rename("carry"), strat.rename("godlike")), axis=1).plot()
+
+    lol = np.log(pd.concat(
+        (car.rename("carry"), strat.rename("godlike")), axis=1)).diff()
+
+    lol.replace(0.0, np.nan).dropna().corr()
+
+
+    es = EventStudy(data=np.log(car).diff(),
+        events=events.loc[:, "aud"].where(events.loc[:, "aud"] < 0).dropna(),
+        window=(-10,-1,1,5),
+        mean_type="count_weighted",
+        x_overlaps=True)
+    (es.the_mean*100).plot()
+
 
     car.dropna().plot()
     strat.dropna().plot()
