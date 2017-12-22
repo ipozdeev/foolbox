@@ -14,7 +14,7 @@ if __name__ == "__main__":
     end_date = settings["sample_end"]
 
     # Set up the parameters of trading strategies
-    holding_range = [2, 5, 10, 15]
+    holding_range = [1, 5, 10, 15]
     threshold_range = [5, 10, 15, 20]
     scale_to = 10  # rescale returns to 'scale_to' holding period
 
@@ -78,3 +78,8 @@ fx_data_us = {"spot_mid": spot_mid_us, "spot_bid": spot_bid_us,
 # Run backtests separately for ex-us and dollar index
 ret_xus = event_trading_backtest(fx_data, holding_range, threshold_range,
                                  data_path, fomc=False, **pol_exp_args)["aggr"]
+
+ret_us = event_trading_backtest(fx_data_us, holding_range, threshold_range,
+                                data_path, fomc=True, **pol_exp_args)["aggr"]
+
+print("kek")

@@ -157,8 +157,14 @@ class EventTradingStrategy(TradingStrategy):
 
         # fill na backward, limit to (b-a) values
         # NB: this covers the case of too few data points at the beginning
-        position_flags = to_b.fillna(method="bfill",
-            limit=self.settings["horizon_b"]-self.settings["horizon_a"])
+        if self.settings["horizon_b"]-self.settings["horizon_a"] == 0:
+            # Do nothing for the holding period of one
+            position_flags = to_b
+        else:
+            # Fill signal back for holding_period-1 periods
+            position_flags = to_b.fillna(
+                method="bfill",
+                limit=self.settings["horizon_b"]-self.settings["horizon_a"])
 
         return position_flags
 
