@@ -16,6 +16,7 @@ from foolbox.bankcalendars import *
 from foolbox.portfolio_construction import multiple_timing
 from foolbox.api import *
 from foolbox.trading import EventTradingStrategy
+from fxtrading import *
 
 # import ipdb
 
@@ -1459,7 +1460,17 @@ def event_trading_backtest(fx_data, holding_range, threshold_range,
                 signals=signals,
                 prices={"mid": spot_mid, "bid": spot_bid, "ask": spot_ask},
                 settings=trade_strat_settings)
-            strat = EventTradingStrategy
+            # signals = signals.reindex(spot_mid.index)
+            # strat = FXTradingStrategy.from_events(events=signals, blackout=1,
+            #                                       hold_period=holding_period,
+            #                                       leverage="unlimited")
+            # strat_env = FXTradingEnvironment.from_scratch(
+            #     spot_prices={"bid": spot_bid, "ask": spot_ask},
+            #     swap_points={"bid": swap_bid, "ask": swap_ask}
+            #     )
+            #
+            # trading = FXTrading(environment=strat_env, strategy=strat)
+            # payoff = trading.backtest(method="balance")
 
             # Adjust for transaction costs and swap points, get returns
             strat = strat.bas_adjusted()\
@@ -1525,7 +1536,7 @@ def get_pe_signals(currencies, lag, threshold, data_path, fomc=False,
         us_pe = PolicyExpectation.from_pickles(data_path, "usd")
         us_fcast = \
             us_pe.forecast_policy_direction(
-                lag=lag, h_low=threshold/100,
+                lag=lag, h_low=-threshold/100,
                 map_proxy_rate=map_proxy_rate,
                 map_expected_rate=map_expected_rate)
 
@@ -1544,7 +1555,7 @@ def get_pe_signals(currencies, lag, threshold, data_path, fomc=False,
             #                                   **kwargs))
             policy_fcasts.append(
                 tmp_pe.forecast_policy_direction(
-                    lag=lag, h_low=threshold/100,
+                    lag=lag, h_low=-threshold/100,
                     map_proxy_rate=map_proxy_rate,
                     map_expected_rate=map_expected_rate))
 
