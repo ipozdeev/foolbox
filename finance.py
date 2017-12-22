@@ -274,10 +274,8 @@ class PolicyExpectation():
 
     @classmethod
     def from_pickles(cls, data_path, currency, start_dt="1990",
-                     proxy_rate_pickle="ois_bloomberg.p",
-                     e_proxy_rate_pickle="implied_rates_from_1m_ois.p",
-                     meetings_pickle="events.p",
-                     ffill=False):
+                     proxy_rate_pickle=None, e_proxy_rate_pickle=None,
+                     meetings_pickle=None, ffill=False):
         """Construct PolicyExpectation from existing pickled rates.
 
         Parameters
@@ -289,11 +287,20 @@ class PolicyExpectation():
         proxy_rate_pickle : str
         e_proxy_rate_pickle : str
         meetings_pickle : str
+        ffill : boolean
 
         Returns
         -------
+        PolicyExpectation
 
         """
+        if proxy_rate_pickle is None:
+            proxy_rate_pickle = "overnight_rates.p"
+        if e_proxy_rate_pickle is None:
+            e_proxy_rate_pickle = "implied_rates_from_1m_ois.p"
+        if meetings_pickle is None:
+            meetings_pickle = "events.p"
+
         # meetings
         meetings_data = pd.read_pickle(data_path + meetings_pickle)
         meetings = meetings_data["joint_cbs"].loc[start_dt:, currency]
@@ -307,7 +314,7 @@ class PolicyExpectation():
         proxy_rate_data = pd.read_pickle(data_path + proxy_rate_pickle)
         # proxy_rate = proxy_rate_data[currency].loc[start_dt:, "ON"].rename(
         #     currency)
-        proxy_rate = proxy_rate_data[currency].loc[start_dt:, "ON"]
+        proxy_rate = proxy_rate_data.loc[start_dt:, currency]
 
         # implied rates
         e_proxy_rate_data = pd.read_pickle(data_path + e_proxy_rate_pickle)
@@ -1525,8 +1532,10 @@ def get_pe_signals(currencies, lag, threshold, data_path, fomc=False,
 
     """
     # Transformation applied to reference and implied rates
-    map_expected_rate = lambda x: x.rolling(kwargs["avg_impl_over"]).mean()
-    map_proxy_rate = lambda x: x.rolling(kwargs["avg_refrce_over"]).mean()
+    map_expected_rate = lambda x: x.rolling(kwargs["avg_impl_over"],
+                                            min_periods=1).mean()
+    map_proxy_rate = lambda x: x.rolling(kwargs["avg_refrce_over"],
+                                         min_periods=1).mean()
 
     # For the US get the fomc announcements and use them for every currency
     if fomc:
@@ -1534,7 +1543,7 @@ def get_pe_signals(currencies, lag, threshold, data_path, fomc=False,
         us_pe = PolicyExpectation.from_pickles(data_path, "usd")
         us_fcast = \
             us_pe.forecast_policy_direction(
-                lag=lag, h_low=threshold/100,
+                lag=lag, h_high=threshold/100,
                 map_proxy_rate=map_proxy_rate,
                 map_expected_rate=map_expected_rate)
 
@@ -1547,14 +1556,13 @@ def get_pe_signals(currencies, lag, threshold, data_path, fomc=False,
         policy_fcasts = list()
         # Get signals for each currency in the list
         for curr in currencies:
-            tmp_pe = PolicyExpectation.from_pickles(data_path,
-                proxy_rate_pickle="ois_bloomberg.p", currency=curr)
+            tmp_pe = PolicyExpectation.from_pickles(data_path, currency=curr)
             # policy_fcasts.append(
             #     tmp_pe.forecast_policy_change(lag=lag,threshold=threshold/100,
             #                                   **kwargs))
             policy_fcasts.append(
                 tmp_pe.forecast_policy_direction(
-                    lag=lag, h_low=threshold/100,
+                    lag=lag, h_high=threshold/100,
                     map_proxy_rate=map_proxy_rate,
                     map_expected_rate=map_expected_rate))
 
