@@ -169,12 +169,12 @@ class FXTradingStrategy():
 
         # fill into the past
         position_flags = position_flags.fillna(method="bfill",
-            limit=hold_period-1)
+            limit=max(hold_period-1, 1))
 
         # need to open and close it somewhere
         # TODO: relevant?
-        position_flags.iloc[0,:] = np.nan
-        position_flags.iloc[-1,:] = np.nan
+        position_flags.iloc[0, :] = np.nan
+        position_flags.iloc[-1, :] = np.nan
 
         # pos_weights = StrategyFactory().deleverage_position_flags(
         #     position_flags, method=leverage)
@@ -272,7 +272,9 @@ class FXTradingEnvironment():
         self.spot_prices = spot_prices
         self.swap_points = swap_points
 
-        self.currencies = spot_prices.minor_axis
+    @property
+    def currencies(self):
+        return self.spot_prices.minor_axis
 
     @classmethod
     def from_scratch(cls, spot_prices, swap_points=None):
