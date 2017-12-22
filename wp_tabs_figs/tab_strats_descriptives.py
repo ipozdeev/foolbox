@@ -14,7 +14,7 @@ if __name__ == "__main__":
     end_date = settings["sample_end"]
 
     # Set up the parameters of trading strategies
-    holding_range = [1, 5, 10, 15]
+    holding_range = [ 10, 15]
     threshold_range = [10, 15, 20]
     scale_to = 10  # rescale returns to 'scale_to' holding period
 
