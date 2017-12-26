@@ -1475,7 +1475,6 @@ def event_trading_backtest(fx_data, holding_range, threshold_range,
                 signals=signals,
                 prices={"mid": spot_mid, "bid": spot_bid, "ask": spot_ask},
                 settings=trade_strat_settings)
-            strat = EventTradingStrategy
 
             # Adjust for transaction costs and swap points, get returns
             strat = strat.bas_adjusted()\
@@ -1484,7 +1483,7 @@ def event_trading_backtest(fx_data, holding_range, threshold_range,
             # Append the output
             results["disaggr"][str(holding_period)][str(threshold)] = strat
 
-            # For FOMC, report aggragated mean, else sum over the x-section
+            # For FOMC, report aggregated mean, else sum over the x-section
             if fomc:
                 aggr.loc[:, ix[holding_period, threshold]] = strat.mean(axis=1)
             else:

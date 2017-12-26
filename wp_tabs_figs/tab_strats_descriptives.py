@@ -5,97 +5,142 @@ from wp_tabs_figs.wp_settings import settings
 bas-adjusted returns)
 """
 
+
+def strat_selector(returns, selection_map, percentiles):
+    """Given a selection criterion (e.g. mean return), get a subsample of
+    of returns for this criterions' percentiles
+
+    Parameters
+    ----------
+    returns: pd.DataFrame
+        of returns to strategies
+    selection_map: callable
+        specifying selection criterion, e.g. lambda x: x.sum() for selecting
+        strategies according to total return, lambda x: x.mean()/x.std()
+        according to Sharpe ratios and so on
+    percentiles: iterable
+        with values between 0 and 1, specifying percentiles of 'selection_map'
+        to be reported
+
+    Returns
+    -------
+    sample: pd.DataFrame
+        containing returns to strategies according percentiles of criterion
+        from the selection map
+
+    """
+    # Apply the selection map to the returns
+    mapped_returns = selection_map(returns)
+
+    # Loop over percentiles, find the corresponding columns
+    sample_columns = list()
+    for percentile in percentiles:
+        # Get return corresponding to the percentile of interest
+        this_mapped_return = mapped_returns.quantile(percentile,
+                                                     interpolation="lower")
+        # Locate it in returns and get the corresponding column id
+        sample_columns.extend(
+            mapped_returns.where(mapped_returns ==
+                                 this_mapped_return).dropna().index.tolist()
+            )
+
+    # Locate the requested percentiles in the input data
+    sample = returns.loc[:, sample_columns]
+
+    return sample
+
+
 if __name__ == "__main__":
-
-    # Set the output path, input data and sample
     out_path = data_path + settings["fig_folder"]
-    input_dataset = settings["fx_data"]
-    start_date = settings["sample_start"]
-    end_date = settings["sample_end"]
 
-    # Set up the parameters of trading strategies
-    holding_range = [ 10, 15]
-    threshold_range = [10, 15, 20]
-    scale_to = 10  # rescale returns to 'scale_to' holding period
+    # Strats file name
+    strat_data_file = "broomstick_ret_rx_bas.p"
 
-    # Policy expectations keyword arguments
-    pol_exp_args = {"avg_impl_over": 5,
-                    "avg_refrce_over": 5,
-                    "bday_reindex": True}
+    percentiles_to_describe = np.arange(0.1, 1, 0.1)
+    scale_to = 10
 
-    # Import the FX data
-    data = pd.read_pickle(data_path+input_dataset)
+    selection_maps = [
+        lambda x: x.sum(),
+        lambda x: x.mean() * (scale_to / pd.Series(
+            x.columns.get_level_values("holding").tolist(),
+            index=x.columns)),
+        # lambda x: x.mean() / x.std() * x.count().pow(0.5)
+        # lambda x: x.mean() / x.std() * (scale_to / pd.Series(
+        #     x.columns.get_level_values("holding").tolist(),
+        #     index=x.columns)).pow(0.5),
+        # lambda x: taf.descriptives(x, 1).loc["tstat"]
+        ]
 
-    # Import the all fixing times for the dollar index
-    data_usd = pd.read_pickle(data_path+"fx_by_tz_sp_fixed.p")
+    # Formatting of numbers and standard errors
+    fmt_coef = "{:3.2f}"
+    fmt_se = "{:3.2f}"
+    fmt_std = "{:3.1f}"
 
-# Get the individual currenices, spot rates:
-spot_mid = data["spot_mid"][start_date:end_date].drop(["dkk", "jpy", "nok"],
-                                                      axis=1)
-spot_bid = data["spot_bid"][start_date:end_date].drop(["dkk", "jpy", "nok"],
-                                                      axis=1)
-spot_ask = data["spot_ask"][start_date:end_date].drop(["dkk", "jpy", "nok"],
-                                                      axis=1)
-swap_ask = data["tnswap_ask"][start_date:end_date].drop(["dkk", "jpy", "nok"],
-                                                        axis=1)
-swap_ask = remove_outliers(swap_ask, 50)
-swap_bid = data["tnswap_bid"][start_date:end_date].drop(["dkk", "jpy", "nok"],
-                                                        axis=1)
-swap_bid = remove_outliers(swap_bid, 50)
+    # Import return to the universe of pre-announcement trading strategies
+    with open(data_path + strat_data_file, mode="rb") as halupa:
+        all_strats = pickle.load(halupa) * 1e4  # convert to bps
+    # all_strats = pd.read_pickle(data_path + "broom_ret_rx_bas.p")
 
-# Construct a pre-set fixing time dollar index
-spot_mid_us = data_usd["spot_mid"].loc[:, :, settings["usd_fixing_time"]]\
-    .drop(["dkk"], axis=1)[start_date:end_date]
-spot_bid_us = data_usd["spot_bid"].loc[:, :, settings["usd_fixing_time"]]\
-    .drop(["dkk"], axis=1)[start_date:end_date]
-spot_ask_us = data_usd["spot_ask"].loc[:, :, settings["usd_fixing_time"]]\
-    .drop(["dkk"], axis=1)[start_date:end_date]
-swap_ask_us = data_usd["tnswap_ask"].loc[:, :, settings["usd_fixing_time"]]\
-    .drop(["dkk"], axis=1)[start_date:end_date]
-swap_ask_us = remove_outliers(swap_ask_us, 50)
-swap_bid_us = data_usd["tnswap_bid"].loc[:, :, settings["usd_fixing_time"]]\
-    .drop(["dkk"], axis=1)[start_date:end_date]
-swap_bid_us = remove_outliers(swap_bid_us, 50)
+    # Loop over selection maps, get descriptives for each map
+    all_descr = list()
+    for this_map in selection_maps:
+        # Fill this df with descriptives
+        this_descr = pd.DataFrame(
+            index=["holding", "threshold", "mean", "se_mean", "median", "std",
+                   "skew", "kurt", "sharpe", "count"],
+            columns=percentiles_to_describe, dtype=str)
 
-# Align and ffill the data, first for tz-aligned countries
-(spot_mid, spot_bid, spot_ask, swap_bid, swap_ask) =\
-    align_and_fillna((spot_mid, spot_bid, spot_ask, swap_bid, swap_ask),
-                     "B", method="ffill")
-# Now for the dollar index
-(spot_mid_us, spot_bid_us, spot_ask_us, swap_bid_us, swap_ask_us) =\
-    align_and_fillna((spot_mid_us, spot_bid_us, spot_ask_us,
-                      swap_bid_us, swap_ask_us),
-                     "B", method="ffill")
+        # Get a sample of strategies
+        strats = strat_selector(all_strats, this_map, percentiles_to_describe)
 
-# Organize the data into dictionaries
-fx_data = {"spot_mid": spot_mid, "spot_bid": spot_bid, "spot_ask": spot_ask,
-           "tnswap_bid": swap_bid, "tnswap_ask": swap_ask}
+        # Get the scaling factor for each, to mimic the 10-days holding period
+        scale = pd.Series(
+            [scale_to/holding_period for (holding_period, threshold) in
+             strats.columns.tolist()],
+            index=strats.columns)
 
-fx_data_us = {"spot_mid": spot_mid_us, "spot_bid": spot_bid_us,
-              "spot_ask": spot_ask_us,
-              "tnswap_bid": swap_bid_us, "tnswap_ask": swap_ask_us}
+        # (De)leverage each strategy to the 10-day holding period
+        scaled_strats = strats.mul(scale)
 
-# Run backtests separately for ex-us and dollar index
-ret_xus = event_trading_backtest(fx_data, holding_range, threshold_range,
-                                 data_path, fomc=False, **pol_exp_args)["aggr"]
+        # Estimate statistics
+        tmp_descr = taf.descriptives(scaled_strats, 1)
 
-ret_us = event_trading_backtest(fx_data_us, holding_range, threshold_range,
-                                data_path, fomc=True, **pol_exp_args)["aggr"]
+        # Rescale Sharpe ratio to 10-day holding periods
+        # TODO: Discuss 'annualization' vs leverage with Igor, the latter is
+        # TODO: meaningless for Sharpe ratios
+        tmp_descr.loc[["sharpe"]] *= scale.pow(0.5)
 
-# Get the all-events returns
-ret_all = ret_xus.add(ret_us, axis=1)\
-    .fillna(value=ret_xus).fillna(value=ret_us)[start_date:end_date]
+        # Populate the output
+        this_descr.loc["holding", :] = \
+            tmp_descr.columns.get_level_values("holding").tolist()
+        this_descr.loc["threshold", :] = \
+            tmp_descr.columns.get_level_values("threshold").tolist()
 
-descr = pd.concat(
-    [taf.descriptives(ret_all[[k]].dropna() * 10000, scale=1)
-     for k in ret_all.columns],
-    axis=1)
+        tmp_descr.columns = this_descr.columns
 
+        this_descr.loc[["mean", "median", "skew", "kurt", "sharpe"]] = \
+            tmp_descr.loc[["mean", "median", "skew", "kurt", "sharpe"]]\
+            .applymap(fmt_coef.format)
 
-descr = pd.concat(
-    [taf.descriptives(
-        pd.concat([ret_xus[[k]],ret_us[[k]]], axis=1).mean(axis=1).to_frame(k),
-        scale=1) for k in ret_xus.columns],
-    axis=1)
+        this_descr.loc[["std"]] = \
+            tmp_descr.loc[["std"]].applymap(fmt_std.format)
 
-print("kek")
+        this_descr.loc[["se_mean"]] = tmp_descr.loc[["se_mean"]].applymap(
+            ("(" + fmt_se + ")").format)
+
+        this_descr.loc[["count"], :] = scaled_strats.count().values
+
+        # Apply \multicolumn to rows with integers, fuck latex, btw
+        this_descr.loc[["holding", "threshold", "count"]] = \
+            this_descr.loc[["holding", "threshold", "count"]].applymap(
+                lambda x: "\multicolumn{1}{c}{" + str(x) + "}"
+            )
+
+        # Append the final output
+        all_descr.append(this_descr)
+
+    # Pool and dump the output
+    all_descr = pd.concat(all_descr)
+    all_descr.to_latex(buf=out_path + "raw_strat_descriptives.tex",
+                       column_format="l" + "W" * len(all_descr.columns),
+                       escape=False)

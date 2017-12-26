@@ -25,12 +25,10 @@ pol_exp_args = {"avg_impl_over": 5,
                 "bday_reindex": True}
 
 # Import the FX data
-with open(data_path+input_dataset, mode="rb") as fname:
-    data = pickle.load(fname)
+data = pd.read_pickle(data_path+input_dataset)
 
 # Import the all fixing times for the dollar index
-with open(data_path+"fx_by_tz_sp_fixed.p", mode="rb") as fname:
-    data_usd = pickle.load(fname)
+data_usd = pd.read_pickle(data_path+"fx_by_tz_sp_fixed.p")
 
 # Get the individual currenices, spot rates:
 spot_mid = data["spot_mid"][start_date:end_date].drop(["dkk", "jpy", "nok"],
@@ -106,6 +104,9 @@ cumret_us = ret_us[start_date:end_date]\
 #         index=[data_flat.index[0]-BDay()],
 #         columns=data_flat.columns),
 #     data_flat), axis=0)
+
+with open (data_path+"broomstick_ret_rx_bas.p", mode="wb") as hut:
+    pickle.dump(ret_all, hut)
 
 # Plot the results and save 'em
 fig_all = broomstick_plot(cumret_all.ffill())

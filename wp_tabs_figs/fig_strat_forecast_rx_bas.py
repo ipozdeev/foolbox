@@ -15,6 +15,9 @@ for rollover yields and bid-ask spreads
 out_path = data_path + settings["fig_folder"]
 input_dataset = settings["fx_data"]
 start_date = settings["sample_start"]
+
+#start_date = "2011-10-03"
+
 end_date = settings["sample_end"]
 
 # Set up the parameters of trading strategies
@@ -27,7 +30,7 @@ avg_impl_over = 5    # smooth implied rate
 avg_refrce_over = 5  # smooth reference rate
 smooth_burn = 5      # discard number of periods corresponding to smoothing for
                      # the forecast-consistent perfect foresight
-
+e_proxy_rate_pickle_name = "implied_rates_bloomberg_1m.p"
 # EventTradingStrategy() settings
 trad_strat_settings = {
     "horizon_a": -lag,
@@ -43,8 +46,9 @@ minor_locator = mdates.YearLocator()
 major_locator = mdates.YearLocator(2)
 
 # Import the FX data
-with open(data_path+input_dataset, mode="rb") as fname:
-    data = pickle.load(fname)
+# with open(data_path+input_dataset, mode="rb") as fname:
+#     data = pickle.load(fname)
+data = pd.read_pickle(data_path+input_dataset)
 
 # Get the individual currenices, spot rates:
 spot_mid = data["spot_mid"][start_date:end_date].drop(["dkk", "jpy", "nok"],
@@ -63,8 +67,9 @@ swap_bid = data["tnswap_bid"][start_date:end_date].drop(["dkk", "jpy", "nok"],
 swap_bid = remove_outliers(swap_bid, 50)
 
 # Import the all fixing times for the dollar index
-with open(data_path+"fx_by_tz_sp_fixed.p", mode="rb") as fname:
-    data_usd = pickle.load(fname)
+# with open(data_path+"fx_by_tz_sp_fixed.p", mode="rb") as fname:
+#     data_usd = pickle.load(fname)
+data_usd = pd.read_pickle(data_path+"fx_by_tz_sp_fixed.p")
 
 # Construct a pre-set fixing time dollar index
 us_spot_mid = data_usd["spot_mid"].loc[:, :, settings["usd_fixing_time"]]\
@@ -102,21 +107,34 @@ us_swap_bid = remove_outliers(us_swap_bid, 50)
 # us_swap_bid *= 0
 # us_swap_ask *= 0
 
+# Transformation applied to reference and implied rates
+map_expected_rate = lambda x: x.rolling(avg_impl_over,
+                                        min_periods=1).mean()
+map_proxy_rate = lambda x: x.rolling(avg_refrce_over,
+                                     min_periods=1).mean()
 
 # Get signals for all countries except for the US
 policy_fcasts = list()
 for curr in spot_mid.columns:
     # Get the predicted change in policy rate
-    tmp_pe = PolicyExpectation.from_pickles(data_path, curr)
+    tmp_pe = PolicyExpectation.from_pickles(
+        data_path, curr, ffill=True,
+        e_proxy_rate_pickle=e_proxy_rate_pickle_name)
+    # policy_fcasts.append(
+    #     tmp_pe.forecast_policy_change(lag=lag_expect,
+    #                                   threshold=threshold/100,
+    #                                   avg_impl_over=avg_impl_over,
+    #                                   avg_refrce_over=avg_refrce_over,
+    #                                   bday_reindex=True))
     policy_fcasts.append(
-        tmp_pe.forecast_policy_change(lag=lag_expect,
-                                      threshold=threshold/100,
-                                      avg_impl_over=avg_impl_over,
-                                      avg_refrce_over=avg_refrce_over,
-                                      bday_reindex=True))
+        tmp_pe.forecast_policy_direction(
+                    lag=lag_expect, h_high=threshold/100,
+                    map_proxy_rate=map_proxy_rate,
+                    map_expected_rate=map_expected_rate))
 
 # Put individual predictions into a single dataframe
 signals = pd.concat(policy_fcasts, join="outer", axis=1)[start_date:end_date]
+signals.columns = spot_mid.columns
 
 # Get the trading strategy
 strat = EventTradingStrategy(
@@ -130,12 +148,19 @@ strat_bas_adj = strat.bas_adjusted().roll_adjusted(
 strat_ret = strat_bas_adj._returns.dropna(how="all")
 
 # Construct signals for the dollar index
-us_pe = PolicyExpectation.from_pickles(data_path, "usd")
-us_fcast = us_pe.forecast_policy_change(lag=lag_expect,
-                                        threshold=threshold/100,
-                                        avg_impl_over=avg_impl_over,
-                                        avg_refrce_over=avg_refrce_over,
-                                        bday_reindex=True)
+us_pe = PolicyExpectation.from_pickles(
+    data_path, "usd", ffill=True,
+    e_proxy_rate_pickle=e_proxy_rate_pickle_name)
+# us_fcast = us_pe.forecast_policy_change(lag=lag_expect,
+#                                         threshold=threshold/100,
+#                                         avg_impl_over=avg_impl_over,
+#                                         avg_refrce_over=avg_refrce_over,
+#                                         bday_reindex=True)
+
+us_fcast = us_pe.forecast_policy_direction(
+                    lag=lag_expect, h_high=threshold/100,
+                    map_proxy_rate=map_proxy_rate,
+                    map_expected_rate=map_expected_rate)
 
 # Create signals for every currency around FOMC announcements, mind the minus
 us_signal = pd.concat([-us_fcast]*len(us_spot_mid.columns), axis=1)\
@@ -180,16 +205,18 @@ tmp_df_descr = taf.descriptives(tmp_df_descr, 1)
 pfct_signals = list()
 for curr in spot_mid.columns:
     # Get the predicted change in policy rate
-    tmp_pe = PolicyExpectation.from_pickles(data_path, curr)
+    tmp_pe = PolicyExpectation.from_pickles(
+        data_path, curr, ffill=True,
+        e_proxy_rate_pickle=e_proxy_rate_pickle_name)
 
     # Get the signals
-    this_signal = tmp_pe.meetings.loc[:,"rate_change"]
+    this_signal = tmp_pe.meetings#.loc[:,"rate_change"]
     this_signal.name = curr
 
     # Get the first forecast date available, leave enough data
     # to make a forecast, control for averaging
-    first_date = tmp_pe.rate_expectation.dropna() \
-        .iloc[[lag_expect + smooth_burn - 1]].index[0]
+    first_date = tmp_pe.expected_proxy_rate.dropna() \
+         .iloc[[lag_expect + smooth_burn - 1]].index[0]
     pfct_signals.append(this_signal.loc[first_date:])
 
 pfct_signals = pd.concat(pfct_signals, axis=1)[start_date:end_date]
@@ -209,7 +236,7 @@ pfct_strat_ret = pfct_strat_bas_adj._returns.dropna(how="all")
 
 # Similarly for the US
 us_pe = PolicyExpectation.from_pickles(data_path, "usd")
-us_pfct_signal = us_pe.meetings.loc[:, "rate_change"][start_date:end_date]
+us_pfct_signal = us_pe.meetings.loc[start_date:end_date]
 us_pfct_signal = np.sign(us_pfct_signal)
 
 # Create signals for every currency around FOMC announcements, mind the minus
