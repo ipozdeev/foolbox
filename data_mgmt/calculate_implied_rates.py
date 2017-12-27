@@ -3,6 +3,7 @@ from pandas.tseries.offsets import DateOffset
 from foolbox.finance import PolicyExpectation
 from foolbox.data_mgmt import set_credentials as set_cred
 from foolbox.fixed_income import OIS, LIBOR
+from foolbox.utils import apply_between_events
 import pickle
 
 data_path = set_cred.set_path("research_data/fx_and_events/")
@@ -77,8 +78,15 @@ def calculate_ois_implied_rates(ois_df, overnight_df, events_df, maturity,
 
         # rates expected to prevail before meetings: shift by the lag at
         #   which the rates are published
-        proxy_rate = map_proxy_rate(this_on_rate)\
-            .shift(ois_object.new_rate_lag)
+        # proxy_rate = map_proxy_rate(this_on_rate)\
+        #     .shift(ois_object.new_rate_lag)
+        # NB: temp stuff:
+        proxy_rate = apply_between_events(
+            this_on_rate,
+            this_evt,
+            func=lambda x: x.expanding(min_periods=1).mean(),
+            lag=ois_object.fixing_lag)
+        proxy_rate = proxy_rate.shift(ois_object.new_rate_lag)
 
         # # rates expected to prevail before meetings
         # proxy_rate = ois_object.get_rates_until(this_on_rate, this_evt,
@@ -215,12 +223,13 @@ def calculate_libor_implied_rates_smart(libor_1m, libor_on, events_data):
     return ir
 
 if __name__ == "__main__":
+    from foolbox.utils import apply_between_events
     # fetch data ------------------------------------------------------------
     # ois data
-    maturity = "2w"
+    maturity = "1m"
     ois_pkl = "ois_merged.p"
     ois_out_pkl = "implied_rates_from_" + maturity + "_ois.p"
-    on_pkl = "on_ois_rates_bloomberg.p"
+    on_pkl = "overnight_rates.p"
     map_proxy_rate = lambda x: x.rolling(5).mean()
 
     ois_data = pd.read_pickle(data_path + ois_pkl)

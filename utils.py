@@ -13,6 +13,7 @@ def remove_outliers(data, stds):
 
     return res
 
+
 def fetch_the_data(path_to_data, drop_curs=[], align=False, add_usd=False):
     """
     """
@@ -108,6 +109,7 @@ def align_and_fillna(data, reindex_freq=None, common_index="outer", **kwargs):
 
     return new_data
 
+
 def add_fake_signal(ret, sig):
     """ Add fake series to signal: the median in each row.
     """
@@ -121,6 +123,7 @@ def add_fake_signal(ret, sig):
     r.loc[:,"fake"] = np.nan
 
     return r, s
+
 
 def interevent_quantiles(events, max_fill=None, df=None):
     """ Split inter-event intervals in two parts.
@@ -488,6 +491,7 @@ def compute_floating_leg_return(trade_dates, returns, maturity, settings):
 
     return out
 
+
 def next_days_same_rate(dt, b_day=None):
     """
     dt : str/np.datetime64
@@ -502,6 +506,7 @@ def next_days_same_rate(dt, b_day=None):
     res = (next_b_day - dt).days
 
     return res
+
 
 def to_better_latex(df_coef, df_tstat, fmt_coef="{}", fmt_tstat="{}",
     **kwargs):
@@ -550,6 +555,7 @@ def to_better_latex(df_coef, df_tstat, fmt_coef="{}", fmt_tstat="{}",
 
     return new_df.to_latex(**kwargs)
 
+
 def resample_between_events(data, events, fun, mask=None):
     """
     """
@@ -570,6 +576,66 @@ def resample_between_events(data, events, fun, mask=None):
 
     # groupby!
     res = to_group.groupby("index").agg(fun)
+
+    return res
+
+
+def apply_between_events(data, events, func, lag=None, **kwargs):
+    """
+
+    Parameters
+    ----------
+    data
+    events
+    func : callable
+    lag : int/DateOffset or dict/pandas.Series thereof
+        if dict, {key: value} for key in data.columns
+    kwargs : dict
+        arguments to `func`
+
+    Returns
+    -------
+    res
+
+    """
+    # works on pandas.Series
+    if isinstance(data, pd.Series):
+        # lag: defaults
+        if lag is None:
+            lag = Day(1)
+
+        if isinstance(lag, (int, np.int)):
+            add_lag = Day(1)*lag
+        elif isinstance(lag, DateOffset):
+            add_lag = lag*1
+
+        # watch out for nan in `events`
+        data_a, _ = data.align(events.dropna(), axis=0, join="outer")
+
+        # space for data
+        res = data_a * np.nan
+
+        # fill forward-like
+        for t in events.dropna().index[::-1]:
+            res.loc[(t + add_lag):] = res.loc[(t + add_lag):].fillna(
+                func(data_a.loc[(t + add_lag):])
+            )
+
+        # add the very start
+        res = res.fillna(func(data_a))
+
+    # else recursion
+    elif isinstance(data, pd.DataFrame):
+        assert data.columns.equals(events.columns)
+        assert isinstance(lag, (dict, pd.Series))
+        res = {
+            apply_between_events(data.loc[:, c], events.loc[:, c],
+                                 func, lag[c])
+            for c in data.columns
+        }
+
+    else:
+        res = None
 
     return res
 
