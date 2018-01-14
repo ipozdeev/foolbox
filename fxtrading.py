@@ -59,6 +59,10 @@ class StrategyFactory():
     def position_weights_to_actions(position_weights):
         """Get actions from (deleveraged if needed) position weights."""
 
+        # the very first row must be all zeros: the day before does not
+        #   exist to open a position on
+        position_weights.iloc[0, :] *= np.nan
+
         # reinstall zeros where nan's are
         position_weights = position_weights.fillna(value=0.0)
 
@@ -116,8 +120,11 @@ class FXTradingStrategy():
             "zero" for restricting that short and long positions net out to
                 no-leverage
         """
+        # position flags need be of a suitable type
+        p_flags = position_flags.astype(float)
+
         pos_weights = StrategyFactory().deleverage_position_flags(
-            position_flags, method=leverage)
+            p_flags, method=leverage)
         actions = StrategyFactory().position_weights_to_actions(
             pos_weights)
 
@@ -235,6 +242,42 @@ class FXTradingStrategy():
         # return strat
 
         return cls.from_position_flags(position_flags, leverage)
+
+    @classmethod
+    def from_long_short(cls, portfolios, leverage="net"):
+        """
+
+        Parameters
+        ----------
+        portfolios : dict
+            output of portfolio_construction.rank_sort()
+        leverage : str
+            'net', 'unlimited' or 'zero'
+
+        Returns
+        -------
+        res : FXTradingStrategy
+
+        """
+        # retain only 'portfolio...' keys
+        pf = {k: v for k, v in portfolios.items() if k.startswith("portfolio")}
+
+        # number of portfolios
+        n_pf = len(pf)
+
+        # long and short flags
+        flags_long = pf["portfolio"+str(n_pf)].notnull().where(
+            pf["portfolio" + str(n_pf)].notnull()) * 1
+
+        flags_short = pf["portfolio1"].notnull().where(
+            pf["portfolio1"].notnull()) * -1
+
+        # concatenate
+        flags = flags_long.fillna(flags_short)
+
+        res = cls.from_position_flags(flags, leverage=leverage)
+
+        return res
 
     def __add__(self, other):
         """Combine two strategies.
@@ -437,8 +480,8 @@ class FXTrading():
         # loop over time and position weights
         for t, row in self.actions.iterrows():
 
-            # if t > pd.to_datetime("2002-01-29"):
-            #     ipdb.set_trace()
+            if t < self.prices.major_axis[0]:
+                continue
 
             # fetch prices and swap points ----------------------------------
             these_prices = self.prices.loc[:, t, :].T
