@@ -26,7 +26,7 @@ my_gray = "#8c8c8c"
 plt.rc("font", family="serif", size=12)
 
 
-class PolicyExpectation():
+class PolicyExpectation:
     """
     """
     def __init__(self, meetings=None, policy_rate=None, proxy_rate=None,
@@ -40,7 +40,7 @@ class PolicyExpectation():
 
     @classmethod
     def from_forward_rates(cls, meetings, rate_object, rate_long,
-        rate_on_const, **kwargs):
+                           rate_on_const, **kwargs):
         """Construct PolicyExpectation from forward rates.
 
         Parameters
@@ -553,30 +553,32 @@ class PolicyExpectation():
     def error_plot(self, avg_over=None, ax=None):
         """ Plot predicted vs. realized and the error plot.
         """
-        if not hasattr(self, "rate_expectation"):
-            raise ValueError("Estimate first!")
+        # if not hasattr(self, "rate_expectation"):
+        #     raise ValueError("Estimate first!")
 
         # defaults
         if avg_over is None:
             avg_over = 1
         if ax is None:
-            f, ax = plt.subplots(figsize=(8.3,8.3/2))
+            f, ax = plt.subplots(figsize=(8.3, 8.3/2))
         else:
             f = plt.gcf()
 
         # smooth + align ----------------------------------------------------
         actual_rate = \
-            self.reference_rate.rolling(avg_over, min_periods=1).mean()\
+            self.proxy_rate.rolling(avg_over, min_periods=1).mean()\
                 .shift(-avg_over).reindex(
-                    index=self.meetings.index, method="bfill")
+                    index=self.meetings.index,
+                    method="bfill")
 
         # policy expectation to plot
-        rate_expectation = self.rate_expectation.shift(avg_over).reindex(
-            index=actual_rate.index, method="ffill")
+        rate_expectation = self.expected_proxy_rate.shift(avg_over)\
+            .reindex(index=actual_rate.index, method="ffill")
 
         # rename a bit
         rate_expectation.name = "rate_expectation"
         actual_rate.name = "actual_rate"
+
         # ax.set_xlim(
         #     max([meetings_c.first_valid_index(),
         #         self.rate_expectation.first_valid_index()])-\
@@ -1501,6 +1503,7 @@ def event_trading_backtest(fx_data, holding_range, threshold_range,
 
     return results
 
+
 def get_pe_signals(currencies, lag, threshold, data_path, fomc=False,
                    **kwargs):
     """Fetches a dataframe of signals from the 'PolicyExpectation' class, for
@@ -1534,23 +1537,26 @@ def get_pe_signals(currencies, lag, threshold, data_path, fomc=False,
 
     """
     # Transformation applied to reference and implied rates
-    map_expected_rate = lambda x: x.rolling(kwargs["avg_impl_over"],
-                                            min_periods=1).mean()
-    map_proxy_rate = lambda x: x.rolling(kwargs["avg_refrce_over"],
-                                         min_periods=1).mean()
+    def map_rate(w):
+        res = lambda x: x.rolling(w, min_periods=1).mean()
+        return res
 
     # For the US get the fomc announcements and use them for every currency
     if fomc:
         # Construct signals for the dollar index
-        us_pe = PolicyExpectation.from_pickles(data_path, "usd")
-        us_fcast = \
-            us_pe.forecast_policy_direction(
-                lag=lag, h_high=threshold/100,
-                map_proxy_rate=map_proxy_rate,
-                map_expected_rate=map_expected_rate)
+        us_pe = PolicyExpectation.from_pickles(
+            data_path=data_path, currency="usd",
+            proxy_rate_pickle=kwargs.get("proxy_rate_pickle", None),
+            e_proxy_rate_pickle=kwargs.get("e_proxy_rate_pickle", None),
+            meetings_pickle=kwargs.get("events_pickle", None))
+
+        us_fcast = us_pe.forecast_policy_direction(
+            lag=lag, h_high=threshold/100,
+            map_proxy_rate=map_rate(kwargs.get("avg_refrce_over", 1)),
+            map_expected_rate=map_rate(kwargs.get("avg_implied_over", 1)))
 
         # Create inverse signals for every currency around FOMC announcements
-        signals = pd.concat([-1*us_fcast]*len(currencies), axis=1)
+        signals = pd.concat([-1*us_fcast, ] * len(currencies), axis=1)
         signals.columns = currencies
 
     # Otherwise get signals for each currency in the list
@@ -1558,26 +1564,35 @@ def get_pe_signals(currencies, lag, threshold, data_path, fomc=False,
         policy_fcasts = list()
         # Get signals for each currency in the list
         for curr in currencies:
-            tmp_pe = PolicyExpectation.from_pickles(data_path, currency=curr)
-            # policy_fcasts.append(
-            #     tmp_pe.forecast_policy_change(lag=lag,threshold=threshold/100,
-            #                                   **kwargs))
-            policy_fcasts.append(
-                tmp_pe.forecast_policy_direction(
+            try:
+                tmp_pe = PolicyExpectation.from_pickles(
+                    data_path, currency=curr,
+                    proxy_rate_pickle=kwargs.get("proxy_rate_pickle", None),
+                    e_proxy_rate_pickle=kwargs.get("e_proxy_rate_pickle",
+                                                   None),
+                    meetings_pickle=kwargs.get("events_pickle", None))
+
+                tmp_fcast = tmp_pe.forecast_policy_direction(
                     lag=lag, h_high=threshold/100,
-                    map_proxy_rate=map_proxy_rate,
-                    map_expected_rate=map_expected_rate))
+                    map_proxy_rate=map_rate(kwargs.get("avg_refrce_over", 1)),
+                    map_expected_rate=map_rate(kwargs.get("avg_implied_over",
+                                                          1)))
+
+                policy_fcasts.append(tmp_fcast.squeeze().rename(curr))
+            except KeyError:
+                continue
 
         # Pool signals into a single dataframe
         signals = pd.concat(policy_fcasts, join="outer", axis=1)
-        signals.columns = currencies
+        # signals.columns = currencies
 
     return signals
 
 
-if __name__  == "__main__":
+if __name__ == "__main__":
 
-    pe = PolicyExpectation.from_pickles(data_path, currency="usd",
+    pe = PolicyExpectation.from_pickles(
+        data_path, currency="usd",
         meetings_pickle="ois_project_events.p", start_dt="2001-12",
         e_proxy_rate_pickle="implied_rates_1m_ois.p")
 
