@@ -137,7 +137,10 @@ class PolicyExpectation():
 
         # loop over time
         for t in expected_proxy_rate.index:
-            # t = "2017-01-31"
+            # if t > pd.Timestamp("2009-02-15"):
+            #     print("ololo")
+            # else:
+            #     continue
 
             # set quote date to this t
             ois_object.quote_dt = t

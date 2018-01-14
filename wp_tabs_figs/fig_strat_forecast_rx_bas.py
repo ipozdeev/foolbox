@@ -31,6 +31,8 @@ avg_refrce_over = 5  # smooth reference rate
 smooth_burn = 5      # discard number of periods corresponding to smoothing for
                      # the forecast-consistent perfect foresight
 e_proxy_rate_pickle_name = "implied_rates_bloomberg_1m.p"
+e_proxy_rate_pickle_name = "implied_rates_from_1m_ois.p"
+#e_proxy_rate_pickle_name = "implied_rates_from_1m_ois_roll_5d.p"
 # EventTradingStrategy() settings
 trad_strat_settings = {
     "horizon_a": -lag,
