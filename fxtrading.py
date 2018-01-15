@@ -316,6 +316,14 @@ class FXTradingEnvironment():
         self.swap_points = swap_points
 
     @property
+    def mid_spot_prices(self):
+        return (self.spot_prices["bid"] + self.spot_prices["ask"]) / 2
+
+    @property
+    def mid_swap_points(self):
+        return (self.swap_points["bid"] + self.swap_points["ask"]) / 2
+
+    @property
     def currencies(self):
         return self.spot_prices.minor_axis
 
