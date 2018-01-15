@@ -105,8 +105,8 @@ def wrapper_prepare_environment(settings, bid_ask=True, spot_only=False):
     else:
         spot_prices = (fx_data["spot_bid"].loc[s_dt:e_dt, :] +
                        fx_data["spot_ask"].loc[s_dt:e_dt, :]) / 2
-        swap_points = (fx_data["spot_bid"].loc[s_dt:e_dt, :] +
-                       fx_data["spot_ask"].loc[s_dt:e_dt, :]) / 2
+        swap_points = (fx_data["tnswap_bid"].loc[s_dt:e_dt, :] +
+                       fx_data["tnswap_ask"].loc[s_dt:e_dt, :]) / 2
 
     if spot_only:
         swap_points *= 0.0
@@ -179,11 +179,11 @@ def retail_carry(trading_env, fwd_disc=None, map_fwd_disc=None,
 
     """
     if fwd_disc is None:
-        fwd_disc = trading_env.swap_points["bid"] / \
-                   trading_env.spot_prices["bid"] * -1
+        fwd_disc = trading_env.mid_swap_points / \
+                   trading_env.mid_spot_prices * -1
 
     if map_fwd_disc is None:
-        map_fwd_disc = lambda x: x
+        map_fwd_disc = lambda x: x.shift(1)
 
     # apply transformation to forward discounts
     fwd_disc = map_fwd_disc(fwd_disc)
@@ -203,24 +203,91 @@ def retail_carry(trading_env, fwd_disc=None, map_fwd_disc=None,
     return res
 
 
+def retail_momentum(trading_env, spot_ret=None, map_spot_ret=None,
+                    leverage="net", **kwargs):
+    """Construct momentum strategy a la Menkhoff et al. (2012).
+
+    Parameters
+    ----------
+    trading_env
+    spot_ret
+    map_spot_ret
+    leverage
+    kwargs
+
+    Returns
+    -------
+
+    """
+    if spot_ret is None:
+        spot_ret = np.log(trading_env.mid_spot_prices).diff()
+
+    if map_spot_ret is None:
+        map_spot_ret = lambda x: x.shift(1)
+
+    # apply transformation to forward discounts
+    spot_ret = map_spot_ret(spot_ret)
+
+    # signals
+    portfolios = poco.rank_sort(spot_ret, spot_ret, **kwargs)
+
+    # carry strategy
+    strategy = FXTradingStrategy.from_long_short(portfolios, leverage=leverage)
+
+    # trading
+    trading = FXTrading(environment=trading_env, strategy=strategy)
+
+    # backtest
+    res = trading.backtest("unrealized")
+
+    return res
+
+
 if __name__ == "__main__":
 
     import matplotlib.pyplot as plt
+    import pickle
 
-    trading_env = wrapper_prepare_environment(settings, bid_ask=True,
-                                              spot_only=False)
+    # trading_env = wrapper_prepare_environment(settings, bid_ask=False,
+    #                                           spot_only=False)
+    #
+    # one_strat = saga_strategy(trading_env, 10, 10, fomc=True, leverage="net",
+    #                           proxy_rate_pickle="overnight_rates.p",
+    #                           e_proxy_rate_pickle=
+    #                             "implied_rates_from_1m_ois_since.p",
+    #                           meetings_pickle="meetings.p",
+    #                           avg_impl_over=settings["avg_impl_over"],
+    #                           avg_refrce_over=settings["avg_refrce_over"],
+    #                           ffill=True)
+    #
+    # with open(path_to_data + "one_saga_strat.p", mode='wb') as hangar:
+    #     pickle.dump(one_strat, hangar)
 
-    one_strat = saga_strategy(trading_env, 10, 10, fomc=True, leverage="net",
-                              proxy_rate_pickle="overnight_rates.p",
-                              e_proxy_rate_pickle=
-                                "implied_rates_from_1m_ois_since.p",
-                              meetings_pickle="meetings.p",
-                              avg_impl_over=settings["avg_impl_over"],
-                              avg_refrce_over=settings["avg_refrce_over"],
-                              ffill=True)
+    # one_strat.plot()
+    # plt.show()
 
-    one_strat.plot()
+    # # momentum
+    # momenta = dict()
+    # for p in [1, 3, 6, 9, 12]:
+    #     map_spot_ret = lambda x: -1*x.rolling(p*22, min_periods=1).mean()\
+    #         .shift(1)
+    #     one_strat = retail_momentum(trading_env, map_spot_ret=map_spot_ret,
+    #                                 n_portfolios=3)
+    #
+    #     momenta[p] = one_strat
+    #
+    # momenta = pd.DataFrame.from_dict(momenta)
+    #
+    # with open(path_to_data + "momenta_strat.p", mode='wb') as hangar:
+    #     pickle.dump(momenta, hangar)
+
+    saga = pd.read_pickle(path_to_data + "one_saga_strat.p").rename("saga")
+    mom = pd.read_pickle(path_to_data + "momenta_strat.p")
+    pd.concat((saga, mom), axis=1).plot()
     plt.show()
+
+    # one_strat.plot()
+    # plt.show()
 
     # h_range = range(1, 2)
     # th_range = range(1, 5)
