@@ -179,11 +179,11 @@ def retail_carry(trading_env, fwd_disc=None, map_fwd_disc=None,
 
     """
     if fwd_disc is None:
-        fwd_disc = trading_env.swap_points["bid"] / \
-                   trading_env.spot_prices["bid"] * -1
+        fwd_disc = trading_env.mid_swap_points / \
+                   trading_env.mid_spot_prices * -1
 
     if map_fwd_disc is None:
-        map_fwd_disc = lambda x: x
+        map_fwd_disc = lambda x: x.shift(1)
 
     # apply transformation to forward discounts
     fwd_disc = map_fwd_disc(fwd_disc)
@@ -237,9 +237,48 @@ def retail_value(trading_env, ppp, spot=None, map_signal=None,
     return res
 
 
+def retail_momentum(trading_env, spot_ret=None, map_spot_ret=None,
+                    leverage="net", **kwargs):
+    """Construct momentum strategy a la Menkhoff et al. (2012).
+
+    Parameters
+    ----------
+    trading_env
+    spot_ret
+    map_spot_ret
+    leverage
+    kwargs
+
+    Returns
+    -------
+
+    """
+    if spot_ret is None:
+        spot_ret = np.log(trading_env.mid_spot_prices).diff()
+
+    if map_spot_ret is None:
+        map_spot_ret = lambda x: x.shift(1)
+
+    # apply transformation to forward discounts
+    spot_ret = map_spot_ret(spot_ret)
+
+    # signals
+    portfolios = poco.rank_sort(spot_ret, spot_ret, **kwargs)
+
+    # carry strategy
+    strategy = FXTradingStrategy.from_long_short(portfolios, leverage=leverage)
+
+    # trading
+    trading = FXTrading(environment=trading_env, strategy=strategy)
+
+    # backtest
+    res = trading.backtest("unrealized")
+
+    return res
+
+
 if __name__ == "__main__":
 
-    # %matplotlib inline
     import matplotlib.pyplot as plt
     from foolbox import tables_and_figures as taf
 
@@ -271,37 +310,6 @@ if __name__ == "__main__":
 
     one_strat.plot()
     plt.show()
-
-
-    # one_strat.plot()
-    # plt.show()
-
-    # log_saga_strat = np.log(one_strat).diff().replace(0.0, np.nan)
-    #
-    # map_fwd_disc = lambda x: x.rolling(20, min_periods=1).mean().shift(1)
-    # carry_strat = retail_carry(trading_env, fwd_disc=None,
-    #                            map_fwd_disc=map_fwd_disc, n_portfolios=3)
-    #
-    # carry_strat.plot()
-    #
-    # log_carry_strat = np.log(carry_strat).diff().replace(0.0, np.nan)
-    #
-    # spanning_t = taf.ts_ap_tests(y=log_saga_strat.dropna().to_frame("saga"),
-    #                              X=log_carry_strat.dropna().to_frame("carry"),
-    #                              scale=252)
-    #
-    # pd.concat((log_saga_strat, log_carry_strat), axis=1).to_clipboard()
-    #
-    # map_fwd_disc = lambda x: -1*x.rolling(22, min_periods=1).mean().shift(2)
-    #
-    # fwd_disc = trading_env.swap_points["bid"] /\
-    #     trading_env.spot_prices["bid"]
-    # fwd_disc_weird = fwd_disc.diff().rolling(5, min_periods=1).mean()
-    # mom = retail_carry(trading_env,
-    #                    fwd_disc=fwd_disc_weird,
-    #                    map_fwd_disc=None, n_portfolios=3)
-    # mom.plot()
-    # mom.pct_change().mean() * 100
 
     # h_range = range(1, 2)
     # th_range = range(1, 5)
