@@ -105,8 +105,8 @@ def wrapper_prepare_environment(settings, bid_ask=True, spot_only=False):
     else:
         spot_prices = (fx_data["spot_bid"].loc[s_dt:e_dt, :] +
                        fx_data["spot_ask"].loc[s_dt:e_dt, :]) / 2
-        swap_points = (fx_data["spot_bid"].loc[s_dt:e_dt, :] +
-                       fx_data["spot_ask"].loc[s_dt:e_dt, :]) / 2
+        swap_points = (fx_data["tnswap_bid"].loc[s_dt:e_dt, :] +
+                       fx_data["tnswap_ask"].loc[s_dt:e_dt, :]) / 2
 
     if spot_only:
         swap_points *= 0.0
@@ -202,12 +202,48 @@ def retail_carry(trading_env, fwd_disc=None, map_fwd_disc=None,
 
     return res
 
+def retail_value(trading_env, ppp, spot=None, map_signal=None,
+                 leverage="net", **kwargs):
+    """
+    """
+    if spot is None:
+        spot = (trading_env.spot_prices["ask"] +
+                trading_env.spot_prices["bid"]) / 2
+
+    if map_signal is None:
+        map_signal = lambda x: x.shift(1)
+
+    # reindex
+    ppp_reix = ppp.reindex(spot.index, method="ffill")
+
+    # reer-like
+    signal = ppp_reix / spot
+
+    # apply transformation to forward discounts
+    signal = map_signal(signal)
+
+    # signals
+    portfolios = poco.rank_sort(signal, signal, **kwargs)
+
+    # carry strategy
+    strategy = FXTradingStrategy.from_long_short(portfolios, leverage=leverage)
+
+    # trading
+    trading = FXTrading(environment=trading_env, strategy=strategy)
+
+    # backtest
+    res = trading.backtest("unrealized")
+
+    return res
+
 
 if __name__ == "__main__":
 
+    # %matplotlib inline
     import matplotlib.pyplot as plt
+    from foolbox import tables_and_figures as taf
 
-    trading_env = wrapper_prepare_environment(settings, bid_ask=True,
+    trading_env = wrapper_prepare_environment(settings, bid_ask=False,
                                               spot_only=False)
 
     one_strat = saga_strategy(trading_env, 10, 10, fomc=True, leverage="net",
@@ -219,8 +255,53 @@ if __name__ == "__main__":
                               avg_refrce_over=settings["avg_refrce_over"],
                               ffill=True)
 
+    saga_strat = np.log(one_strat).diff().replace(0.0, np.nan).dropna()\
+        .to_frame("saga")
+
+    ppp = pd.read_pickle(path_to_data + "ppp_1990_2017_y.p")
+    ppp = ppp.loc[:, trading_env.currencies]
+    map_signal = lambda x: x.rolling(22, min_periods=1).mean().shift(1)
+    one_strat = retail_value(trading_env, ppp=ppp, spot=None,
+                             map_signal=map_signal, n_portfolios=3)
+
+    log_strat = np.log(one_strat).diff().replace(0.0, np.nan).dropna() \
+        .to_frame("strat")
+    print(taf.descriptives(log_strat, scale=252))
+    print(taf.ts_ap_tests(saga_strat, log_strat))
+
     one_strat.plot()
     plt.show()
+
+
+    # one_strat.plot()
+    # plt.show()
+
+    # log_saga_strat = np.log(one_strat).diff().replace(0.0, np.nan)
+    #
+    # map_fwd_disc = lambda x: x.rolling(20, min_periods=1).mean().shift(1)
+    # carry_strat = retail_carry(trading_env, fwd_disc=None,
+    #                            map_fwd_disc=map_fwd_disc, n_portfolios=3)
+    #
+    # carry_strat.plot()
+    #
+    # log_carry_strat = np.log(carry_strat).diff().replace(0.0, np.nan)
+    #
+    # spanning_t = taf.ts_ap_tests(y=log_saga_strat.dropna().to_frame("saga"),
+    #                              X=log_carry_strat.dropna().to_frame("carry"),
+    #                              scale=252)
+    #
+    # pd.concat((log_saga_strat, log_carry_strat), axis=1).to_clipboard()
+    #
+    # map_fwd_disc = lambda x: -1*x.rolling(22, min_periods=1).mean().shift(2)
+    #
+    # fwd_disc = trading_env.swap_points["bid"] /\
+    #     trading_env.spot_prices["bid"]
+    # fwd_disc_weird = fwd_disc.diff().rolling(5, min_periods=1).mean()
+    # mom = retail_carry(trading_env,
+    #                    fwd_disc=fwd_disc_weird,
+    #                    map_fwd_disc=None, n_portfolios=3)
+    # mom.plot()
+    # mom.pct_change().mean() * 100
 
     # h_range = range(1, 2)
     # th_range = range(1, 5)
