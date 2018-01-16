@@ -202,6 +202,40 @@ def retail_carry(trading_env, fwd_disc=None, map_fwd_disc=None,
 
     return res
 
+def retail_value(trading_env, ppp, spot=None, map_signal=None,
+                 leverage="net", **kwargs):
+    """
+    """
+    if spot is None:
+        spot = (trading_env.spot_prices["ask"] +
+                trading_env.spot_prices["bid"]) / 2
+
+    if map_signal is None:
+        map_signal = lambda x: x.shift(1)
+
+    # reindex
+    ppp_reix = ppp.reindex(spot.index, method="ffill")
+
+    # reer-like
+    signal = ppp_reix / spot
+
+    # apply transformation to forward discounts
+    signal = map_signal(signal)
+
+    # signals
+    portfolios = poco.rank_sort(signal, signal, **kwargs)
+
+    # carry strategy
+    strategy = FXTradingStrategy.from_long_short(portfolios, leverage=leverage)
+
+    # trading
+    trading = FXTrading(environment=trading_env, strategy=strategy)
+
+    # backtest
+    res = trading.backtest("unrealized")
+
+    return res
+
 
 def retail_momentum(trading_env, spot_ret=None, map_spot_ret=None,
                     leverage="net", **kwargs):
@@ -246,48 +280,36 @@ def retail_momentum(trading_env, spot_ret=None, map_spot_ret=None,
 if __name__ == "__main__":
 
     import matplotlib.pyplot as plt
-    import pickle
+    from foolbox import tables_and_figures as taf
 
-    # trading_env = wrapper_prepare_environment(settings, bid_ask=False,
-    #                                           spot_only=False)
-    #
-    # one_strat = saga_strategy(trading_env, 10, 10, fomc=True, leverage="net",
-    #                           proxy_rate_pickle="overnight_rates.p",
-    #                           e_proxy_rate_pickle=
-    #                             "implied_rates_from_1m_ois_since.p",
-    #                           meetings_pickle="meetings.p",
-    #                           avg_impl_over=settings["avg_impl_over"],
-    #                           avg_refrce_over=settings["avg_refrce_over"],
-    #                           ffill=True)
-    #
-    # with open(path_to_data + "one_saga_strat.p", mode='wb') as hangar:
-    #     pickle.dump(one_strat, hangar)
+    trading_env = wrapper_prepare_environment(settings, bid_ask=False,
+                                              spot_only=False)
 
-    # one_strat.plot()
-    # plt.show()
+    one_strat = saga_strategy(trading_env, 10, 10, fomc=True, leverage="net",
+                              proxy_rate_pickle="overnight_rates.p",
+                              e_proxy_rate_pickle=
+                                "implied_rates_from_1m_ois_since.p",
+                              meetings_pickle="meetings.p",
+                              avg_impl_over=settings["avg_impl_over"],
+                              avg_refrce_over=settings["avg_refrce_over"],
+                              ffill=True)
 
-    # # momentum
-    # momenta = dict()
-    # for p in [1, 3, 6, 9, 12]:
-    #     map_spot_ret = lambda x: -1*x.rolling(p*22, min_periods=1).mean()\
-    #         .shift(1)
-    #     one_strat = retail_momentum(trading_env, map_spot_ret=map_spot_ret,
-    #                                 n_portfolios=3)
-    #
-    #     momenta[p] = one_strat
-    #
-    # momenta = pd.DataFrame.from_dict(momenta)
-    #
-    # with open(path_to_data + "momenta_strat.p", mode='wb') as hangar:
-    #     pickle.dump(momenta, hangar)
+    saga_strat = np.log(one_strat).diff().replace(0.0, np.nan).dropna()\
+        .to_frame("saga")
 
-    saga = pd.read_pickle(path_to_data + "one_saga_strat.p").rename("saga")
-    mom = pd.read_pickle(path_to_data + "momenta_strat.p")
-    pd.concat((saga, mom), axis=1).plot()
+    ppp = pd.read_pickle(path_to_data + "ppp_1990_2017_y.p")
+    ppp = ppp.loc[:, trading_env.currencies]
+    map_signal = lambda x: x.rolling(22, min_periods=1).mean().shift(1)
+    one_strat = retail_value(trading_env, ppp=ppp, spot=None,
+                             map_signal=map_signal, n_portfolios=3)
+
+    log_strat = np.log(one_strat).diff().replace(0.0, np.nan).dropna() \
+        .to_frame("strat")
+    print(taf.descriptives(log_strat, scale=252))
+    print(taf.ts_ap_tests(saga_strat, log_strat))
+
+    one_strat.plot()
     plt.show()
-
-    # one_strat.plot()
-    # plt.show()
 
     # h_range = range(1, 2)
     # th_range = range(1, 5)
