@@ -169,7 +169,7 @@ class EventStudy():
         data = list()
         for k, v in self.timeline.items():
             this_data = self.abnormal_data.loc[:, k]
-            this_tml = v.loc[:, "evt_no"].isnull()
+            this_tml = v.loc[:, "inter_evt"].notnull()
 
             data.append(this_data.where(this_tml))
 

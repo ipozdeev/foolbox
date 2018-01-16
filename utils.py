@@ -311,7 +311,8 @@ def interevent_qcut(data_to_slice, events, n_quantiles):
     return out.drop(["evt_num"], axis=1)
 
 
-def parse_bloomberg_excel(filename, colnames_sheet, data_sheets):
+def parse_bloomberg_excel(filename, colnames_sheet, data_sheets, space=0,
+                          **kwargs):
     """Parse .xlsx frile constructed with Bloomberg Excel API.
 
     Returns
@@ -333,18 +334,22 @@ def parse_bloomberg_excel(filename, colnames_sheet, data_sheets):
             res = pd.NaT
         return res
 
+    # colnames
+    colnames = pd.read_excel(filename, sheet_name=colnames_sheet, header=0)
+    colnames = colnames.columns
+
     # if data_sheets is None, read in all sheets
     if data_sheets is None:
         data_dict_full = pd.read_excel(filename,
-            sheet_name=None,
-            header=0)
+            sheet_name=None, **kwargs)
+        data_dict_full.pop(colnames_sheet)
+
     else:
         data_dict_full = pd.read_excel(filename,
-            sheet_name=data_sheets+[colnames_sheet],
-            header=0)
+            sheet_name=data_sheets, **kwargs)
 
-    # fetch column names from respective sheet
-    colnames = data_dict_full.pop(colnames_sheet).columns
+    # # fetch column names from respective sheet
+    # colnames = data_dict_full.pop(colnames_sheet).columns
 
     # loop over sheetnames
     all_data = dict()
@@ -352,9 +357,9 @@ def parse_bloomberg_excel(filename, colnames_sheet, data_sheets):
     for s, data_df in data_dict_full.items():
         # loop over triplets, map dates, extract
         new_data_df = []
-        for p in range((data_df.shape[1]+1)//3):
+        for p in range((data_df.shape[1]+1)//(2+space)):
             # this triplet
-            this_piece = data_df.iloc[1:, p*3:(p+1)*3-1]
+            this_piece = data_df.iloc[1:, p*(2+space):(p+1)*(2+space)-space]
 
             # map date
             this_piece.iloc[:, 0] = this_piece.iloc[:, 0].map(converter)
@@ -364,6 +369,10 @@ def parse_bloomberg_excel(filename, colnames_sheet, data_sheets):
 
             # extract date as index
             this_piece = this_piece.set_index(this_piece.columns[0])
+
+            # drop duplicates
+            this_piece = this_piece.loc[
+                ~this_piece.index.duplicated(keep="first")]
 
             # rename
             this_piece.columns = [colnames[p]]

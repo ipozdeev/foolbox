@@ -252,7 +252,7 @@ if __name__ == "__main__":
 
     # loop over direction of rate decision: "ups" or "downs"
     for d in ["hike", "cut"]:
-        # d = "cut"
+        # d = "hike"
         # and over counter currencies
         for c in ["jpy", "gbp"]:
             # c = "usd"
@@ -268,7 +268,7 @@ if __name__ == "__main__":
                 direction=d,
                 mean_type="count_weighted",
                 ci_width=0.95,
-                normal_data=0.0
+                normal_data=0.0,
                 window=window)
 
             # save ----------------------------------------------------------
@@ -295,6 +295,92 @@ if __name__ == "__main__":
                 f_a_fomc.savefig(out_path +\
                     '_'.join(
                         ("xxx", c,  "before", "fomc", d, "wght_avg.pdf")))
+
+    with open(data_path + "implied_rates_bloomberg.p", mode="rb") as hngr:
+        ir = pickle.load(hngr)
+
+    with open(data_path + "ois_bloomberg.p", mode="rb") as hngr:
+        ois_data = pickle.load(hngr)
+
+    on = pd.DataFrame({k: v.loc[:, "ON"] for k, v in ois_data.items()})
+
+    dr = ir - on
+    dr = dr.dropna(axis=1, how="all")
+
+
+    this_dr = dr.shift(12).where(np.abs(events) > 0.0001)
+    this_dr = events.copy().where(np.abs(events) > 0.0001)
+
+    cumret = ds.rolling(10).sum().shift(1).where(np.abs(events) > 0.0001)
+
+    this_dr, cumret = this_dr.align(cumret, axis=1, join="inner")
+
+    y = cumret.stack().rename("return").astype(float)
+    x = this_dr.stack().rename("dr").astype(float)
+
+    mod = PureOls(y0=y, X0=x, add_constant=True)
+    mod.get_diagnostics()
+
+    dr.where(events > 0.00001).aud.dropna(how="all")
+    pd.concat((
+        this_dr.where(events > 0.00001).chf.rename("dr"),
+        cumret.where(events > 0.00001).chf.rename("return")), axis=1)\
+        .plot.scatter(x="dr", y="return")
+
+    dr = dr.shift(12).where(events)
+
+    this_ds = ds.drop(
+        [p for p in drop_curs] + ["usd"], axis=1, errors="ignore")
+
+    dr = dr.loc[:, this_ds.columns]
+
+    res = dict()
+    for thresh in np.arange(0.1, 0.35, 0.05):
+        # thresh = 0.1
+        this_evt = dr.where(np.abs(dr) >= thresh)
+        this_evt.dropna(how="all")
+        es = EventStudy(data=this_ds,
+            events=np.sign(this_evt.where(np.sign(this_evt) < 0)),
+            window=window,
+            mean_type="count_weighted",
+            normal_data=0.0,
+            x_overlaps=True)
+
+        cumsums = es.evt_avg_ts_sum.mean(axis="items")
+        res[thresh] = cumsums.loc[-10, :]
+
+    res = pd.DataFrame(res).T
+
+    res.plot()
+
+    cumret = this_ds.reindex(
+        index=pd.date_range(this_ds.index[0], this_ds.index[-1], freq='B'))
+    cumret = cumret.rolling(10).sum().shift(1)
+
+    r = cumret.where(events < 0)
+    this_dr = dr.shift(12).where(events < 0)
+    r = r.stack().astype(float)
+    this_dr = this_dr.stack()
+
+    r.head()
+    this_dr.head()
+
+    r, this_dr = r.align(this_dr, join="inner")
+
+    r.index = np.arange(r.shape[0])
+    this_dr.index = np.arange(this_dr.shape[0])
+
+    r = r.rename("return")
+    this_dr = this_dr.rename("dr")
+
+    from foolbox.linear_models import PureOls
+
+    mod = PureOls(r, this_dr, add_constant=True)
+    mod.get_diagnostics()
+
+    pd.concat((r, this_dr), axis=1).plot.scatter(x="dr", y="return")
+
+
 
 
 # # event study for all banks in a loop ---------------------------------------
@@ -427,3 +513,10 @@ if __name__ == "__main__":
 # dt_tok.tz_convert(pytz.timezone("America/New_York"))
 #
 # dt.tz_convert(pytz.timezone("Europe/Berlin"))
+
+
+x = np.random.normal(size=(1000,)) / 10 + 0.01
+y = np.cumprod(1 + x)
+
+import matplotlib.pyplot as plt
+plt.plot(y)

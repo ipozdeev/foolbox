@@ -109,3 +109,125 @@ for holding_period in holding_range:
         nav = fx_trading.backtest()
 
 
+from pandas.tseries.holiday import AbstractHolidayCalendar, Holiday, \
+    GoodFriday, EasterMonday
+
+class SwedenHolidayCalendar(AbstractHolidayCalendar):
+    rules = [
+        Holiday("Epiphany", month=1, day=6),
+        GoodFriday,
+        EasterMonday,
+        Holiday("InternationalLaborDay", month=5, day=1),
+        Holiday()
+        ]
+
+    , observance=nearest_workday
+
+
+#
+from foolbox.api import *
+data_path
+pe = PolicyExpectation.from_pickles(data_path,
+    currency="usd", events_pickle="ois_project_events.p",
+    impl_rates_pickle="implied_rates_bloomberg.p", s_dt=s_dt)
+
+ir = pd.read_clipboard(index_col=0, parse_dates=True, header=None)
+ir = ir.squeeze()
+ir = ir.loc[sorted(ir.index)]
+ir = ir.reindex(index=pd.date_range(ir.index[0], ir.index[-1], freq='B'),
+    method="ffill")
+pe.rate_expectation = ir
+ir.index.isin(pe.rate_expectation.index).sum()
+
+s_dt = "2004-01-01"
+
+this_evt = events.loc[s_dt:, "usd"].dropna()
+this_on = on_rates.loc[s_dt:, "usd"]
+
+pe_ois.rate_expectation = pe.rate_expectation.loc[s_dt:end_date]
+
+r_until = OIS.from_iso("usd",
+    maturity=DateOffset(months=1)).get_rates_until(this_on, this_evt,
+        method="g_average")
+
+# loop over lags, calculate VUS
+this_vus = pd.Series(index=lags)
+
+for p in lags:
+    this_vus.loc[p] = pe.get_vus(lag=p, ref_rate=r_until)
+this_vus.to_clipboard()
+both = pd.concat((pe.rate_expectation, ir), axis=1)
+both.columns = ["ours", "theirs"]
+
+three = pd.concat(
+    (both.shift(10).loc[this_evt.index], events_data["fomc"].loc[:, "rate"]),
+    axis=1)
+
+both.dropna().to_clipboard()
+
+this_evt
+events_data["fomc"].loc[:, "rate"]
+
+ir.to_clipboard()
+
+pe_fff.rate_expectation = pe_fff.rate_expectation.loc[s_dt:]
+pe_fff
+
+
+# ---------------------------------------------------------------------------
+# currency to drop
+drop_curs = ["usd","jpy","dkk"]
+
+# window
+wa,wb,wc,wd = -10,-1,1,5
+window = (wa,wb,wc,wd)
+
+s_dt = settings["sample_start"]
+e_dt = settings["sample_end"]
+
+# data ------------------------------------------------------------------
+data_path = set_credentials.gdrive_path("research_data/fx_and_events/")
+out_path = set_credentials.gdrive_path("opec_meetings/tex/figs/")
+
+# spot returns + drop currencies ----------------------------------------
+with open(data_path + settings["fx_data"], mode='rb') as fname:
+    fx = pickle.load(fname)
+ret = np.log(fx["spot_mid"].drop(drop_curs,axis=1,errors="ignore")).diff()
+
+# events + drop currencies ----------------------------------------------
+with open(data_path + settings["events_data"], mode='rb') as fname:
+    events_data = pickle.load(fname)
+
+events = events_data["joint_cbs"].drop(drop_curs, axis=1, errors="ignore")
+events = events.where(events < 0)
+
+# data = ret["nzd"]
+data = ret.copy().loc[s_dt:e_dt]
+events = events.loc[s_dt:e_dt]
+
+var_sums = pd.DataFrame(index=events.columns, columns=["var", "count"])
+
+for c in events.columns:
+    # c = "nzd"
+    es = EventStudy(data=data[c],
+        events=events[c].dropna(),
+        window=window,
+        normal_data=0.0,
+        x_overlaps=True)
+
+    evts_used = es.timeline[c].loc[:, "evt_no"].dropna().unique()
+
+    mask = es.timeline[c].loc[:, "inter_evt"].isnull()
+
+    # calculate variance between events
+    var_btw = resample_between_events(data[c],
+        events=events[c].dropna(),
+        fun=lambda x: np.nanmean(x**2),
+        mask=mask)
+
+    var_sums.loc[c, "var"] = var_btw.loc[evts_used].sum().values[0]
+    var_sums.loc[c, "count"] = var_btw.loc[evts_used].count().values[0]
+
+t = 10
+np.sqrt((t*(var_sums.loc[:, "var"] / var_sums.loc[:, "count"]**2)).sum() /\
+    var_sums.shape[0]**2)*100*1.95
