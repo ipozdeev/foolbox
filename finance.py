@@ -1542,7 +1542,7 @@ def get_pe_signals(currencies, lag, threshold, data_path, fomc=False,
     # For the US get the fomc announcements and use them for every currency
     if fomc:
         # Construct signals for the dollar index
-        us_pe = PolicyExpectation.from_pickles(data_path, "usd")
+        us_pe = PolicyExpectation.from_pickles(data_path, "usd", ffill=True)
         us_fcast = \
             us_pe.forecast_policy_direction(
                 lag=lag, h_high=threshold/100,
@@ -1558,7 +1558,8 @@ def get_pe_signals(currencies, lag, threshold, data_path, fomc=False,
         policy_fcasts = list()
         # Get signals for each currency in the list
         for curr in currencies:
-            tmp_pe = PolicyExpectation.from_pickles(data_path, currency=curr)
+            tmp_pe = PolicyExpectation.from_pickles(data_path, currency=curr,
+                                                    ffill=True)
             # policy_fcasts.append(
             #     tmp_pe.forecast_policy_change(lag=lag,threshold=threshold/100,
             #                                   **kwargs))

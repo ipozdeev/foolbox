@@ -6,7 +6,7 @@ from foolbox.api import *
 
 # Set the desired ois series, and signal cutoff threshold
 ois_data = "icap_1m"
-cutoff = 0.24
+cutoff = 0.125
 
 # Load datasets: exchange rates, events, and impled policy rates measures
 with open(data_path+"data_wmr_dev_d.p", mode="rb") as fname:

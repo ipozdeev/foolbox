@@ -52,7 +52,7 @@ def calculate_ois_implied_rates(ois_df, overnight_df, events_df, maturity,
 
     # loop over currencies
     for c in ois_df.columns:
-        # c = "usd"
+        # c = "sek"
         print(c)
 
         # OIS
@@ -85,12 +85,15 @@ def calculate_ois_implied_rates(ois_df, overnight_df, events_df, maturity,
             this_on_rate,
             this_evt,
             func=lambda x: x.expanding(min_periods=1).mean(),
-            lag=ois_object.fixing_lag)
+            lag=ois_object.fixing_lag + 1)
         proxy_rate = proxy_rate.shift(ois_object.new_rate_lag)
 
         # # rates expected to prevail before meetings
         # proxy_rate = ois_object.get_rates_until(this_on_rate, this_evt,
         #     method="g_average")
+
+        # proxy_rate = map_proxy_rate(this_on_rate)\
+        #     .shift(ois_object.new_rate_lag)
 
         pe = PolicyExpectation.from_ois(
             meetings=this_evt,

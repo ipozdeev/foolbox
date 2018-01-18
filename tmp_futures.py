@@ -194,13 +194,23 @@ if __name__ == "__main__":
     # Feel free to test the stuff for oil futures, or for the fucking goddamn
     # LEAN HOGS
     filename = data_path + "sp_futures_raw.p"
-    # filename = data_path + "wti_futures_raw.p"
+    filename = data_path + "wti_futures_raw.p"
+    # filename = data_path + "gold_futures_raw.p"
     # filename = data_path + "lean_hogs_futures_raw.p"
+    # filename = data_path + "fed_funds_futures_raw.p"
+    # filename = data_path + "nzd_futures_raw.p"
+    filename = data_path + "aud_futures_raw.p"
+    # filename = data_path + "ftse100_futures_raw.p"
+    # filename = data_path + "vix_futures_raw.p"
+    # filename = data_path + "nikkei_futures_raw.p"
+    # filename = data_path + "coffee_futures_raw.p"
+    # filename = data_path + "brent_futures_raw.p"
     with open(filename, mode="rb") as hut:
         sp_data = pickle.load(hut)
 
     # Get the settlement prices
     settle = get_futures_datatype(sp_data, "Settle")
+    volume = get_futures_datatype(sp_data, 'Prev. Day Open Interest')
 
     # Get the roll dates: roll contracts 10 days before the last trading day
     roll_dates = settle.apply(lambda x: x.dropna().index[-10])
@@ -209,7 +219,13 @@ if __name__ == "__main__":
     # (SP futures expire every quarter 4-layer depth should span a year)
     cunt_rat = [continuos_futures(settle.pct_change(),
                                   roll_dates, k) for k in range(4)]
-    cunt_rat = pd.concat(cunt_rat, axis=1).dropna()*100
+    cunt_rat = pd.concat(cunt_rat, join="outer", axis=1).dropna(how="all")*100
+    # cunt_rat = cunt_rat.sub(cunt_rat["cont_0"], axis=0).drop(["cont_0"],
+    #                                                          axis=1)
+
+    cunt_rat = [continuos_futures(volume.pct_change(),
+                                  roll_dates, k) for k in range(1)]
+    cunt_rat = pd.concat(cunt_rat, join="outer", axis=1).dropna(how="all")*100
 
     # Load the events
     with open(data_path + settings["events_data"], mode='rb') as fname:
@@ -217,10 +233,10 @@ if __name__ == "__main__":
 
     s_dt = "1995-01"
     e_dt = "2017-06"
-    wa,wb,wc,wd = -10, -1, 1, 5
+    wa, wb, wc, wd = -10, -1, 1, 5
     window = (wa, wb, wc, wd)
 
-    events = events_data["fomc"]["change"]
+    events = events_data["rba"]["change"]
     events = events.loc[s_dt:e_dt]
 
     # Make the same event for each contract
@@ -229,11 +245,16 @@ if __name__ == "__main__":
 
     # Select the data for the event study
     data = cunt_rat.loc[s_dt:e_dt]
-    test_events = events.copy().where(events > 0)
-    normal_data = 0.0 #data.rolling(132).mean().shift(1)
+    test_events = events.copy().where(events < 0)
 
-    es = EventStudy(data, test_events, window, mean_type="count_weighted",
-                    normal_data=normal_data, x_overlaps=True)
+    normal_data = data.rolling(66).mean().shift(1)
+
+    es = EventStudy.with_normal_data(events, test_events, wind,
+                                     mean_type="count_weighted",
+                    norm_data_method="between_events", x_overlaps=True)
+
+    # es = EventStudy(data, test_events, wind, mean_type="count_weighted",
+    #                 normal_data=normal_data, x_overlaps=True)
 
     ci_boot_c = es.get_ci(ps=(0.025, 0.975), method="boot", n_blocks=10, M=10)
     es.plot()

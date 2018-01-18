@@ -3,7 +3,7 @@ from foolbox.wp_tabs_figs.wp_settings import settings
 
 if __name__ == "__main__":
     # Set the deviation sensitivity in bps
-    deviation_threshold = 50
+    deviation_threshold = 25
 
     # Set the sample
     start_date = settings["sample_start"]
@@ -34,6 +34,14 @@ if __name__ == "__main__":
 
         # New implied rates are from "implied_rates_from_1m_ois.p"
         new_pe = PolicyExpectation.from_pickles(data_path, curr, ffill=True)
+
+        new_pe = PolicyExpectation.from_pickles(
+            data_path, curr, ffill=True,
+            e_proxy_rate_pickle="implied_rates_from_1m_ois_roll_5d.p")
+
+        new_pe = PolicyExpectation.from_pickles(
+            data_path, curr, ffill=True,
+            e_proxy_rate_pickle="implied_rates_from_1m_ois.p")
 
         # Also get the old ones
         old_pe = PolicyExpectation.from_pickles(
@@ -66,3 +74,6 @@ if __name__ == "__main__":
     print("These bastards do deviate: \n",
           diff_bps.where(np.abs(diff_bps) >
                          deviation_threshold).dropna(how="all"))
+
+    intra_event = pd.read_pickle(data_path + "implied_rates_from_1m_ois.p")
+    roll5 = pd.read_pickle(data_path + "implied_rates_from_1m_ois_roll_5d.p")

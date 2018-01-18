@@ -20,6 +20,8 @@ start_date = settings["sample_start"]
 
 end_date = settings["sample_end"]
 
+no_good_curs = ["dkk", "jpy", "nok", "aud", "cad", "chf", "eur", "nzd", "sek"]
+
 # Set up the parameters of trading strategies
 lag = 10              # actually the holding period,
 lag_expect = lag + 2  # forecast rate one day in advance of trading
@@ -53,18 +55,18 @@ major_locator = mdates.YearLocator(2)
 data = pd.read_pickle(data_path+input_dataset)
 
 # Get the individual currenices, spot rates:
-spot_mid = data["spot_mid"][start_date:end_date].drop(["dkk", "jpy", "nok"],
+spot_mid = data["spot_mid"][start_date:end_date].drop(no_good_curs,
                                                       axis=1)
-spot_bid = data["spot_bid"][start_date:end_date].drop(["dkk", "jpy", "nok"],
+spot_bid = data["spot_bid"][start_date:end_date].drop(no_good_curs,
                                                       axis=1)
-spot_ask = data["spot_ask"][start_date:end_date].drop(["dkk", "jpy", "nok"],
+spot_ask = data["spot_ask"][start_date:end_date].drop(no_good_curs,
                                                       axis=1)
 
 # And swap points
-swap_ask = data["tnswap_ask"][start_date:end_date].drop(["dkk", "jpy", "nok"],
+swap_ask = data["tnswap_ask"][start_date:end_date].drop(no_good_curs,
                                                         axis=1)
 swap_ask = remove_outliers(swap_ask, 50)
-swap_bid = data["tnswap_bid"][start_date:end_date].drop(["dkk", "jpy", "nok"],
+swap_bid = data["tnswap_bid"][start_date:end_date].drop(no_good_curs,
                                                         axis=1)
 swap_bid = remove_outliers(swap_bid, 50)
 
