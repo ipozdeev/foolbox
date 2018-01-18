@@ -2,7 +2,8 @@
 currency data set"""
 
 settings = {
-    "drop_currencies": ["dkk","jpy","nok"],
+    "drop_currencies": ["dkk",],
+    "no_ois_currencies": ["jpy", "nok"],
     "sample_start": "2000-11-01",
     "sample_end": "2017-03-31",
     "fx_data": "fx_by_tz_aligned_d.p",
