@@ -3,14 +3,15 @@ from foolbox.wp_ois.wp_settings import ois_start_dates, end_date
 from itertools import combinations_with_replacement, product
 from foolbox.visuals import broomstick_plot
 import seaborn as sns
+from utils import align_and_fillna
 from foolbox.wp_tabs_figs.wp_settings import settings
 
 if __name__ == "__main__":
 
     # Test for combinations of these maturities. e.g. 1Y-6M, 1Y-1M, 6M-3M...
-    test_maturities = ["ON", "1M", "3M", "6M", "9M", "1Y"]
+    test_maturities = ["1M", "3M", "6M", "9M", "1Y"]
     test_currencies = ['aud', 'cad', 'chf', 'eur', 'gbp', 'jpy', 'nzd', 'sek']
-
+    test_currencies = ["sek"]
     # Get all combinations of maturities
     maturity_combos = list(combinations_with_replacement(test_maturities, 2))
 
@@ -20,18 +21,45 @@ if __name__ == "__main__":
             maturity_combos.pop(position)
 
     # Lookback periods and smoothing parameter
-    signal_lag = np.arange(2, 44, 1)
+    signal_lag = np.arange(1, 10, 1)
     signal_smooth = 5  # take rolling mean of rates over this period
 
     # Import the data
+    fx_data = pd.read_pickle(data_path+"daily_rx.p")
     with open(data_path+"daily_rx.p", mode="rb") as hunger:
-        rx = pickle.load(hunger)["rx"]
+        fx_data = pickle.load(hunger)
 
+    ois_data = pd.read_pickle(data_path+"ois_bloomberg.p")
     with open(data_path + "ois_bloomberg.p", mode="rb") as halupa:
         ois_data = pickle.load(halupa)
 
+    ois_data = align_and_fillna(ois_data, method="ffill")
+
+    with open(data_path+"data_dev_d.p", mode="rb") as fname:
+        stock_data = pickle.load(fname)["msci_ret"]
+
     # Select currencies
+    rx = fx_data["rx"]
+    rx["usd"] = -rx.mean(axis=1)
     test_rx = rx[test_currencies]
+
+
+    # cols = test_rx.columns
+    # test_rx = pd.concat([test_rx.usd for col in test_rx.columns], axis=1)
+    # test_rx.columns = cols
+    # test_rx = test_rx[test_currencies]
+
+    # # Unhedged stocks
+    # test_rx = stock_data[test_currencies]
+
+    # Hedged stocks
+    # test_rx = stock_data[test_currencies] - rx[test_currencies] + \
+    #     fx_data["spot"][test_currencies]
+
+    # test_rx = pd.concat([stock_data.usd for curr in test_currencies], axis=1)
+    # test_rx.columns = test_currencies
+
+    test_rx = test_rx#["2004":"2010"]
 
     # Multiindex df with combos of maturity differentials and lookbacks
     mix = product(maturity_combos, signal_lag)  # brut force product of tuples
@@ -55,6 +83,41 @@ if __name__ == "__main__":
             signals[curr] = \
                 ois_data[curr][mat_high][ois_start_dates[curr]:end_date] - \
                 ois_data[curr][mat_low][ois_start_dates[curr]:end_date]
+            # signals[curr] = signals[curr] - \
+            #     (ois_data["usd"][mat_high][ois_start_dates[curr]:end_date] -
+            #      ois_data["usd"][mat_low][ois_start_dates[curr]:end_date])
+
+            # other_currs = list(set(test_currencies).difference(curr))
+            # tmp_other = \
+            #     pd.concat(
+            #         [ois_data[k][mat_high][ois_start_dates[curr]:end_date]
+            #          for k in other_currs], axis=1).mean(axis=1) - \
+            #     pd.concat(
+            #         [ois_data[k][mat_low][ois_start_dates[curr]:end_date]
+            #          for k in other_currs], axis=1).mean(axis=1)
+            #
+            # signals[curr] -= tmp_other
+
+            # signals[curr] = \
+            #     ois_data["usd"][mat_high][ois_start_dates[curr]:end_date] - \
+            #     ois_data["usd"][mat_low][ois_start_dates[curr]:end_date]
+
+            # if curr == "usd":
+            #     signals[curr] = \
+            #         ois_data["usd"][mat_high][ois_start_dates[curr]:end_date] - \
+            #         ois_data["usd"][mat_low][ois_start_dates[curr]:end_date]
+            #     other_currs = list(set(test_currencies).difference(curr))
+            #     tmp_other = \
+            #         pd.concat(
+            #             [ois_data[k][mat_high][ois_start_dates[curr]:end_date]
+            #              for k in other_currs], axis=1).mean(axis=1) - \
+            #         pd.concat(
+            #             [ois_data[k][mat_low][ois_start_dates[curr]:end_date]
+            #              for k in other_currs], axis=1).mean(axis=1)
+            #
+            #     signals[curr] -= tmp_other
+
+
 
         # Lag and roll
         signals = signals.rolling(signal_smooth).mean().shift(lookback)
@@ -63,8 +126,19 @@ if __name__ == "__main__":
         backtest.loc[:, (mat_low, mat_high, lookback)] = \
             multiple_timing(test_rx, signals, xs_avg=True).squeeze()
 
+        # test_rx = test_rx.resample("M").sum()
+        # signals = signals.resample("M").last().shift(1)
+        # backtest.loc[:, (mat_low, mat_high, lookback)] = \
+        #     poco.get_factor_portfolios(
+        #         poco.rank_sort_adv(
+        #             test_rx.reindex(signals.index), signals, 3),
+        #         hml=True).hml
+        # print(mat_low, mat_high, lookback)
+
     # Plot the strategy
     fig = broomstick_plot(backtest.cumsum())
+    ix = pd.IndexSlice
+    backtest.loc[:, ix["1M", "9M", 5]].cumsum().plot()
 
     # Plot the cumulative return heatmap
     # Arrange mean return: maturity differential vs lookback

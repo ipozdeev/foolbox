@@ -1,14 +1,67 @@
-import pandas as pd
-import multiprocessing
-from itertools import product
-
 from foolbox.fxtrading import *
 from foolbox.data_mgmt import set_credentials as set_cred
-from foolbox.finance import get_pe_signals
-
 from foolbox.wp_tabs_figs.wp_settings import settings
+from foolbox.finance import get_pe_signals
+import pickle
+import pandas as pd
 
 path_to_data = set_cred.set_path("research_data/fx_and_events/")
+
+# Set the output path, input data and sample
+s_dt = pd.to_datetime(settings["sample_start"])
+e_dt = pd.to_datetime(settings["sample_end"])
+avg_impl_over = settings["avg_impl_over"]
+avg_refrce_over = settings["avg_refrce_over"]
+
+proxy_rate_pkl = "overnight_rates.p"
+implied_rate_pkl = "implied_rates_from_1m_ois.p"
+fx_pkl = "fx_by_tz_aligned_d.p"
+fx_pkl_fomc = "fx_by_tz_sp_fixed.p"
+
+no_good_curs = ["dkk", "jpy", "nok", ]
+# "aud", "cad", "chf", "eur", "nzd", "sek"]
+no_good_curs_fomc = ["dkk"]
+# no_ois_curs = ["jpy", "nok"]
+
+fx_data = pd.read_pickle(path_to_data + fx_pkl)
+fx_data_fomc = pd.read_pickle(path_to_data + fx_pkl_fomc)
+
+# prepare environment: local announcements--------------------------------
+tr_env = FXTradingEnvironment.from_scratch(
+    spot_prices={
+        "bid": fx_data["spot_bid"].loc[s_dt:e_dt, :],
+        "ask": fx_data["spot_ask"].loc[s_dt:e_dt, :]},
+    swap_points={
+        "bid": fx_data["tnswap_bid"].loc[s_dt:e_dt, :],
+        "ask": fx_data["tnswap_ask"].loc[s_dt:e_dt, :]}
+    )
+
+# clean-ups -------------------------------------------------------------
+tr_env.drop(labels=no_good_curs, axis="minor_axis", errors="ignore")
+tr_env.remove_swap_outliers()
+tr_env.reindex_with_freq('B')
+tr_env.align_spot_and_swap()
+tr_env.fillna(which="both", method="ffill")
+
+# prepare environment: FOMC announcements--------------------------------
+# Extract FOMC fixing time df's from panels
+for key, panel in fx_data_fomc.items():
+    fx_data_fomc[key] = panel.loc[:, :, settings["usd_fixing_time"]]
+tr_env_fomc = FXTradingEnvironment.from_scratch(
+    spot_prices={
+        "bid": fx_data_fomc["spot_bid"].loc[s_dt:e_dt, :],
+        "ask": fx_data_fomc["spot_ask"].loc[s_dt:e_dt, :]},
+    swap_points={
+        "bid": fx_data_fomc["tnswap_bid"].loc[s_dt:e_dt, :],
+        "ask": fx_data_fomc["tnswap_ask"].loc[s_dt:e_dt, :]}
+    )
+
+# clean-ups -------------------------------------------------------------
+tr_env_fomc.drop(labels=no_good_curs_fomc, axis="minor_axis", errors="ignore")
+tr_env_fomc.remove_swap_outliers()
+tr_env_fomc.reindex_with_freq('B')
+tr_env_fomc.align_spot_and_swap()
+tr_env_fomc.fillna(which="both", method="ffill")
 
 
 def saga_strategy(trading_env, holding_period, threshold, fomc=False,
@@ -71,6 +124,63 @@ def saga_strategy(trading_env, holding_period, threshold, fomc=False,
     res = trading.backtest("unrealized")
 
     return res
+
+
+def saga_strategy2(trading_env, trading_env_fomc, holding_period, threshold,
+                   **kwargs):
+    """
+
+    Parameters
+    ----------
+    trading_env: 'FXTradingEnvironment' instance with local fixing time data
+    trading_env_fomc: 'FXTradingEnvironment' instance with US fixing time data
+    holding_period: int
+    threshold: float
+    fomc: bool
+
+    Returns
+    -------
+
+    """
+    # forecast direction ----------------------------------------------------
+    curs = trading_env.currencies
+    curs_fomc = trading_env_fomc.currencies
+    fcast_lag = holding_period + 2
+
+    signals_fcast = get_pe_signals(curs, fcast_lag, threshold, path_to_data,
+                                   fomc=False, **kwargs)
+
+    signals_fcast_fomc = get_pe_signals(curs_fomc, fcast_lag, threshold,
+                                        path_to_data, fomc=True, **kwargs)
+
+    # reindex to be sure that no events are out of sample
+    signals_fcast = signals_fcast.reindex(
+        index=pd.date_range(s_dt, e_dt, freq='B'))
+    signals_fcast_fomc = signals_fcast_fomc.reindex(
+        index=pd.date_range(s_dt, e_dt, freq='B'))
+
+    # trading strategy ------------------------------------------------------
+    strategy_fcast = FXTradingStrategy.from_events(signals_fcast,
+        blackout=1, hold_period=holding_period, leverage="unlimited")
+
+    # trading ---------------------------------------------------------------
+    trading = FXTrading(environment=trading_env, strategy=strategy_fcast)
+
+    # backtest --------------------------------------------------------------
+    res = trading.backtest("balance")
+
+    # trading strategy FOMC--------------------------------------------------
+    strategy_fcast_fomc = FXTradingStrategy.from_events(signals_fcast_fomc,
+        blackout=1, hold_period=holding_period, leverage="net")
+
+    # trading ---------------------------------------------------------------
+    trading_fomc = FXTrading(environment=trading_env_fomc,
+                             strategy=strategy_fcast_fomc)
+
+    # backtest --------------------------------------------------------------
+    res_fomc = trading_fomc.backtest("balance")
+
+    return res, res_fomc
 
 
 def wrapper_prepare_environment(settings, bid_ask=True, spot_only=False):
@@ -282,10 +392,14 @@ if __name__ == "__main__":
     import matplotlib.pyplot as plt
     from foolbox import tables_and_figures as taf
 
-    trading_env = wrapper_prepare_environment(settings, bid_ask=False,
+    trading_env = wrapper_prepare_environment(settings, bid_ask=True,
                                               spot_only=False)
 
-    one_strat = saga_strategy(trading_env, 10, 10, fomc=True, leverage="net",
+    trading_env.drop(labels=[p for p in trading_env.currencies if p != "aud"],
+                     axis="minor_axis", errors="ignore")
+
+    one_strat = saga_strategy(trading_env, 10, 10, fomc=False,
+                              leverage="unlimited",
                               proxy_rate_pickle="overnight_rates.p",
                               e_proxy_rate_pickle=
                                 "implied_rates_from_1m_ois_since.p",
@@ -297,58 +411,20 @@ if __name__ == "__main__":
     saga_strat = np.log(one_strat).diff().replace(0.0, np.nan).dropna()\
         .to_frame("saga")
 
-    ppp = pd.read_pickle(path_to_data + "ppp_1990_2017_y.p")
-    ppp = ppp.loc[:, trading_env.currencies]
-    map_signal = lambda x: x.rolling(22, min_periods=1).mean().shift(1)
-    one_strat = retail_value(trading_env, ppp=ppp, spot=None,
-                             map_signal=map_signal, n_portfolios=3)
-
-    log_strat = np.log(one_strat).diff().replace(0.0, np.nan).dropna() \
-        .to_frame("strat")
-    print(taf.descriptives(log_strat, scale=252))
-    print(taf.ts_ap_tests(saga_strat, log_strat))
-
-    one_strat.plot()
-    plt.show()
-
-    # h_range = range(1, 2)
-    # th_range = range(1, 5)
+    # strats = dict()
+    # for h in range(10, 11):
+    #     for threshold in range(10, 11):
+    #         res = saga_strategy2(tr_env, tr_env_fomc, h, threshold,
+    #                              proxy_rate_pickle="overnight_rates.p",
+    #                              e_proxy_rate_pickle=
+    #                                "implied_rates_from_1m_ois_since.p",
+    #                              meetings_pickle="meetings.p",
+    #                              avg_impl_over=settings["avg_impl_over"],
+    #                              avg_refrce_over=settings["avg_refrce_over"],
+    #                              ffill=True)
+    #         strats[(h, threshold)] = res
     #
-    # def saga_strategy_for_mp(x):
-    #     """Wrapper of saga_strategy to use with multiprocessing."""
-    #     print(x)
-    #
-    #     s = saga_strategy(trading_env, x[0], x[1] / 100.0, fomc=True,
-    #                       leverage="net",
-    #                       proxy_rate_pickle="overnight_rates.p",
-    #                       e_proxy_rate_pickle=
-    #                           "implied_rates_from_1m_ois_since.p",
-    #                       meetings_pickle="meetings.p",
-    #                       avg_impl_over=settings["avg_impl_over"],
-    #                       avg_refrce_over=settings["avg_refrce_over"],
-    #                       ffill=True)
-    #
-    #     s.name = x
-    #
-    #     return s
-    #
-    # # multiprocess this!
-    # with multiprocessing.Pool(4) as pool:
-    #     strats = pool.map(saga_strategy_for_mp, product(h_range, th_range))
-    #
-    # # oncat -> will have a MultiIndex
     # res = pd.DataFrame(strats)
 
-    # with open(path_to_data + "temp.p", mode="wb") as hangar:
-    #     pickle.dump(res, hangar)
-
-    # res.plot()
-    # plt.show()
-
-    # map_fwd_disc = lambda x: x.rolling(20).mean().shift(1)
-    #
-    # carry = retail_carry(trading_env, map_fwd_disc=map_fwd_disc,
-    #                      leverage="net", n_portfolios=3)
-    #
-    # carry.plot()
-    # plt.show()
+    with open(path_to_data + "temp_all_strats.p", mode="wb") as hangar:
+        pickle.dump(res, hangar)

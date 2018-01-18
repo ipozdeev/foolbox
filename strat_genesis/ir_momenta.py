@@ -5,22 +5,22 @@ from foolbox.api import *
 import itertools as itools
 
 # Set sample, frequency, signals' and returns' keys
-sample = "dev"        # set to "all" for al countries
+sample = "wmr_dev"        # set to "all" for al countries
 freq = "d"            # set to "d" to daily frequency
 ret_key = "spot_ret"  # spot returns for portfolio formation
 
 
 # Set up the number of portoflios
 n_portfolios = 3
-start_date = "1997-04-01"  # interest rates are not available before this day
+start_date = "1999-01-05"  # interest rates are not available before this day
                            # for some currencies
 
 # Set up the lookback, holdng and burn periods as a numpy ranges
-lookback = np.arange(1, 23, 1)  # over how many past performance is evaluated
-holding = np.arange(1, 23, 1)   # for how many periods the portfolio is held
+lookback = np.arange(1, 44, 1)  # over how many past performance is evaluated
+holding = np.arange(1, 10, 1)   # for how many periods the portfolio is held
 
 # Set output name
-out_name = "mom_dev_d_dir_s_3p.p"  # developed, monthly, spot, spot
+out_name = "mom_dev_d_dir_s_3p_ts.p"  # developed, monthly, spot, spot
 
 # Get the FX data
 with open(data_path+"data_"+sample+"_"+freq+".p", mode='rb') as fname:
@@ -55,11 +55,21 @@ t = 0
 N = len(combos)
 for lb, h in combos:
     # Construct momentum signal, offsetting it by burn
-    signal = ir.diff().rolling(lb).mean().shift(1)
+    #signal = ir.diff().rolling(lb).mean().shift(1)
     # Get portfolios
-    portf = poco.rank_sort_adv(s_d, signal, n_portfolios, h)
+    #portf = poco.rank_sort_adv(s_d, signal, n_portfolios, h)
     # Append the multiindex frame
-    mom.loc[:, (lb, h)] = poco.get_factor_portfolios(portf, hml=True).hml
+    #mom.loc[:, (lb, h)] = poco.get_factor_portfolios(portf, hml=True).hml
+
+    signal = np.sign(ir.diff().rolling(lb).mean().shift(1))
+
+    first_obs = signal.first_valid_index()
+    first_obs_int = signal.index.get_loc(first_obs)
+    tmp = signal.ix[first_obs:]
+    print(tmp.head())
+    tmp = tmp.iloc[::h].reindex(tmp.index, method="ffill")
+    print(tmp.head())
+    mom.loc[:, (lb, h)] = (s_d * tmp).mean(axis=1)
 
     t = t + 1
     print("Finished run "+str(t)+" out of " + str(N))

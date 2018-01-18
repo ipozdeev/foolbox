@@ -36,9 +36,11 @@ def load_ff_futures_data(filename, start_date, end_date):
         ff_data = dict()
 
     # Define the name pattern for quandl request
-    name_pattern = "CME/FF"
+    name_pattern = "CME/CL"
 
-    # Define the map from month's number to futures contract lette        "1": "F", "2": "G", "3": "H", "4": "J", "5": "M", "6": "N", "7": "N",
+    # Define the map from month's number to futures contract letter code
+    name_map = {
+        "1": "F", "2": "G", "3": "H", "4": "J", "5": "K", "6": "M", "7": "N",
         "8": "Q", "9": "U", "10": "V", "11": "X", "12": "Z"
                }
 
@@ -56,6 +58,7 @@ def load_ff_futures_data(filename, start_date, end_date):
     # Get the data
     for request in requests:
         ff_data[request] = quandl.get(name_pattern + request)
+        print(request)
 
     with open(filename, mode="wb") as fname:
         pickle.dump(ff_data, fname)
@@ -63,8 +66,8 @@ def load_ff_futures_data(filename, start_date, end_date):
 
 def main():
     # Run the update
-    filename = data_path + "fed_funds_futures_raw.p"
-    start_date = "Feb-2017"
+    filename = data_path + "gsci_futures_raw.p"
+    start_date = "Jun-1996"
     end_date = "Dec-2018"
 
     load_ff_futures_data(filename, start_date, end_date)

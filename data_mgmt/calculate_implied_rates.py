@@ -222,14 +222,17 @@ def calculate_libor_implied_rates_smart(libor_1m, libor_on, events_data):
 
     return ir
 
+
 if __name__ == "__main__":
 
     # fetch data ------------------------------------------------------------
     # ois data
     maturity = "1m"
-    ois_pkl = "ois_merged.p"
-    ois_out_pkl = "implied_rates_from_" + maturity + "_ois_since.p"
+    ois_pkl = "ois_merged_4.p"
+
+    ois_out_pkl = "implied_rates_from_" + maturity + "_ois_4_since.p"
     on_pkl = "overnight_rates.p"
+    map_proxy_rate = lambda x: x.rolling(5).mean()
 
     ois_data = pd.read_pickle(data_path + ois_pkl)
 
@@ -240,7 +243,7 @@ if __name__ == "__main__":
     on_rate = pd.read_pickle(data_path + on_pkl)
 
     # events
-    events_pickle = "ois_project_events.p"
+    events_pickle = "events.p"
     events_data = pd.read_pickle(data_path + events_pickle)
     events = events_data["joint_cbs"]
 

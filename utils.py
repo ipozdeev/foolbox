@@ -311,9 +311,16 @@ def interevent_qcut(data_to_slice, events, n_quantiles):
     return out.drop(["evt_num"], axis=1)
 
 
-def parse_bloomberg_excel(filename, colnames_sheet, data_sheets, space=0,
+def parse_bloomberg_excel(filename, colnames_sheet, data_sheets, space=1,
                           **kwargs):
     """Parse .xlsx frile constructed with Bloomberg Excel API.
+
+    Parameters
+    ----------
+    data_sheets : list or string or None
+        if None, all sheets are loaded
+    space : int
+        number of empty columns between neighboring data series
 
     Returns
     -------
@@ -334,22 +341,25 @@ def parse_bloomberg_excel(filename, colnames_sheet, data_sheets, space=0,
             res = pd.NaT
         return res
 
-    # colnames
+    # colnames_sheet
     colnames = pd.read_excel(filename, sheet_name=colnames_sheet, header=0)
     colnames = colnames.columns
+
+    # float converters
+    float_conv = {k: float
+                  for k in list(range(1, len(colnames)*(2+space), 2+space))}
 
     # if data_sheets is None, read in all sheets
     if data_sheets is None:
         data_dict_full = pd.read_excel(filename,
-            sheet_name=None, **kwargs)
+            sheet_name=None, dtype=float_conv, **kwargs)
+
+        # remove the sheet with colnames from this dict
         data_dict_full.pop(colnames_sheet)
 
     else:
         data_dict_full = pd.read_excel(filename,
-            sheet_name=data_sheets, **kwargs)
-
-    # # fetch column names from respective sheet
-    # colnames = data_dict_full.pop(colnames_sheet).columns
+            sheet_name=data_sheets, converters=float_conv, **kwargs)
 
     # loop over sheetnames
     all_data = dict()
@@ -357,9 +367,9 @@ def parse_bloomberg_excel(filename, colnames_sheet, data_sheets, space=0,
     for s, data_df in data_dict_full.items():
         # loop over triplets, map dates, extract
         new_data_df = []
-        for p in range((data_df.shape[1]+1)//(2+space)):
+        for p in range((data_df.shape[1]+1)//(space+2)):
             # this triplet
-            this_piece = data_df.iloc[1:, p*(2+space):(p+1)*(2+space)-space]
+            this_piece = data_df.iloc[1:, p*(space+2):(p+1)*(space+2)-space]
 
             # map date
             this_piece.iloc[:, 0] = this_piece.iloc[:, 0].map(converter)
@@ -370,13 +380,13 @@ def parse_bloomberg_excel(filename, colnames_sheet, data_sheets, space=0,
             # extract date as index
             this_piece = this_piece.set_index(this_piece.columns[0])
 
-            # drop duplicates
-            this_piece = this_piece.loc[
-                ~this_piece.index.duplicated(keep="first")]
-
             # rename
             this_piece.columns = [colnames[p]]
             this_piece.index.name = "date"
+
+            # drop duplicates from the index
+            this_piece = this_piece.loc[
+                ~this_piece.index.duplicated(keep='first'), :]
 
             # store
             new_data_df += [this_piece, ]

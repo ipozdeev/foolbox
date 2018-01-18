@@ -1503,7 +1503,6 @@ def event_trading_backtest(fx_data, holding_range, threshold_range,
 
     return results
 
-
 def get_pe_signals(currencies, lag, threshold, data_path, fomc=False,
                    **kwargs):
     """Fetches a dataframe of signals from the 'PolicyExpectation' class, for
