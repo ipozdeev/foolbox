@@ -18,7 +18,15 @@ implied_rate_pkl = "implied_rates_from_1m_ois.p"
 fx_pkl = "fx_by_tz_aligned_d.p"
 fx_pkl_fomc = "fx_by_tz_sp_fixed.p"
 
-no_good_curs = ["dkk", "jpy", "nok", "aud", "cad", "chf", "eur", "nzd", "sek"]
+no_good_curs = ["dkk", "jpy", "nok", "gbp", "cad", "chf", "eur",
+                "nzd", "sek"]
+
+# no_good_curs = ["dkk", "jpy", "nok", "cad", "chf", "eur", "gbp",
+#                 "nzd", "sek"]
+# no_good_curs = ["dkk", "jpy", "nok", "aud", "cad", "chf", "eur",
+#                 "nzd", "sek"]
+# no_good_curs = ["dkk", "jpy", "nok", "cad", "chf", "eur",
+#                 "nzd", "sek"]
 no_good_curs_fomc = ["dkk"]
 # no_ois_curs = ["jpy", "nok"]
 

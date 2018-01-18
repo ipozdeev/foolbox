@@ -20,7 +20,7 @@ start_date = settings["sample_start"]
 
 end_date = settings["sample_end"]
 
-no_good_curs = ["dkk", "jpy", "nok", "aud", "cad", "chf", "eur", "nzd", "sek"]
+no_good_curs = ["dkk", "jpy", "nok", "gbp", "cad", "chf", "eur", "nzd", "sek"]
 
 # Set up the parameters of trading strategies
 lag = 10              # actually the holding period,
