@@ -10,6 +10,10 @@ path_to_data = set_cred.set_path("research_data/fx_and_events/")
 # Set the output path, input data and sample
 s_dt = pd.to_datetime(settings["sample_start"])
 e_dt = pd.to_datetime(settings["sample_end"])
+
+# s_dt = "2008-10-01"
+# e_dt = "2008-10-08"
+
 avg_impl_over = settings["avg_impl_over"]
 avg_refrce_over = settings["avg_refrce_over"]
 
@@ -18,8 +22,7 @@ implied_rate_pkl = "implied_rates_from_1m_ois.p"
 fx_pkl = "fx_by_tz_aligned_d.p"
 fx_pkl_fomc = "fx_by_tz_sp_fixed.p"
 
-no_good_curs = ["dkk", "jpy", "nok", ]
-# "aud", "cad", "chf", "eur", "nzd", "sek"]
+no_good_curs = ["dkk", "jpy", "nok"]#, "cad", "chf", "eur", "gbp", "nzd", "sek"]
 no_good_curs_fomc = ["dkk"]
 # no_ois_curs = ["jpy", "nok"]
 
@@ -392,24 +395,24 @@ if __name__ == "__main__":
     import matplotlib.pyplot as plt
     from foolbox import tables_and_figures as taf
 
-    trading_env = wrapper_prepare_environment(settings, bid_ask=True,
-                                              spot_only=False)
-
-    trading_env.drop(labels=[p for p in trading_env.currencies if p != "aud"],
-                     axis="minor_axis", errors="ignore")
-
-    one_strat = saga_strategy(trading_env, 10, 10, fomc=False,
-                              leverage="unlimited",
-                              proxy_rate_pickle="overnight_rates.p",
-                              e_proxy_rate_pickle=
-                                "implied_rates_from_1m_ois_since.p",
-                              meetings_pickle="meetings.p",
-                              avg_impl_over=settings["avg_impl_over"],
-                              avg_refrce_over=settings["avg_refrce_over"],
-                              ffill=True)
-
-    saga_strat = np.log(one_strat).diff().replace(0.0, np.nan).dropna()\
-        .to_frame("saga")
+    # trading_env = wrapper_prepare_environment(settings, bid_ask=True,
+    #                                           spot_only=False)
+    #
+    # trading_env.drop(labels=[p for p in trading_env.currencies if p != "aud"],
+    #                  axis="minor_axis", errors="ignore")
+    #
+    # one_strat = saga_strategy(trading_env, 10, 10, fomc=False,
+    #                           leverage="unlimited",
+    #                           proxy_rate_pickle="overnight_rates.p",
+    #                           e_proxy_rate_pickle=
+    #                             "implied_rates_from_1m_ois_since.p",
+    #                           meetings_pickle="meetings.p",
+    #                           avg_impl_over=settings["avg_impl_over"],
+    #                           avg_refrce_over=settings["avg_refrce_over"],
+    #                           ffill=True)
+    #
+    # saga_strat = np.log(one_strat).diff().replace(0.0, np.nan).dropna()\
+    #     .to_frame("saga")
 
     # strats = dict()
     # for h in range(10, 11):
@@ -430,7 +433,10 @@ if __name__ == "__main__":
     for h in range(10, 11):
         for threshold in range(10, 12):
             res = saga_strategy2(tr_env, tr_env_fomc, h,
-                                 threshold/100.0)
+                                 threshold,
+                                 **{"ffill": True,
+                                    "avg_implied_over": avg_impl_over,
+                                    "avg_refrce_over": avg_refrce_over})
             strats[(h, threshold)] = res
 
     res = pd.DataFrame(strats)

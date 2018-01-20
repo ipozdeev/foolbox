@@ -334,7 +334,8 @@ class EventTradingStrategy(TradingStrategy):
             sp_bid = swap_points["bid"].reindex(
                 index=self.the_idx, method="ffill")
             # treat short and long positions differently --------------------
-            sp = sp_ask.mask(self.position_flags < 0, sp_bid)
+            #sp = sp_ask.mask(self.position_flags < 0, sp_bid)
+            sp = sp_ask.where(self.position_flags > 0, sp_bid)
         else:
             sp = swap_points.reindex(
                 index=self.the_idx, method="ffill")

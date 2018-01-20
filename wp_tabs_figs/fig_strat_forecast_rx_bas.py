@@ -15,12 +15,13 @@ for rollover yields and bid-ask spreads
 out_path = data_path + settings["fig_folder"]
 input_dataset = settings["fx_data"]
 start_date = settings["sample_start"]
-
-#start_date = "2011-10-03"
-
 end_date = settings["sample_end"]
 
-no_good_curs = ["dkk", "jpy", "nok", "gbp", "cad", "chf", "eur", "nzd", "sek"]
+# start_date = "2008-10-01"
+# end_date = "2008-10-08"
+
+
+no_good_curs = ["dkk", "jpy", "nok"]# "gbp", "cad", "chf", "eur", "nzd", "sek"]
 
 # Set up the parameters of trading strategies
 lag = 10              # actually the holding period,
@@ -194,7 +195,7 @@ fcst_strat.columns = ["fcst"]
 
 # Get the descriptives for the forecast strategy, use mean instead of sum
 descr_fcst = taf.descriptives(
-    pd.concat([strat_ret, usd_ret], axis=1).mean(axis=1).to_frame(), 1)
+    pd.concat([strat_ret, usd_ret], axis=1).sum(axis=1).to_frame(), 1)
 
 # Drop the period from June 2008 to June 2009, repeat descriptives
 tmp_df_descr = pd.concat([strat_ret, usd_ret], axis=1).mean(axis=1).to_frame()

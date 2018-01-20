@@ -1547,7 +1547,8 @@ def get_pe_signals(currencies, lag, threshold, data_path, fomc=False,
             data_path=data_path, currency="usd",
             proxy_rate_pickle=kwargs.get("proxy_rate_pickle", None),
             e_proxy_rate_pickle=kwargs.get("e_proxy_rate_pickle", None),
-            meetings_pickle=kwargs.get("events_pickle", None))
+            meetings_pickle=kwargs.get("events_pickle", None),
+            ffill=kwargs.get("ffill", False))
 
         us_fcast = us_pe.forecast_policy_direction(
             lag=lag, h_high=threshold/100,
@@ -1569,7 +1570,8 @@ def get_pe_signals(currencies, lag, threshold, data_path, fomc=False,
                     proxy_rate_pickle=kwargs.get("proxy_rate_pickle", None),
                     e_proxy_rate_pickle=kwargs.get("e_proxy_rate_pickle",
                                                    None),
-                    meetings_pickle=kwargs.get("events_pickle", None))
+                    meetings_pickle=kwargs.get("events_pickle", None),
+                    ffill=kwargs.get("ffill", False))
 
                 tmp_fcast = tmp_pe.forecast_policy_direction(
                     lag=lag, h_high=threshold/100,
