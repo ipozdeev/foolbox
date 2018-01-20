@@ -440,6 +440,7 @@ class FXTrading():
         ----------
 
         """
+        self.strategy = strategy
         self.prices = environment.spot_prices.copy()
         self.swap_points = environment.swap_points.copy()
         self.actions = strategy.actions
@@ -491,6 +492,9 @@ class FXTrading():
             if t < self.prices.major_axis[0]:
                 continue
 
+            # if t > pd.to_datetime("2001-08-20"):
+            #     print("cool")
+
             # fetch prices and swap points ----------------------------------
             these_prices = self.prices.loc[:, t, :].T
             these_swap_points = self.swap_points.loc[:, t, :].T
@@ -531,15 +535,18 @@ class FXTrading():
         writer = pd.ExcelWriter(filename, engine='xlsxwriter')
 
         # Convert dataframes to an XlsxWriter Excel object.
-        # self.signals.to_excel(writer, sheet_name='signals')
-        # self.position_flags.to_excel(writer, sheet_name='position_flags')
-        # self.position_weights.to_excel(writer, sheet_name='position_weights')
-        # self.actions.to_excel(writer, sheet_name='actions')
+        self.strategy.position_flags.to_excel(writer,
+                                              sheet_name='position_flags')
+        self.strategy.position_weights.to_excel(writer,
+                                                sheet_name='position_weights')
+        self.strategy.actions.to_excel(writer, sheet_name='actions')
 
-        self.prices.loc["ask",:,:].to_excel(writer, sheet_name='p_ask')
-        self.prices.loc["bid",:,:].to_excel(writer, sheet_name='p_bid')
-        self.swap_points.loc["ask",:,:].to_excel(writer, sheet_name='swap_ask')
-        self.swap_points.loc["bid",:,:].to_excel(writer, sheet_name='swap_bid')
+        self.prices.loc["ask", :, :].to_excel(writer, sheet_name='p_ask')
+        self.prices.loc["bid", :, :].to_excel(writer, sheet_name='p_bid')
+        self.swap_points.loc["ask", :, :].to_excel(writer,
+                                                   sheet_name='swap_ask')
+        self.swap_points.loc["bid", :, :].to_excel(writer,
+                                                   sheet_name='swap_bid')
 
         # save and close
         writer.save()
@@ -766,12 +773,11 @@ class FXPosition():
         if not self.is_open:
             return self.currency + ' ' + "(closed)"
 
-        qty = np.round(self.end_quantity, 4)
+        qty = np.round(self.quantity, 4)
 
-        s = '{} {:.4f} {}'.format(
-            "long" if self.quantity > 0 else "short",
-            self.quantity,
-            self.currency)
+        s = '{} {:.4f} {}'.format("long" if self.quantity > 0 else "short",
+                                  qty,
+                                  self.currency)
 
         return s
 

@@ -300,7 +300,7 @@ class PolicyExpectation:
         if proxy_rate_pickle is None:
             proxy_rate_pickle = "overnight_rates.p"
         if e_proxy_rate_pickle is None:
-            e_proxy_rate_pickle = "implied_rates_from_1m_ois.p"
+            e_proxy_rate_pickle = "implied_rates_from_1m_ois_since.p"
         if meetings_pickle is None:
             meetings_pickle = "events.p"
 
@@ -640,8 +640,8 @@ class PolicyExpectation:
         return res
 
     def forecast_policy_direction(self, lag, h_low=None, h_high=None,
-        map_proxy_rate=None, map_expected_rate=None):
-        """
+                                  map_proxy_rate=None, map_expected_rate=None):
+        """Forecast policy direction (+1, -1, 0).
 
         Parameters
         ----------
@@ -991,7 +991,7 @@ class PolicyExpectation:
         thresholds = np.linspace(-0.50, 0.50, 101)
 
         # plot
-        fig, ax = plt.subplots(figsize=(8.4,11.7/2))
+        fig, ax = plt.subplots(figsize=(8.4, 11.7/2))
 
         # allocate space
         fcast_accy = pd.Panel(
@@ -1002,32 +1002,32 @@ class PolicyExpectation:
         # loop over thresholds
         for p in thresholds:
             # p = 0.085
-            fc = self.forecast_policy_direction(lag=lag,
-                ref_rate=self.reference_rate, h_low=-p, h_high=p)
+            fc = self.forecast_policy_direction(
+                lag=lag, h_low=-p, h_high=p, **kwargs)
             cmx = self.assess_forecast_quality(fc)
             # ipdb.set_trace()
 
-            fcast_accy.loc["hike",p,"true_pos"] = \
-                cmx.loc[1,1]/cmx.loc[:,1].sum()
-            fcast_accy.loc["hike",p,"false_pos"] = \
-                cmx.loc[1,-1:0].sum()/cmx.loc[:,-1:0].sum().sum()
-            fcast_accy.loc["cut",p,"true_pos"] = \
-                cmx.loc[-1,-1]/cmx.loc[:,-1].sum()
-            fcast_accy.loc["cut",p,"false_pos"] = \
-                cmx.loc[-1,0:1].sum()/cmx.loc[:,0:1].sum().sum()
+            fcast_accy.loc["hike", p, "true_pos"] = \
+                cmx.loc[1, 1]/cmx.loc[:, 1].sum()
+            fcast_accy.loc["hike", p, "false_pos"] = \
+                cmx.loc[1, -1:0].sum()/cmx.loc[:, -1:0].sum().sum()
+            fcast_accy.loc["cut", p, "true_pos"] = \
+                cmx.loc[-1, -1]/cmx.loc[:, -1].sum()
+            fcast_accy.loc["cut", p, "false_pos"] = \
+                cmx.loc[-1, 0:1].sum()/cmx.loc[:, 0:1].sum().sum()
 
             # add back extreme values
-            fcast_accy.loc["hike",1,:] = [1.0, 1]
-            fcast_accy.loc["hike",-1,:] = [0.0, 0]
-            fcast_accy.loc["cut",1,:] = [0.0, 0]
-            fcast_accy.loc["cut",-1,:] = [1.0, 1]
+            fcast_accy.loc["hike", 1, :] = [1.0, 1]
+            fcast_accy.loc["hike", -1, :] = [0.0, 0]
+            fcast_accy.loc["cut", 1, :] = [0.0, 0]
+            fcast_accy.loc["cut", -1, :] = [1.0, 1]
 
         for h in range(2):
             # h = 0
             this_ax = plt.subplot(121+h)
             # ipdb.set_trace()
-            self.plot_roc(fcast_accy.iloc[h,:,:], ax=this_ax,
-                linewidth=1.5)
+            self.plot_roc(fcast_accy.iloc[h, :, :],
+                          ax=this_ax, linewidth=1.5)
             this_ax.set_title(fcast_accy.items[h]+'s')
 
 
@@ -1190,12 +1190,13 @@ def pe_backtest(returns, holding_range, threshold_range,
             # Get the policy forecast for each currency
             for curr in returns.columns:
                 tmp_pe = PolicyExpectation.from_pickles(data_path, curr)
-                tmp_fcast =\
-                    tmp_pe.forecast_policy_change(lag=lag_expect,
-                                                  threshold=threshold/100,
-                                                  avg_impl_over=avg_impl_over,
-                                                  avg_refrce_over=avg_refrce_over,
-                                                  bday_reindex=True)
+                tmp_fcast = tmp_pe.forecast_policy_change(
+                    lag=lag_expect,
+                    threshold=threshold/100,
+                    avg_impl_over=avg_impl_over,
+                    avg_refrce_over=avg_refrce_over,
+                    bday_reindex=True)
+
                 # Append the signals
                 pooled_signals.append(tmp_fcast)
 
@@ -1526,7 +1527,7 @@ def get_pe_signals(currencies, lag, threshold, data_path, fomc=False,
         list. If false the inverse fomc events are returned for each currency
         in the list. Default is False
     kwargs: dict
-        of arguments of PolicyExpectation().forecast_policy_change() method,
+        of arguments of PolicyExpectation().forecast_policy_direction() method,
         namely: avg_impl_over, avg_refrce_over, bday_reindex
 
     Returns
@@ -1537,7 +1538,7 @@ def get_pe_signals(currencies, lag, threshold, data_path, fomc=False,
     """
     # Transformation applied to reference and implied rates
     def map_rate(w):
-        res = lambda x: x.rolling(w, min_periods=1).mean()
+        res = lambda x: x.rolling(w, min_periods=1).mean().shift(1)
         return res
 
     # For the US get the fomc announcements and use them for every currency
@@ -1547,7 +1548,7 @@ def get_pe_signals(currencies, lag, threshold, data_path, fomc=False,
             data_path=data_path, currency="usd",
             proxy_rate_pickle=kwargs.get("proxy_rate_pickle", None),
             e_proxy_rate_pickle=kwargs.get("e_proxy_rate_pickle", None),
-            meetings_pickle=kwargs.get("events_pickle", None))
+            meetings_pickle=kwargs.get("meetings_pickle", None))
 
         us_fcast = us_pe.forecast_policy_direction(
             lag=lag, h_high=threshold/100,
@@ -1569,7 +1570,7 @@ def get_pe_signals(currencies, lag, threshold, data_path, fomc=False,
                     proxy_rate_pickle=kwargs.get("proxy_rate_pickle", None),
                     e_proxy_rate_pickle=kwargs.get("e_proxy_rate_pickle",
                                                    None),
-                    meetings_pickle=kwargs.get("events_pickle", None))
+                    meetings_pickle=kwargs.get("meetings_pickle", None))
 
                 tmp_fcast = tmp_pe.forecast_policy_direction(
                     lag=lag, h_high=threshold/100,

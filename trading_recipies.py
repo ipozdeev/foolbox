@@ -4,6 +4,7 @@ from foolbox.wp_tabs_figs.wp_settings import settings
 from foolbox.finance import get_pe_signals
 import pickle
 import pandas as pd
+import re
 
 path_to_data = set_cred.set_path("research_data/fx_and_events/")
 
@@ -387,12 +388,55 @@ def retail_momentum(trading_env, spot_ret=None, map_spot_ret=None,
     return res
 
 
+def retail_vrp(trading_env, mfiv, rv=None, map_signal=None, leverage="net",
+               **kwargs):
+    """
+
+    Parameters
+    ----------
+    trading_env
+    mfiv
+    rv
+    map_signal
+    leverage
+
+    Returns
+    -------
+
+    """
+    if map_signal is None:
+        map_signal = lambda x: x.shift(1)
+
+    if rv is None:
+        ret = np.log(trading_env.mid_spot_prices).diff()
+        rv = ret.rolling(22, min_periods=10).var() * 22
+
+    sig = (rv - mfiv)
+
+    # apply transformation to forward discounts
+    sig = map_signal(sig)
+
+    # signals
+    portfolios = poco.rank_sort(sig, sig, **kwargs)
+
+    # carry strategy
+    strategy = FXTradingStrategy.from_long_short(portfolios, leverage=leverage)
+
+    # trading
+    trading = FXTrading(environment=trading_env, strategy=strategy)
+
+    # backtest
+    res_rv_mfiv = trading.backtest("unrealized")
+
+    return res
+
+
 if __name__ == "__main__":
 
     import matplotlib.pyplot as plt
     from foolbox import tables_and_figures as taf
 
-    trading_env = wrapper_prepare_environment(settings, bid_ask=True,
+    trading_env = wrapper_prepare_environment(settings, bid_ask=False,
                                               spot_only=False)
 
     trading_env.drop(labels=[p for p in trading_env.currencies if p != "aud"],
@@ -403,13 +447,34 @@ if __name__ == "__main__":
                               proxy_rate_pickle="overnight_rates.p",
                               e_proxy_rate_pickle=
                                 "implied_rates_from_1m_ois_since.p",
-                              meetings_pickle="meetings.p",
+                              meetings_pickle="events.p",
                               avg_impl_over=settings["avg_impl_over"],
                               avg_refrce_over=settings["avg_refrce_over"],
                               ffill=True)
 
     saga_strat = np.log(one_strat).diff().replace(0.0, np.nan).dropna()\
         .to_frame("saga")
+
+    # path_to_mfiv = set_cred.set_path("option_implied_betas_project/data/" +
+    #                                  "estimates/")
+    # hangar = pd.HDFStore(path_to_mfiv + "mfiv.h5", mode="r")
+    # mfiv_dict = {
+    #     re.sub('/', '', re.sub("usd", '', re.sub("m1m", '', k))): hangar.get(k)
+    #     for k in hangar.keys() if "usd" in k and k.endswith("m1m")
+    # }
+    # hangar.close()
+    #
+    # mfiv = pd.DataFrame.from_dict(
+    #     {k: v.loc[~v.index.duplicated(keep="last")]
+    #      for k, v in mfiv_dict.items()}
+    # )
+    #
+    # mfiv = mfiv.loc[trading_env.mid_spot_prices.index, :]
+    #
+    # map_signal = lambda x: x.rolling(22, min_periods=1).mean().shift(1)
+    #
+    # res = retail_vrp(trading_env, mfiv, map_signal=map_signal, leverage="net",
+    #                  n_portfolios=3)
 
     # strats = dict()
     # for h in range(10, 11):
@@ -426,5 +491,5 @@ if __name__ == "__main__":
     #
     # res = pd.DataFrame(strats)
 
-    with open(path_to_data + "temp_all_strats.p", mode="wb") as hangar:
-        pickle.dump(res, hangar)
+    # with open(path_to_data + "temp_all_strats.p", mode="wb") as hangar:
+    #     pickle.dump(res, hangar)

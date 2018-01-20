@@ -291,7 +291,7 @@ class EventTradingStrategy(TradingStrategy):
         return new_prices
 
     def bas_adjusted(self):
-        """ Adjust returns for the bid-ask spread.
+        """Adjust returns for the bid-ask spread.
 
         Give a panel of continuous position flags, the 'fringes' thereof
         denote the dates where the trades are placed. This method substitutes
@@ -485,16 +485,27 @@ def run_this(h, thresh):
         axis=1).loc["2000-11":,:]
 
     """
+    # curs = ['aud', 'cad', 'chf', 'eur', 'gbp', 'nzd', 'sek']
+    curs = ["aud"]
+
     # policy expectations -----------------------------------------------
     policy_fcasts = dict()
-    for c in ['aud', 'cad', 'chf', 'eur', 'gbp', 'nzd', 'sek']:
+
+    for c in curs:
         # c = "aud"
-        pe = PolicyExpectation.from_pickles(data_path, c)
-        policy_fcasts[c] = pe.forecast_policy_change(
+        pe = PolicyExpectation.from_pickles(
+            data_path, c, proxy_rate_pickle="overnight_rates.p",
+            e_proxy_rate_pickle="implied_rates_from_1m_ois_since.p",
+            meetings_pickle="events.p",
+            ffill=True)
+
+        map_rate = lambda x: x.rolling(5, min_periods=1).mean()
+
+        policy_fcasts[c] = pe.forecast_policy_direction(
             lag=h+2,
-            threshold=thresh,
-            avg_impl_over=5,
-            avg_refrce_over=5)
+            h_high=thresh,
+            map_proxy_rate=map_rate,
+            map_expected_rate=map_rate)
 
     policy_fcasts = pd.DataFrame.from_dict(policy_fcasts).loc["2000-11":]
 
@@ -529,28 +540,28 @@ if __name__ == "__main__":
 
     # settings --------------------------------------------------------------
     settings = {
-        "horizon_a": -5,
+        "horizon_a": -10,
         "horizon_b": -1,
         "bday_reindex": True}
 
+    map_rate = lambda x: x.rolling(5, min_periods=1).mean()
 
     # policy expectations ---------------------------------------------------
     policy_fcasts = dict()
-    for c in ['aud', 'cad', 'chf', 'eur', 'gbp', 'nzd', 'sek']:
+    for c in ['aud',]: # 'cad', 'chf', 'eur', 'gbp', 'nzd', 'sek']:
         # c = "aud"
         pe = PolicyExpectation.from_pickles(data_path, c)
-        policy_fcasts[c] = pe.forecast_policy_change(
-            lag=7,
-            threshold=0.10,
-            avg_impl_over=5,
-            avg_refrce_over=5,
-            bday_reindex=True)
+        policy_fcasts[c] = pe.forecast_policy_direction(
+            lag=12,
+            h_high=0.10,
+            map_proxy_rate=map_rate,
+            map_expected_rate=map_rate)
 
     policy_fcasts = pd.DataFrame.from_dict(policy_fcasts).loc["2000-11":]
 
     # assets
     with open(data_path + "fx_by_tz_aligned_d.p", mode='rb') as fname:
-        fx = pickle.load(fname)
+        fx = pd.read_pickle(fname)
     spot_ask = fx["spot_ask"].drop(["jpy","dkk","nok"],
         axis=1).loc["2000-11":,:]
     spot_mid = fx["spot_mid"].drop(["jpy","dkk","nok"],
@@ -562,6 +573,7 @@ if __name__ == "__main__":
         axis=1).loc["2000-11":,:]
     tnswap_bid = fx["tnswap_bid"].drop(["jpy","dkk","nok"],
         axis=1).loc["2000-11":,:]
+    tnswap_mid = (tnswap_ask + tnswap_bid) / 2
 
     start_idx = "2000-11-01"
     end_idx = max(np.array([p.index[-1] for p in (
@@ -570,11 +582,12 @@ if __name__ == "__main__":
 
     # align
     data = {
-        "spot_ask": spot_ask,
+        "spot_ask": spot_mid,
         "spot_mid": spot_mid,
-        "spot_bid": spot_bid,
+        "spot_bid": spot_mid,
         "tnswap_ask": tnswap_ask,
         "tnswap_bid": tnswap_bid}
+
     data = align_and_fillna(data, 'B', method="ffill")
 
     # strategies ------------------------------------------------------------
