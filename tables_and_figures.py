@@ -137,6 +137,10 @@ def descriptives(data, scale=12, use_statsmodels=False, **kwargs):
         with frequency-adjusted descriptive statistics for each column in data.
 
     """
+    # Ibo nehuy
+    if isinstance(data, pd.Series):
+        data = data.to_frame("xyz")
+
     # Names for rows in the output DataFrame
     rows = ["mean", "se_mean", "tstat", "median", "std", "skew", "kurt",
         "sharpe", "ac1", "se_ac1"]

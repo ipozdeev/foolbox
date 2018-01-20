@@ -492,8 +492,8 @@ class FXTrading():
             if t < self.prices.major_axis[0]:
                 continue
 
-            # if t > pd.to_datetime("2001-08-20"):
-            #     print("cool")
+            if t == pd.Timestamp("2001-08-15"):
+                print("Stop right there! Criminal scum!")
 
             # fetch prices and swap points ----------------------------------
             these_prices = self.prices.loc[:, t, :].T
@@ -671,6 +671,8 @@ class FXPortfolio():
         # TODO: mid price?
         new_p = (new_pw * marg_closeout).divide(prices_mid.iloc[0, :], axis=0)
         dp = new_p - self.get_position_quantities()
+
+        dp = dp.mask(dpw == 0, 0)
 
         # rebalance
         self.rebalance_from_dp(dp=dp, bid_ask_prices=bid_ask_prices)
