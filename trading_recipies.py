@@ -186,6 +186,89 @@ def saga_strategy2(trading_env, trading_env_fomc, holding_period, threshold,
     return res, res_fomc
 
 
+def saga_strategy3(currencies, trading_env_fomc, holding_period, threshold,
+                   **kwargs):
+    """
+
+    Parameters
+    ----------
+    trading_env: 'FXTradingEnvironment' instance with local fixing time data
+    trading_env_fomc: 'FXTradingEnvironment' instance with US fixing time data
+    holding_period: int
+    threshold: float
+    fomc: bool
+
+    Returns
+    -------
+
+    """
+    # forecast direction ----------------------------------------------------
+    curs_fomc = trading_env_fomc.currencies
+    fcast_lag = holding_period + 2
+
+    res_local = list()
+    # Loop over currencies, compute balance series for each
+    for curr in currencies:
+        # Prepare the trading environment
+        this_env = FXTradingEnvironment.from_scratch(
+            spot_prices={
+                "bid": fx_data["spot_bid"].loc[s_dt:e_dt, [curr]],
+                "ask": fx_data["spot_ask"].loc[s_dt:e_dt, [curr]]},
+            swap_points={
+                "bid": fx_data["tnswap_bid"].loc[s_dt:e_dt, [curr]],
+                "ask": fx_data["tnswap_ask"].loc[s_dt:e_dt, [curr]]}
+            )
+
+        # Remove outliers, reindex data, align and fillna
+        this_env.remove_swap_outliers()
+        this_env.reindex_with_freq('B')
+        this_env.align_spot_and_swap()
+        this_env.fillna(which="both", method="ffill")
+
+        # Get the signals
+        this_signal_fcast = get_pe_signals([curr], fcast_lag, threshold,
+                                           path_to_data, fomc=False, **kwargs)
+
+        # Reindex to be sure that no events are out of sample
+        this_signal_fcast = this_signal_fcast.reindex(
+            index=pd.date_range(s_dt, e_dt, freq='B'))
+
+        # Make a strat
+        this_strat_fcast = FXTradingStrategy.from_events(
+            this_signal_fcast, blackout=1,
+            hold_period=holding_period, leverage="unlimited")
+
+        this_trading = FXTrading(environment=this_env,
+                                 strategy=this_strat_fcast)
+
+        # Get the results
+        res = this_trading.backtest("balance")
+        res_local.append(res)
+
+    # Agrgregate over all currencies
+    res_local = pd.concat(res_local, axis=1)
+    res_local.columns = currencies
+
+
+    signals_fcast_fomc = get_pe_signals(curs_fomc, fcast_lag, threshold,
+                                        path_to_data, fomc=True, **kwargs)
+
+    signals_fcast_fomc = signals_fcast_fomc.reindex(
+        index=pd.date_range(s_dt, e_dt, freq='B'))
+
+    # trading strategy FOMC--------------------------------------------------
+    strategy_fcast_fomc = FXTradingStrategy.from_events(signals_fcast_fomc,
+        blackout=1, hold_period=holding_period, leverage="net")
+
+    # trading ---------------------------------------------------------------
+    trading_fomc = FXTrading(environment=trading_env_fomc,
+                             strategy=strategy_fcast_fomc)
+
+    # backtest --------------------------------------------------------------
+    res_fomc = trading_fomc.backtest("balance")
+
+    return res_local, res_fomc
+
 def wrapper_prepare_environment(settings, bid_ask=True, spot_only=False):
     """
 
@@ -430,16 +513,36 @@ if __name__ == "__main__":
     # res = pd.DataFrame(strats)
 
     strats = dict()
-    for h in range(10, 11):
-        for threshold in range(10, 12):
-            res = saga_strategy2(tr_env, tr_env_fomc, h,
-                                 threshold,
-                                 **{"ffill": True,
-                                    "avg_implied_over": avg_impl_over,
-                                    "avg_refrce_over": avg_refrce_over})
-            strats[(h, threshold)] = res
+    # for h in range(10, 11):
+    #     for threshold in range(10, 12):
+    #         res = saga_strategy2(tr_env, tr_env_fomc, h,
+    #                              threshold,
+    #                              **{"ffill": True,
+    #                                 "avg_implied_over": avg_impl_over,
+    #                                 "avg_refrce_over": avg_refrce_over})
+    #         strats[(h, threshold)] = res
+    #
+    # res = pd.DataFrame(strats)
 
-    res = pd.DataFrame(strats)
+    res2 = saga_strategy2(tr_env, tr_env_fomc, holding_period=10,
+                          threshold=10,
+                          **{"ffill": True,
+                             "avg_implied_over": avg_impl_over,
+                             "avg_refrce_over": avg_refrce_over})
 
-    with open(path_to_data + "temp_all_strats.p", mode="wb") as hangar:
-        pickle.dump(res, hangar)
+    res3 = saga_strategy3(tr_env.currencies, tr_env_fomc, holding_period=10,
+                          threshold=10,
+                          **{"ffill": True,
+                             "avg_implied_over": avg_impl_over,
+                             "avg_refrce_over": avg_refrce_over})
+
+    two = (1 + res2[0].pct_change() + res2[1].pct_change()).cumprod()
+
+    three = (1 + res3[0].pct_change().sum(axis=1) +
+             res3[1].pct_change()).cumprod()
+
+    print("lol")
+
+
+    # with open(path_to_data + "temp_all_strats.p", mode="wb") as hangar:
+    #     pickle.dump(res, hangar)

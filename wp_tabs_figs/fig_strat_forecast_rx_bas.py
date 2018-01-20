@@ -6,6 +6,7 @@ import matplotlib.lines as mlines
 from foolbox.wp_tabs_figs.wp_settings import settings
 from foolbox.trading import EventTradingStrategy
 from foolbox.utils import *
+from foolbox.finance import PolicyExpectation
 
 """Plots returns to strategy based on monetary policy action forecasts along
 with prediction-data-availability-consistent prefect foresight. Adjust returns
