@@ -54,8 +54,7 @@ if __name__ == "__main__":
     out_path = data_path + settings["fig_folder"]
 
     # Strats file name
-    strat_data_file = "broomstick_ret_rx_bas.p"
-    strat_data_file = "temp_all_strats.p"
+    strat_data_file = "broomstick_rx_data_v2.p"
 
     percentiles_to_describe = np.arange(0.1, 1, 0.1)
     scale_to = 10
@@ -77,10 +76,11 @@ if __name__ == "__main__":
     fmt_se = "{:3.2f}"
     fmt_std = "{:3.1f}"
 
-    # Import return to the universe of pre-announcement trading strategies
-    # with open(data_path + strat_data_file, mode="rb") as halupa:
-    #     all_strats = pickle.load(halupa) * 1e4  # convert to bps
-    all_strats = pd.read_pickle(data_path + "broomstick_ret_rx_bas.p") * 1e4
+    # Import NAVs of the universe of pre-announcement trading strategies
+    all_strats = pd.read_pickle(data_path + strat_data_file)
+
+    # Compute log returns, drop zeros, convert to bps
+    all_strats = np.log(all_strats).diff().replace(0, np.nan) * 1e4
 
     # Loop over selection maps, get descriptives for each map
     all_descr = list()

@@ -334,6 +334,9 @@ joint_events_lvl = list()
 for cb, data in cb_data.items():
     if cb == "resources":
         continue
+    if cb == "ecb2":
+        continue
+
     data = data.drop(["comments"], axis=1)      # drop comments
     data = data[data.scheduled]                 # drop unscheduled meetings
     data = data.drop(["scheduled"], axis=1)     # drop the redundant variable
