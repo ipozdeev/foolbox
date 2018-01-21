@@ -521,6 +521,7 @@ if __name__ == "__main__":
 
     import matplotlib.pyplot as plt
     from foolbox import tables_and_figures as taf
+    import itertools as itools
 
     trading_env = wrapper_prepare_environment(settings, bid_ask=False,
                                               spot_only=False)
@@ -577,7 +578,7 @@ if __name__ == "__main__":
     #
     # res = pd.DataFrame(strats)
 
-    strats = dict()
+    # strats = dict()
     # for h in range(10, 11):
     #     for threshold in range(10, 12):
     #         res = saga_strategy2(tr_env, tr_env_fomc, h,
@@ -589,25 +590,99 @@ if __name__ == "__main__":
     #
     # res = pd.DataFrame(strats)
 
-    res2 = saga_strategy2(tr_env, tr_env_fomc, holding_period=10,
-                          threshold=10,
-                          **{"ffill": True,
-                             "avg_implied_over": avg_impl_over,
-                             "avg_refrce_over": avg_refrce_over})
+    # res2 = saga_strategy2(tr_env, tr_env_fomc, holding_period=10,
+    #                       threshold=10,
+    #                       **{"ffill": True,
+    #                          "avg_implied_over": avg_impl_over,
+    #                          "avg_refrce_over": avg_refrce_over})
+    #
+    # res3 = saga_strategy3(tr_env.currencies, tr_env_fomc, holding_period=10,
+    #                       threshold=10,
+    #                       **{"ffill": True,
+    #                          "avg_implied_over": avg_impl_over,
+    #                          "avg_refrce_over": avg_refrce_over})
+    #
+    # two = (1 + res2[0].pct_change() + res2[1].pct_change()).cumprod()
+    #
+    # three = (1 + res3[0].pct_change().sum(axis=1) +
+    #          res3[1].pct_change()).cumprod()
 
-    res3 = saga_strategy3(tr_env.currencies, tr_env_fomc, holding_period=10,
-                          threshold=10,
-                          **{"ffill": True,
-                             "avg_implied_over": avg_impl_over,
-                             "avg_refrce_over": avg_refrce_over})
+    # BROOMSTICKS==============================================================
+    import time
+    t0 = time.time()
+    ix = pd.IndexSlice
+    holding_range = range(15, 16)
+    threshold_range = range(19, 26)
+    combos = list(itools.product(holding_range, threshold_range))
+    cols = pd.MultiIndex.from_tuples(combos, names=["holding", "threshold"])
+    out = pd.DataFrame(index=pd.date_range(s_dt, e_dt, freq='B'),
+                       columns=cols)
+    out_fomc = out.copy()
 
-    two = (1 + res2[0].pct_change() + res2[1].pct_change()).cumprod()
+    for h in holding_range:
+        for tau in threshold_range:
+            print(h, tau)
+            print("time elapsed {}".format((time.time()-t0)/60))
+            res, res_fomc = \
+                saga_strategy3(tr_env.currencies, tr_env_fomc,
+                               holding_period=h,
+                               threshold=tau,
+                               **{"ffill": True,
+                                  "avg_implied_over": avg_impl_over,
+                                  "avg_refrce_over": avg_refrce_over})
 
-    three = (1 + res3[0].pct_change().sum(axis=1) +
-             res3[1].pct_change()).cumprod()
+            res = (1 + res.pct_change().sum(axis=1) +
+                   res_fomc.pct_change()).cumprod()
 
-    print("lol")
+            out.loc[:, ix[h, tau]] = res
+            out_fomc.loc[:, ix[h, tau]] = res_fomc
+
+    t1 = time.time()
+    print(t1-t0)
 
 
-    # with open(path_to_data + "temp_all_strats.p", mode="wb") as hangar:
-    #     pickle.dump(res, hangar)
+    with open(path_to_data+"broomstick_rx_data_v2.p", mode="wb") as fname:
+        pickle.dump(out_fomc, fname)
+    with open(path_to_data+"broomstick_rx_data_fomc_v2.p", mode="wb") as fname:
+        pickle.dump(out_fomc, fname)
+
+    # END BROOMSTICKS==========================================================
+
+    # import multiprocessing
+    # from itertools import product
+
+    from foolbox.playground.to_del import cprofile_analysis
+
+    # @cprofile_analysis(activate=True)
+    # def broomstick_wrapper(x=(10,10)):
+    #     print(x)
+    #     h = x[0]
+    #     tau = x[1]
+    #     res = saga_strategy3(tr_env.currencies, tr_env_fomc, holding_period=h,
+    #                          threshold=tau,
+    #                          **{"ffill": True,
+    #                             "avg_implied_over": avg_impl_over,
+    #                             "avg_refrce_over": avg_refrce_over})
+    #     res = (1 + res[0].pct_change().sum(axis=1) +
+    #            res[1].pct_change()).cumprod()
+    #     res.name = x
+    #
+    #     return res
+    #
+    # res = broomstick_wrapper()
+    #
+    # # p = multiprocessing.Pool(4)
+    # # lol = p.map(broomstick_wrapper, product(range(9, 11), range(9, 11)))
+    #
+    # with multiprocessing.Pool(4) as pool:
+    #     res = pool.map(broomstick_wrapper, product(range(9, 11), range(9, 11)))
+    #
+    # print(res)
+
+    # strats = dict()
+    # for h in range(2, 12):
+    #     for threshold in range(10, 12):
+    #         res = saga_strategy(tr_env, h, threshold/100.0, fomc=False)
+    #         strats[(h, threshold)] = res
+    #
+    # res = pd.DataFrame(strats)
