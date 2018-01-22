@@ -49,10 +49,9 @@ def fetch_bloomberg_ois_data(data_path=None):
     curs = ["aud", "cad", "chf", "eur", "gbp", "jpy", "nzd", "sek", "usd"]
 
     # read in ---------------------------------------------------------------
-    ois_data = parse_bloomberg_excel(
-        filename=fname,
-        colnames_sheet="tenor",
-        data_sheets=curs)
+    ois_data = parse_bloomberg_excel(filename=fname, colnames_sheet="tenor",
+                                     data_sheets=curs, skiprows=2,
+                                     header=None)
 
     # pivot -----------------------------------------------------------------
     ois_data_xarr = {(tau.lower(), c.lower()): ois_data[c].loc[:, tau]
@@ -189,17 +188,17 @@ def merge_ois_data(*args):
 if __name__ == "__main__":
 
     # fetch_datastream_ois_data(data_path=data_path)
-    # fetch_bloomberg_ois_data(data_path=data_path)
+    fetch_bloomberg_ois_data(data_path=data_path)
     # res = merge_ois_data(priority="bit")
     # fetch_tr_ois_data()
 
-    ois_tr = pd.read_pickle(data_path + "ois_tr_1w_30y.p")
-    ois_bl = pd.read_pickle(data_path + "ois_bloomi_1w_30y.p")
-    ois_two = pd.read_pickle(data_path + "ois_tr_icap_1m_3m.p")
-    ois_ic = ois_two["icap"]
-    ois_tr_old = ois_two["tr"]
+    # ois_tr = pd.read_pickle(data_path + "ois_tr_1w_30y.p")
+    # ois_bl = pd.read_pickle(data_path + "ois_bloomi_1w_30y.p")
+    # ois_two = pd.read_pickle(data_path + "ois_tr_icap_1m_3m.p")
+    # ois_ic = ois_two["icap"]
+    # ois_tr_old = ois_two["tr"]
 
-    new_merged = merge_ois_data(ois_bl, ois_ic, ois_tr_old, ois_tr)
+    # new_merged = merge_ois_data(ois_bl, ois_ic, ois_tr_old, ois_tr)
     # old_merged = pd.read_pickle(data_path + "ois_bloomi_1w_30y.p")
 
 
