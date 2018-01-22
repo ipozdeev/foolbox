@@ -513,19 +513,19 @@ def retail_vrp(trading_env, mfiv, rv=None, map_signal=None, leverage="net",
     trading = FXTrading(environment=trading_env, strategy=strategy)
 
     # backtest
-    res_rv_mfiv = trading.backtest("unrealized")
+    res = trading.backtest("unrealized")
 
     return res
 
 
-def retail_dollar_carry(trading_env, us_rf, fwd_disc=None, map_signal=None,
+def retail_dollar_carry(trading_env, us_rf, foreign_rf=None, map_signal=None,
                  leverage="net", **kwargs):
     """
 
     Parameters
     ----------
     trading_env
-    fwd_disc
+    foreign_rf
     map_signal
     leverage
     kwargs
@@ -534,21 +534,21 @@ def retail_dollar_carry(trading_env, us_rf, fwd_disc=None, map_signal=None,
     -------
 
     """
-    if fwd_disc is None:
-        fwd_disc = trading_env.mid_swap_points / \
+    if foreign_rf is None:
+        foreign_rf = trading_env.mid_swap_points / \
                    trading_env.mid_spot_prices * -1
 
     if map_signal is None:
         map_signal = lambda x: x.shift(1)
 
     # signals
-    mean_fwd_disc = fwd_disc.mean(axis=1)
+    mean_fwd_disc = foreign_rf.mean(axis=1)
     sig = map_signal(mean_fwd_disc).ge(map_signal(us_rf))
     sig = sig.astype(float) * 2.0 - 1.0
-    sig = pd.concat([sig, ]*trading_env.spot_prices.shape[1], axis=1)
-    sig.columns = trading_env.spot_prices.columns
+    sig = pd.concat([sig, ]*len(trading_env.currencies), axis=1)
+    sig.columns = trading_env.currencies
 
-    # carry strategy
+    # dollar carry strategy
     strategy = FXTradingStrategy.from_position_flags(sig, leverage=leverage)
 
     # trading
@@ -569,7 +569,8 @@ if __name__ == "__main__":
     trading_env = wrapper_prepare_environment(settings, bid_ask=False,
                                               spot_only=False)
 
-    trading_env.drop(labels=[p for p in trading_env.currencies if p != "aud"],
+    drop_curs = [p for p in trading_env.currencies if p != "aud"]
+    trading_env.drop(labels=settings["drop_currencies"],
                      axis="minor_axis", errors="ignore")
 
     # one_strat = saga_strategy(trading_env, 10, 10, fomc=False,
@@ -585,13 +586,21 @@ if __name__ == "__main__":
     # saga_strat = np.log(one_strat).diff().replace(0.0, np.nan).dropna()\
     #     .to_frame("saga")
 
-    rf = pd.read_pickle(path_to_data + "overnight_rates.p")
-    us_rf = rf["usd"]
+    mat = "1m"
+    s_dt = trading_env.spot_prices["bid"].dropna().index[0]
+    e_dt = trading_env.spot_prices["bid"].dropna().index[-1]
+
+    rf = pd.read_pickle(path_to_data + "ois_bloomi_1w_30y.p")
+    us_rf = rf[mat].loc[s_dt:e_dt, "usd"]
+    foreign_rf = rf[mat].loc[s_dt:e_dt, trading_env.currencies]
 
     map_signal = lambda x: x.rolling(22, min_periods=1).mean().shift(1)
 
-    dol_carry = retail_dollar_carry(trading_env, us_rf, fwd_disc=None,
+    dol_carry = retail_dollar_carry(trading_env, us_rf, foreign_rf=foreign_rf,
                                     map_signal=map_signal)
+
+    dol_carry.plot()
+    plt.show()
 
     # path_to_mfiv = set_cred.set_path("option_implied_betas_project/data/" +
     #                                  "estimates/")
@@ -658,51 +667,51 @@ if __name__ == "__main__":
     # three = (1 + res3[0].pct_change().sum(axis=1) +
     #          res3[1].pct_change()).cumprod()
 
-    # BROOMSTICKS==============================================================
-    import time
-    t0 = time.time()
-    ix = pd.IndexSlice
-    holding_range = range(15, 16)
-    threshold_range = range(19, 26)
-    combos = list(itools.product(holding_range, threshold_range))
-    cols = pd.MultiIndex.from_tuples(combos, names=["holding", "threshold"])
-    out = pd.DataFrame(index=pd.date_range(s_dt, e_dt, freq='B'),
-                       columns=cols)
-    out_fomc = out.copy()
+    # # BROOMSTICKS==============================================================
+    # import time
+    # t0 = time.time()
+    # ix = pd.IndexSlice
+    # holding_range = range(15, 16)
+    # threshold_range = range(19, 26)
+    # combos = list(itools.product(holding_range, threshold_range))
+    # cols = pd.MultiIndex.from_tuples(combos, names=["holding", "threshold"])
+    # out = pd.DataFrame(index=pd.date_range(s_dt, e_dt, freq='B'),
+    #                    columns=cols)
+    # out_fomc = out.copy()
+    #
+    # for h in holding_range:
+    #     for tau in threshold_range:
+    #         print(h, tau)
+    #         print("time elapsed {}".format((time.time()-t0)/60))
+    #         res, res_fomc = \
+    #             saga_strategy3(tr_env.currencies, tr_env_fomc,
+    #                            holding_period=h,
+    #                            threshold=tau,
+    #                            **{"ffill": True,
+    #                               "avg_implied_over": avg_impl_over,
+    #                               "avg_refrce_over": avg_refrce_over})
+    #
+    #         res = (1 + res.pct_change().sum(axis=1) +
+    #                res_fomc.pct_change()).cumprod()
+    #
+    #         out.loc[:, ix[h, tau]] = res
+    #         out_fomc.loc[:, ix[h, tau]] = res_fomc
+    #
+    # t1 = time.time()
+    # print(t1-t0)
 
-    for h in holding_range:
-        for tau in threshold_range:
-            print(h, tau)
-            print("time elapsed {}".format((time.time()-t0)/60))
-            res, res_fomc = \
-                saga_strategy3(tr_env.currencies, tr_env_fomc,
-                               holding_period=h,
-                               threshold=tau,
-                               **{"ffill": True,
-                                  "avg_implied_over": avg_impl_over,
-                                  "avg_refrce_over": avg_refrce_over})
 
-            res = (1 + res.pct_change().sum(axis=1) +
-                   res_fomc.pct_change()).cumprod()
-
-            out.loc[:, ix[h, tau]] = res
-            out_fomc.loc[:, ix[h, tau]] = res_fomc
-
-    t1 = time.time()
-    print(t1-t0)
-
-
-    with open(path_to_data+"broomstick_rx_data_v2.p", mode="wb") as fname:
-        pickle.dump(out_fomc, fname)
-    with open(path_to_data+"broomstick_rx_data_fomc_v2.p", mode="wb") as fname:
-        pickle.dump(out_fomc, fname)
+    # with open(path_to_data+"broomstick_rx_data_v2.p", mode="wb") as fname:
+    #     pickle.dump(out_fomc, fname)
+    # with open(path_to_data+"broomstick_rx_data_fomc_v2.p", mode="wb") as fname:
+    #     pickle.dump(out_fomc, fname)
 
     # END BROOMSTICKS==========================================================
 
     # import multiprocessing
     # from itertools import product
 
-    from foolbox.playground.to_del import cprofile_analysis
+    # from foolbox.playground.to_del import cprofile_analysis
 
     # @cprofile_analysis(activate=True)
     # def broomstick_wrapper(x=(10,10)):
