@@ -399,6 +399,7 @@ def retail_carry(trading_env, fwd_disc=None, map_fwd_disc=None,
 
     return res
 
+
 def retail_value(trading_env, ppp, spot=None, map_signal=None,
                  leverage="net", **kwargs):
     """
@@ -517,6 +518,48 @@ def retail_vrp(trading_env, mfiv, rv=None, map_signal=None, leverage="net",
     return res
 
 
+def retail_dollar_carry(trading_env, us_rf, fwd_disc=None, map_signal=None,
+                 leverage="net", **kwargs):
+    """
+
+    Parameters
+    ----------
+    trading_env
+    fwd_disc
+    map_signal
+    leverage
+    kwargs
+
+    Returns
+    -------
+
+    """
+    if fwd_disc is None:
+        fwd_disc = trading_env.mid_swap_points / \
+                   trading_env.mid_spot_prices * -1
+
+    if map_signal is None:
+        map_signal = lambda x: x.shift(1)
+
+    # signals
+    mean_fwd_disc = fwd_disc.mean(axis=1)
+    sig = map_signal(mean_fwd_disc).ge(map_signal(us_rf))
+    sig = sig.astype(float) * 2.0 - 1.0
+    sig = pd.concat([sig, ]*trading_env.spot_prices.shape[1], axis=1)
+    sig.columns = trading_env.spot_prices.columns
+
+    # carry strategy
+    strategy = FXTradingStrategy.from_position_flags(sig, leverage=leverage)
+
+    # trading
+    trading = FXTrading(environment=trading_env, strategy=strategy)
+
+    # backtest
+    res = trading.backtest("unrealized")
+
+    return res
+
+
 if __name__ == "__main__":
 
     import matplotlib.pyplot as plt
@@ -529,18 +572,26 @@ if __name__ == "__main__":
     trading_env.drop(labels=[p for p in trading_env.currencies if p != "aud"],
                      axis="minor_axis", errors="ignore")
 
-    one_strat = saga_strategy(trading_env, 10, 10, fomc=False,
-                              leverage="unlimited",
-                              proxy_rate_pickle="overnight_rates.p",
-                              e_proxy_rate_pickle=
-                                "implied_rates_from_1m_ois_since.p",
-                              meetings_pickle="events.p",
-                              avg_impl_over=settings["avg_impl_over"],
-                              avg_refrce_over=settings["avg_refrce_over"],
-                              ffill=True)
+    # one_strat = saga_strategy(trading_env, 10, 10, fomc=False,
+    #                           leverage="unlimited",
+    #                           proxy_rate_pickle="overnight_rates.p",
+    #                           e_proxy_rate_pickle=
+    #                             "implied_rates_from_1m_ois_since.p",
+    #                           meetings_pickle="events.p",
+    #                           avg_impl_over=settings["avg_impl_over"],
+    #                           avg_refrce_over=settings["avg_refrce_over"],
+    #                           ffill=True)
 
-    saga_strat = np.log(one_strat).diff().replace(0.0, np.nan).dropna()\
-        .to_frame("saga")
+    # saga_strat = np.log(one_strat).diff().replace(0.0, np.nan).dropna()\
+    #     .to_frame("saga")
+
+    rf = pd.read_pickle(path_to_data + "overnight_rates.p")
+    us_rf = rf["usd"]
+
+    map_signal = lambda x: x.rolling(22, min_periods=1).mean().shift(1)
+
+    dol_carry = retail_dollar_carry(trading_env, us_rf, fwd_disc=None,
+                                    map_signal=map_signal)
 
     # path_to_mfiv = set_cred.set_path("option_implied_betas_project/data/" +
     #                                  "estimates/")
