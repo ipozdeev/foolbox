@@ -518,13 +518,13 @@ class FXTrading():
         # loop over time and position weights
         for t, row in self.actions.iterrows():
 
-            if t < self.prices.major_axis[0]:
-                continue
+            # if t < self.prices.major_axis[0]:
+            #     continue
             if t > self.prices.major_axis[-1]:
                 return payoff
 
-            if t > pd.Timestamp("2005-06-08"):
-                print("Stop right there! Criminal scum!")
+            # if t > pd.Timestamp("2005-06-08"):
+            #     print("Stop right there! Criminal scum!")
 
             # fetch prices and swap points ----------------------------------
             these_prices = self.prices.loc[:, t, :].T
