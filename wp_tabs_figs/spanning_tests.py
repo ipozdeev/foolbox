@@ -22,13 +22,13 @@ def spanning_tests(target, factors, scale=1):
     res_individ = dict()
     for f_name, f in factors.iteritems():
         mod = PureOls(y0=target, X0=f.rename("beta"), add_constant=True)
-        res_individ[f_name] = mod.get_diagnostics(HAC=True)
+        res_individ[f_name] = mod.get_diagnostics(HAC=False)
 
     res_individ = pd.concat(res_individ, axis=1)
 
     # all together
     mod = PureOls(y0=target, X0=factors, add_constant=True)
-    res_together = mod.get_diagnostics(HAC=True)
+    res_together = mod.get_diagnostics(HAC=False)
 
     return res_individ, res_together
 
@@ -97,10 +97,12 @@ if __name__ == "__main__":
     path_to_out = path_to_data + "wp_figures_limbo/"
 
     # data ------------------------------------------------------------------
-    with pd.HDFStore(path_to_data + "strategies.h5", mode="r") as hangar:
-        strats = pd.DataFrame.from_dict(
-            {k[1:]: hangar.get(k) for k in hangar.keys()}
-        )
+    hangar = pd.HDFStore(path_to_data + "strategies.h5", mode="r")
+    strats = pd.DataFrame.from_dict(
+        {k[1:]: hangar.get(k) for k in hangar.keys()}
+    )
+    hangar.close()
+
 
     # # plot
     # strats_grid = plot_strats_on_grid(path_to_data)
