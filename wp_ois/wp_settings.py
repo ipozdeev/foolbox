@@ -18,6 +18,10 @@ cb_fx_map = \
     {"rba": "aud", "boc": "cad", "snb": "chf", "ecb": "eur", "boe": "gbp",
      "rbnz": "nzd", "riks": "sek", "fomc": "usd"}
 
+fx_cb_map = \
+    {"aud": "rba", "cad": "boc", "chf": "snb", "eur": "ecb", "gbp": "boe",
+     "nzd": "rbnz", "sek": "riks", "usd": "fomc"}
+
 # matplotlib settings -------------------------------------------------------
 import matplotlib.pyplot as plt
 from matplotlib.colors import LinearSegmentedColormap
