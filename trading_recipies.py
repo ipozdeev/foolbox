@@ -23,7 +23,8 @@ implied_rate_pkl = "implied_rates_from_1m_ois.p"
 fx_pkl = "fx_by_tz_aligned_d.p"
 fx_pkl_fomc = "fx_by_tz_sp_fixed.p"
 
-no_good_curs = ["dkk", "jpy", "nok"]#, "cad", "chf", "eur", "gbp", "nzd", "sek"]
+no_good_curs = ["dkk", ]
+# "jpy", "nok", "cad", "chf", "eur", "gbp", "nzd", "sek"]
 no_good_curs_fomc = ["dkk"]
 # no_ois_curs = ["jpy", "nok"]
 
@@ -362,7 +363,7 @@ def wrapper_saga_strategy(settings, bid_ask=True, spot_only=False, fomc=False,
 
 
 def retail_carry(trading_env, fwd_disc=None, map_signal=None,
-                 leverage="net", **kwargs):
+                 monthly_sig=False, leverage="net", n_portfolios=3):
     """Construct carry as if implemented on the forex.
 
     Parameters
@@ -370,14 +371,18 @@ def retail_carry(trading_env, fwd_disc=None, map_signal=None,
     trading_env : FXTradingEnvironment
     fwd_disc : pandas.DataFrame
         of forward discounts (positive if rf > rf in the us)
-    map_signal : callable
-        function to apply to `fwd_disc`, e.g. lambda x: x.rolling(5).mean()
+    map_signal : callable or None
+        function to apply to `fwd_disc`, e.g. lambda x: x.rolling(5).mean();
+        this is the last chance to implement shifting before poco.rank_sort!
+    monthly_sig : bool
+        e.g. 'B'
     leverage : str
-    kwargs : dict
-        additional args to portfolio_construction.rank_sort()
+    n_portfolios : int
+        number of portf in portfolio_construction.rank_sort()
 
     Returns
     -------
+    res
 
     """
     if fwd_disc is None:
@@ -387,19 +392,22 @@ def retail_carry(trading_env, fwd_disc=None, map_signal=None,
     if map_signal is None:
         map_signal = lambda x: x.shift(1)
 
-    # apply transformation to forward discounts
     sig = map_signal(fwd_disc)
+
+    # delete columns which are not in trading environment
     sig = sig.reindex(columns=trading_env.currencies)
 
     s_dt = trading_env.mid_spot_prices.first_valid_index()
     e_dt = trading_env.mid_spot_prices.last_valid_index()
     sig = sig.loc[s_dt:e_dt, :]
 
-    # signals
-    portfolios = poco.rank_sort(sig, sig, **kwargs)
+    # monthly?
+    raise_freq = 'B' if monthly_sig else None
 
-    # carry strategy
-    strategy = FXTradingStrategy.from_long_short(portfolios, leverage=leverage)
+    # the strategy
+    strategy = FXTradingStrategy.long_short(sig, leverage=leverage,
+                                            n_portfolios=n_portfolios,
+                                            raise_freq=raise_freq)
 
     # trading
     trading = FXTrading(environment=trading_env, strategy=strategy)
@@ -410,35 +418,41 @@ def retail_carry(trading_env, fwd_disc=None, map_signal=None,
     return res
 
 
-def retail_value(trading_env, ppp, spot=None, map_signal=None,
-                 leverage="net", **kwargs):
+def retail_value(trading_env, spot, cpi, leverage="net", n_portfolios=3):
     """
     """
-    if spot is None:
-        spot = trading_env.mid_spot_prices
+    # ppp_no_bias = ppp.shift(1)
+    #
+    # sig_denom = ppp_no_bias.rolling(12, min_periods=1).mean().shift(12*4 + 6)
+    #
+    # sig = (sig_denom / ppp_no_bias).shift(1).reindex(
+    #     index=trading_env.mid_spot_prices.index)
 
-    if map_signal is None:
-        map_signal = lambda x: x.shift(1)
+    # avoid forward-looking bias in cpi
+    cpi_no_bias = cpi.ffill().shift(2)
 
-    # reindex
-    ppp_reix = ppp.shift(1).reindex(spot.index, method="ffill")
+    # average spot and cpi from 5.5 to 4.5 years ago
+    avg_spot = spot.rolling(12, min_periods=1).mean().shift(12*4 + 6)
+    avg_cpi = cpi_no_bias.rolling(12, min_periods=1).mean()\
+        .shift(12*4 + 6)
 
-    # reer-like
-    sig = ppp_reix / spot
+    # relative cpi values
+    rel_cpi = cpi_no_bias.div(cpi_no_bias.loc[:, "usd"], axis=0)
+    rel_avg_cpi = avg_cpi.div(avg_cpi.loc[:, "usd"], axis=0)
 
-    # apply transformation to forward discounts
-    sig = map_signal(sig)
-    sig = sig.reindex(columns=trading_env.currencies)
+    # signal: change in PPP vs dollar, shift by 1 month
+    sig = (-np.log(spot / avg_spot) - np.log(rel_cpi / rel_avg_cpi)).shift(1)
 
+    # retain certain columns and trim a bit
     s_dt = trading_env.mid_spot_prices.first_valid_index()
     e_dt = trading_env.mid_spot_prices.last_valid_index()
     sig = sig.loc[s_dt:e_dt, :]
+    sig = sig.reindex(columns=trading_env.currencies)
 
-    # signals
-    portfolios = poco.rank_sort(sig, sig, **kwargs)
-
-    # carry strategy
-    strategy = FXTradingStrategy.from_long_short(portfolios, leverage=leverage)
+    # strategy
+    strategy = FXTradingStrategy.long_short(sig, leverage=leverage,
+                                            n_portfolios=n_portfolios,
+                                            raise_freq='B')
 
     # trading
     trading = FXTrading(environment=trading_env, strategy=strategy)
@@ -450,7 +464,7 @@ def retail_value(trading_env, ppp, spot=None, map_signal=None,
 
 
 def retail_momentum(trading_env, spot_ret=None, map_signal=None,
-                    leverage="net", **kwargs):
+                    monthly_sig=False, leverage="net", n_portfolios=3):
     """Construct momentum strategy a la Menkhoff et al. (2012).
 
     Parameters
@@ -458,8 +472,9 @@ def retail_momentum(trading_env, spot_ret=None, map_signal=None,
     trading_env
     spot_ret
     map_signal
+    monthly_sig
     leverage
-    kwargs
+    n_portfolios
 
     Returns
     -------
@@ -473,17 +488,20 @@ def retail_momentum(trading_env, spot_ret=None, map_signal=None,
 
     # apply transformation to spot returns
     sig = map_signal(spot_ret)
-    sig = sig.reindex(columns=trading_env.currencies)
 
+    # reindex
     s_dt = trading_env.mid_spot_prices.first_valid_index()
     e_dt = trading_env.mid_spot_prices.last_valid_index()
     sig = sig.loc[s_dt:e_dt, :]
+    sig = sig.reindex(columns=trading_env.currencies)
 
-    # signals
-    portfolios = poco.rank_sort(sig, sig, **kwargs)
+    # monthly?
+    raise_freq = 'B' if monthly_sig else None
 
     # the strategy
-    strategy = FXTradingStrategy.from_long_short(portfolios, leverage=leverage)
+    strategy = FXTradingStrategy.long_short(sig, leverage=leverage,
+                                            raise_freq=raise_freq,
+                                            n_portfolios=n_portfolios)
 
     # trading
     trading = FXTrading(environment=trading_env, strategy=strategy)
@@ -494,8 +512,8 @@ def retail_momentum(trading_env, spot_ret=None, map_signal=None,
     return res
 
 
-def retail_vrp(trading_env, mfiv, rv=None, map_signal=None, leverage="net",
-               **kwargs):
+def retail_vrp(trading_env, mfiv, rv=None, map_signal=None,
+               monthly_sig=False, leverage="net", n_portfolios=3):
     """
 
     Parameters
@@ -503,8 +521,10 @@ def retail_vrp(trading_env, mfiv, rv=None, map_signal=None, leverage="net",
     trading_env
     mfiv
     rv
+    monthly_sig
     map_signal
     leverage
+    n_portfolios
 
     Returns
     -------
@@ -521,17 +541,19 @@ def retail_vrp(trading_env, mfiv, rv=None, map_signal=None, leverage="net",
 
     # apply transformation to forward discounts
     sig = map_signal(sig)
-    sig = sig.reindex(columns=trading_env.currencies)
 
     s_dt = trading_env.mid_spot_prices.first_valid_index()
     e_dt = trading_env.mid_spot_prices.last_valid_index()
     sig = sig.loc[s_dt:e_dt, :]
+    sig = sig.reindex(columns=trading_env.currencies)
 
-    # signals
-    portfolios = poco.rank_sort(sig, sig, **kwargs)
+    # monthly?
+    raise_freq = 'B' if monthly_sig else None
 
     # carry strategy
-    strategy = FXTradingStrategy.from_long_short(portfolios, leverage=leverage)
+    strategy = FXTradingStrategy.long_short(sig, leverage=leverage,
+                                            raise_freq=raise_freq,
+                                            n_portfolios=n_portfolios)
 
     # trading
     trading = FXTrading(environment=trading_env, strategy=strategy)
@@ -542,8 +564,8 @@ def retail_vrp(trading_env, mfiv, rv=None, map_signal=None, leverage="net",
     return res
 
 
-def retail_dollar_carry(trading_env, us_rf, foreign_rf, map_signal=None,
-                        leverage="net"):
+def retail_dollar_carry(trading_env, us_rf, foreign_rf=None, map_signal=None,
+                        leverage="net", monthly_sig=False):
     """
 
     Parameters
@@ -552,7 +574,7 @@ def retail_dollar_carry(trading_env, us_rf, foreign_rf, map_signal=None,
     foreign_rf
     map_signal
     leverage
-    kwargs
+    monthly_sig
 
     Returns
     -------
@@ -561,19 +583,71 @@ def retail_dollar_carry(trading_env, us_rf, foreign_rf, map_signal=None,
     if map_signal is None:
         map_signal = lambda x: x.shift(1)
 
-    # signals
+    if foreign_rf is None:
+        foreign_rf = trading_env.mid_swap_points / \
+                     trading_env.mid_spot_prices * -1
+
     mean_fwd_disc = foreign_rf.mean(axis=1)
-    sig = map_signal(mean_fwd_disc).ge(map_signal(us_rf))
+
+    # filter
+    mean_fwd_disc = map_signal(mean_fwd_disc)
+    us_rf = map_signal(us_rf)
+
+    # monthly?
+    if monthly_sig:
+        raise_freq = 'B'
+        mean_fwd_disc = mean_fwd_disc.resample(raise_freq).last().shift(1)\
+            .bfill()
+        us_rf = us_rf.resample(raise_freq).last().shift(1).bfill()
+
+    # signal
+    sig = mean_fwd_disc.ge(us_rf)
     sig = sig.astype(float) * 2.0 - 1.0
     sig = pd.concat([sig, ]*len(trading_env.currencies), axis=1)
+
+    # leave only currencies in trading environment
     sig.columns = trading_env.currencies
 
     s_dt = trading_env.mid_spot_prices.first_valid_index()
     e_dt = trading_env.mid_spot_prices.last_valid_index()
     sig = sig.loc[s_dt:e_dt, :]
 
-    # the strategy
     strategy = FXTradingStrategy.from_position_flags(sig, leverage=leverage)
+
+    # trading
+    trading = FXTrading(environment=trading_env, strategy=strategy)
+
+    # backtest
+    res = trading.backtest("unrealized")
+
+    return res
+
+
+def retail_dollar_index(trading_env, leverage="net", monthly_sig=False):
+    """
+
+    Parameters
+    ----------
+    trading_env
+
+    Returns
+    -------
+
+    """
+    wght = trading_env.mid_spot_prices.dropna().copy() * 0.0 + 1.0
+    wght = wght.div(wght.sum(axis=1), axis=0)
+    wght = wght.resample('M').last()
+
+    this_sign = 1
+    for t, row in wght.iterrows():
+        wght.loc[t, :] = row + 0.0001*this_sign
+        this_sign *= -1
+
+    if monthly_sig:
+        raise_freq = 'B'
+        wght = StrategyFactory().raise_flags_frequency(wght, raise_freq)
+
+    strategy = FXTradingStrategy(position_weights=wght)
 
     # trading
     trading = FXTrading(environment=trading_env, strategy=strategy)
@@ -611,8 +685,11 @@ def retail_slope(trading_env, rate_long, rate_short, map_signal=None,
     e_dt = trading_env.mid_spot_prices.last_valid_index()
     sig = sig.loc[s_dt:e_dt, :]
 
+    # ffill to arrive at position flags
+    flags = sig.ffill()
+
     # the strategy
-    strategy = FXTradingStrategy(actions=sig)
+    strategy = FXTradingStrategy.from_position_flags(flags, leverage=leverage)
 
     # trading
     trading = FXTrading(environment=trading_env, strategy=strategy)
@@ -656,60 +733,369 @@ def wrapper_collect_strategies(trading_env):
     # strategies ------------------------------------------------------------
     strats = dict()
 
-    for w in [5, 22]:
+    for w in [5, 22, 66]:
         # carry
-        # strat = retail_carry(trading_env, fwd_disc=fwd_disc_tn,
-        #                      map_signal=map_signal(w), leverage="net",
-        #                      n_portfolios=3)
-        # strats[("carry", "tomnext", w)] = strat
-        #
-        # strat = retail_carry(trading_env, fwd_disc=fwd_disc_1m,
-        #                      map_signal=map_signal(w), leverage="net",
-        #                      n_portfolios=3)
-        # strats[("carry", "1m", w)] = strat
-        #
-        # # momentum
-        # strat = retail_momentum(trading_env, spot_ret=-1*spot_ret_d,
-        #                         map_signal=map_signal(w), leverage="net",
-        #                         n_portfolios=3)
-        # strats[("reversal", "standard", w)] = strat
-        #
-        # # vrp
-        # strat = retail_vrp(trading_env, mfiv=mfiv, map_signal=map_signal(w),
-        #                    leverage="net", n_portfolios=3)
-        # strats[("vrp", "standard", w)] = strat
-        #
-        # # value
-        # strat = retail_value(trading_env, ppp=ppp, map_signal=map_signal(w),
-        #                      leverage="net", n_portfolios=3)
-        # strats[("value", "standard", w)] = strat
-        #
-        # # dollar carry
-        # strat = retail_dollar_carry(trading_env, us_rf=on_rates.loc[:, "usd"],
-        #                             foreign_rf=on_rates.drop("usd", axis=1),
-        #                             map_signal=map_signal(w),
-        #                             leverage="net")
-        #
-        # strats[("dollar_carry", "overnight_rates", w)] = strat
-        #
-        # strat = retail_dollar_carry(
-        #     trading_env, us_rf=ois_rates["1m"].loc[:, "usd"],
-        #     foreign_rf=on_rates.drop("usd", axis=1),
-        #     map_signal=map_signal(w), leverage="net")
-        #
-        # strats[("dollar_carry", "1m", w)] = strat
+        strat = retail_carry(trading_env, fwd_disc=fwd_disc_tn,
+                             map_signal=map_signal(w), leverage="net",
+                             n_portfolios=3)
+        strats[("carry", "tomnext", w)] = strat
+
+        strat = retail_carry(trading_env, fwd_disc=fwd_disc_1m,
+                             map_signal=map_signal(w), leverage="net",
+                             n_portfolios=3)
+        strats[("carry", "1m", w)] = strat
+
+        # momentum
+        strat = retail_momentum(trading_env, spot_ret=-1*spot_ret_d,
+                                map_signal=map_signal(w), leverage="net",
+                                n_portfolios=3)
+        strats[("reversal", "standard", w)] = strat
+
+        # vrp
+        strat = retail_vrp(trading_env, mfiv=mfiv, map_signal=map_signal(w),
+                           leverage="net", n_portfolios=3)
+        strats[("vrp", "standard", w)] = strat
+
+        # value
+        strat = retail_value(trading_env, ppp=ppp, map_signal=map_signal(w),
+                             leverage="net", n_portfolios=3)
+        strats[("value", "standard", w)] = strat
+
+        # dollar carry
+        strat = retail_dollar_carry(trading_env, us_rf=on_rates.loc[:, "usd"],
+                                    foreign_rf=on_rates.drop("usd", axis=1),
+                                    map_signal=map_signal(w),
+                                    leverage="net")
+
+        strats[("dollar_carry", "overnight_rates", w)] = strat
+
+        strat = retail_dollar_carry(
+            trading_env, us_rf=ois_rates["1m"].loc[:, "usd"],
+            foreign_rf=on_rates.drop("usd", axis=1),
+            map_signal=map_signal(w), leverage="net")
+
+        strats[("dollar_carry", "1m", w)] = strat
 
         strat = retail_slope(trading_env, ois_rates["1m"], on_rates,
                              map_signal(w))
 
-        strats[w] = strat
+        strats[("slope", "1m", w)] = strat
 
-    # strats = pd.concat(strats, axis=1)
-    #
-    # with pd.HDFStore(path_to_data + "strategies.h5", mode="w") as hangar:
-    #     hangar.put("strats", strats)
+    strats = pd.concat(strats, axis=1)
+
+    with pd.HDFStore(path_to_data + "strategies.h5", mode="w") as hangar:
+        hangar.put("strats", strats)
+
+    # return strats
+
+
+def wrapper_collect_monthly_strategies(trading_env):
+    """
+
+    Returns
+    -------
+
+    """
+    # data ------------------------------------------------------------------
+    wmr_data_m = pd.read_pickle(path_to_data + "data_wmr_dev_m.p")
+    wmr_data_d = pd.read_pickle(path_to_data + "data_wmr_dev_d.p")
+    fwd_disc_1m = wmr_data_m["fwd_disc"]
+    spot_price_m = 1/wmr_data_m["spot_mid"]
+    spot_ret_m = wmr_data_m["spot_ret"]
+    spot_ret_d = wmr_data_d["spot_ret"]
+
+    with pd.HDFStore(path_to_data + "cpi_1961_2017_m.h5", mode='r') as h:
+        cpi = h.get("cpi").drop("dem", axis=1).dropna(how="all")
+
+    ois_rates = pd.read_pickle(path_to_data + "ois_bloomi_1w_30y.p")
+    us_rf = ois_rates["1m"].loc[:, "usd"] / 12 / 360
+
+    tmp_data_reix = spot_ret_d.reindex(
+        index=pd.date_range(spot_ret_d.index[0], spot_ret_d.index[-1],
+                            freq='B'))
+    rv = (tmp_data_reix ** 2).resample('M').mean() *\
+         tmp_data_reix.resample('M').count()
+
+    mfiv = pd.read_pickle(path_to_data + "mfiv_1m.p").resample('M').last() / 12
+
+    # strategies ------------------------------------------------------------
+    strats = dict()
+
+    for n_p in [3, 5]:
+
+        # carry --
+        strat = retail_carry(trading_env, fwd_disc=fwd_disc_1m,
+                             map_signal=None, monthly_sig=True, leverage="net",
+                             n_portfolios=n_p)
+        strats[("carry", n_p)] = strat
+
+        # momentum --
+        map_signal = lambda x: x.rolling(12).mean().shift(2)
+        strat = retail_momentum(trading_env, spot_ret=spot_ret_m,
+                                map_signal=map_signal, monthly_sig=True,
+                                leverage="net", n_portfolios=n_p)
+        strats[("momentum", n_p)] = strat
+
+        # vrp --
+        strat = retail_vrp(trading_env, mfiv=mfiv, rv=rv,
+                           map_signal=None, monthly_sig=True, leverage="net",
+                           n_portfolios=n_p)
+
+        strats[("vrp", n_p)] = strat
+
+        # value --
+        strat = retail_value(trading_env, cpi=cpi, spot=spot_price_m,
+                             leverage="net", n_portfolios=n_p)
+        strats[("value", n_p)] = strat
+
+        # dollar carry
+        strat = retail_dollar_carry(trading_env, us_rf=us_rf,
+                                    foreign_rf=fwd_disc_1m,
+                                    map_signal=None, monthly_sig=True,
+                                    leverage="net")
+
+        strats[("dollar_carry", n_p)] = strat
+
+        # dollar index
+        strat = retail_dollar_index(trading_env, monthly_sig=True,
+                                    leverage="net")
+        strats[("dollar_index", n_p)] = strat
+
+    strats = pd.concat(strats, axis=1)
+
+    with pd.HDFStore(path_to_data + "strategies_m.h5", mode="w") as hangar:
+        hangar.put("strats", strats)
 
     return strats
+
+
+def wrapper_many_momenta(trading_env, lookback_range=None, burn_range=None,
+                         n_portf_range=None):
+    """
+
+    Returns
+    -------
+
+    """
+    if lookback_range is None:
+        lookback_range = [0.5, 1, 2, 5, 11]
+    if burn_range is None:
+        burn_range = [1, 5, 22]
+    if n_portf_range is None:
+        n_portf_range = [3, 5]
+
+    # spot returns
+    spot_r = np.log(trading_env.mid_spot_prices).diff()
+
+    # factory for smoother
+    map_signal = lambda x, w, b: x.rolling(w, min_periods=1).mean().shift(b)
+
+    # loop
+    all_strats = dict()
+
+    for lookback_m in lookback_range:
+        lookback_d = int(lookback_m * 22)
+        for burn in burn_range:
+            if burn >= lookback_d:
+                continue
+            this_map = lambda x: map_signal(x, lookback_d, burn)
+
+            for n_portf in n_portf_range:
+                this_strat = retail_momentum(trading_env, spot_ret=spot_r,
+                                             map_signal=this_map,
+                                             leverage="net",
+                                             n_portfolios=n_portf)
+
+                all_strats[(lookback_d, burn, n_portf)] = this_strat
+
+    res = pd.concat(all_strats, axis=1)
+
+    with pd.HDFStore(path_to_data + "momenta.h5", mode="w") as hangar:
+        hangar.put("strats", res)
+
+    return res
+
+
+def wrapper_many_carries(trading_env, lookback_range=None,
+                         n_portf_range=None, monthly_sig=False):
+    """
+
+    Returns
+    -------
+
+    """
+    if lookback_range is None:
+        lookback_range = [0.5, 1, 2, 5, 11]
+    if n_portf_range is None:
+        n_portf_range = [3, 5]
+
+    # factory for smoother
+    map_signal = lambda x, w: x.rolling(w, min_periods=1).mean().shift(1)
+
+    raise_freq = 'B' if monthly_sig else None
+
+    # loop
+    all_strats = dict()
+
+    for lookback_m in lookback_range:
+        lookback_d = int(lookback_m * 22)
+
+        this_map = lambda x: map_signal(x, lookback_d)
+
+        for n_portf in n_portf_range:
+            this_strat = retail_carry(trading_env, map_signal=this_map,
+                                      leverage="net",
+                                      raise_freq=raise_freq,
+                                      n_portfolios=n_portf)
+
+            all_strats[(lookback_d, n_portf)] = this_strat
+
+    res = pd.concat(all_strats, axis=1)
+
+    with pd.HDFStore(path_to_data + "carries.h5", mode="w") as hangar:
+        hangar.put("strats", res)
+
+    return res
+
+
+def wrapper_many_dollar_carries(trading_env, lookback_range=None,
+                                monthly_sig=False):
+    """
+
+    Returns
+    -------
+
+    """
+    on_rates = pd.read_pickle(path_to_data + "overnight_rates.p")
+    us_rf = on_rates.loc[:, "usd"] / 360 / 100
+
+    if lookback_range is None:
+        lookback_range = [0.5, 1, 3]
+
+    # factory for smoother
+    map_signal = lambda x, w: x.rolling(w, min_periods=1).mean().shift(1)
+
+    # loop
+    all_strats = dict()
+
+    for lookback_m in lookback_range:
+        lookback_d = int(lookback_m * 22)
+        this_map = lambda x: map_signal(x, lookback_d)
+
+        this_strat = retail_dollar_carry(trading_env, map_signal=this_map,
+                                         us_rf=us_rf, leverage="net",
+                                         monthly_sig=monthly_sig)
+
+        all_strats[lookback_d] = this_strat
+
+    res = pd.concat(all_strats, axis=1)
+
+    with pd.HDFStore(path_to_data + "dollar_carries.h5", mode="w") as hangar:
+        hangar.put("strats", res)
+
+    return res
+
+
+def wrapper_many_vrps(trading_env, lookback_range=None, n_days=None,
+                      n_portf_range=None):
+    """
+
+    Returns
+    -------
+
+    """
+    # import mfiv
+    path_to_mfiv = set_cred.set_path("option_implied_betas_project/data/" +
+                                     "estimates/")
+    hangar = pd.HDFStore(path_to_mfiv + "mfiv.h5", mode="r")
+    mfiv_dict = {
+        re.sub('/', '', re.sub("usd", '', re.sub("m1m", '', k))): hangar.get(k)
+        for k in hangar.keys() if "usd" in k and k.endswith("m1m")
+    }
+    hangar.close()
+
+    mfiv = pd.DataFrame.from_dict(
+        {k: v.loc[~v.index.duplicated(keep="last")]
+         for k, v in mfiv_dict.items()}
+    ) / 12
+
+    mfiv = mfiv.loc[s_dt:e_dt, trading_env.currencies]
+
+    if lookback_range is None:
+        lookback_range = [1/22, 0.5, 1, 3]
+    if n_days is None:
+        n_days = [22, 23, 30]
+    if n_portf_range is None:
+        n_portf_range = [3, 5]
+
+    # spot returns
+    spot_r = np.log(trading_env.mid_spot_prices).diff()
+
+    # factory for smoother
+    map_signal = lambda x, w: x.rolling(w, min_periods=1).mean().shift(1)
+
+    # loop
+    all_strats = dict()
+
+    for lookback_m in lookback_range:
+        lookback_d = int(lookback_m * 22)
+        this_map = lambda x: map_signal(x, lookback_d)
+
+        for n in n_days:
+            rv = spot_r.rolling(n, min_periods=10).var() * n
+            for n_portf in n_portf_range:
+                this_strat = retail_vrp(trading_env, mfiv=mfiv, rv=rv,
+                                        map_signal=this_map, leverage="net",
+                                        n_portfolios=n_portf)
+
+                all_strats[(lookback_d, n, n_portf)] = this_strat
+
+    res = pd.concat(all_strats, axis=1)
+
+    with pd.HDFStore(path_to_data + "vrps.h5", mode="w") as hangar:
+        hangar.put("strats", res)
+
+    return res
+
+
+def wrapper_many_values(trading_env, n_portf_range=None):
+    """
+
+    Parameters
+    ----------
+    trading_env
+    n_portf_range
+
+    Returns
+    -------
+
+    """
+    with pd.HDFStore(path_to_data + "cpi_1961_2017_m.h5", mode='r') as h:
+        cpi = h.get("cpi").drop("dem", axis=1).dropna(how="all")
+
+    spot = pd.read_pickle(path_to_data + "data_wmr_dev_m.p")["spot_mid"]
+
+    if n_portf_range is None:
+        n_portf_range = [3, 5]
+
+    # loop
+    strats = dict()
+
+    for n_portf in n_portf_range:
+
+        strats[n_portf] = retail_value(trading_env, cpi=cpi, spot=spot,
+                                       leverage="net", n_portf=n_portf)
+
+    # concat, rename columns
+    res = pd.concat(strats, axis=1)
+    res.columns.name = "n_portf"
+
+    with pd.HDFStore(path_to_data + "values.h5", mode="w") as hangar:
+        hangar.put("strats", res)
+
+    return res
+
+
 
 
 if __name__ == "__main__":
@@ -726,9 +1112,9 @@ if __name__ == "__main__":
     trading_env.drop(labels=settings["drop_currencies"],
                      axis="minor_axis", errors="ignore")
 
-    # # start, end dates to align signals and available prices
-    # s_dt = trading_env.mid_spot_prices.dropna().index[0]
-    # e_dt = trading_env.mid_spot_prices.dropna().index[-1]
+    # start, end dates to align signals and available prices
+    s_dt = trading_env.mid_spot_prices.dropna().index[0]
+    e_dt = trading_env.mid_spot_prices.dropna().index[-1]
 
     # # saga strategy ---------------------------------------------------------
     # saga_strat = saga_strategy(trading_env, 10, 10, fomc=True,
@@ -745,8 +1131,8 @@ if __name__ == "__main__":
     # saga_strat = np.log(saga_strat).diff().replace(0.0, np.nan).dropna()\
     #     .rename("saga")
     #
-    # with pd.HDFStore(path_to_data + "strategies.h5", mode="w") as hangar:
-    #     hangar.put("saga", saga_strat)
+    # with pd.HDFStore(path_to_data + "strategies.h5", mode="a") as hangar:
+    #     hangar.put("/saga", saga_strat)
     #
     # # carry -----------------------------------------------------------------
     # map_signal = lambda x: x.rolling(22, min_periods=1).mean().shift(1)
@@ -824,19 +1210,25 @@ if __name__ == "__main__":
     #     hangar.put("value", ppp_strat)
     #
     # # momentum --------------------------------------------------------------
-    # map_signal = lambda x: x.rolling(22, min_periods=1).mean().shift(1)
+    # map_signal = lambda x: x.rolling(252, min_periods=1).mean().shift(22)
     #
     # mom_strat = retail_momentum(trading_env, map_signal=map_signal,
     #                             leverage="net", n_portfolios=3)
     #
     # mom_strat.plot()
     # plt.show()
-
+    #
     # mom_strat = np.log(mom_strat).diff().replace(0.0, np.nan).dropna()\
     #     .rename("momentum")
-    #
+
     # with pd.HDFStore(path_to_data + "strategies.h5", mode="a") as hangar:
-    #     hangar.put("reversal", -1*mom_strat)
+    #     hangar.put("momentum", mom_strat)
+
+    # with pd.HDFStore(path_to_data + "strategies.h5", mode="a") as hangar:
+    #     mom_strat = hangar.get("momentum")
+    #
+    # mom_strat.cumsum().plot()
+    # plt.show()
 
     # strats = dict()
     # for h in range(10, 11):
@@ -962,10 +1354,7 @@ if __name__ == "__main__":
     #
     # res = pd.DataFrame(strats)
 
-    res = wrapper_collect_strategies(trading_env)
-    res[5].plot()
-    res[22].plot()
-    plt.show()
+    # wrapper_collect_strategies(trading_env)
 
     # import seaborn as sns
     # sns.set_style("whitegrid")
@@ -979,3 +1368,41 @@ if __name__ == "__main__":
     #     strats[st].plot(ax=ax)
     #     fig.tight_layout()
     #     fig.savefig("c:/users/pozdeev/temp/" + st +".png")
+
+    # map_signal = lambda x: x.rolling(22, min_periods=1).mean().shift(1)
+    # res_d = retail_carry(trading_env, map_signal=map_signal,
+    #                      raise_freq=False, n_portfolios=5)
+    # res_m = retail_carry(trading_env, map_signal=None,
+    #                      raise_freq=True, n_portfolios=5)
+    #
+    # pd.concat((res_d.rename('d'), res_m.rename('m')), axis=1).plot()
+    # plt.show()
+
+
+    # res = wrapper_many_carries(trading_env, monthly_sig=True)
+
+    # res = wrapper_many_momenta(trading_env)
+    # res = wrapper_many_vrps(trading_env)
+    # res = wrapper_many_dollar_carries(trading_env)
+    #
+    # res = wrapper_many_values(trading_env)
+    #
+    # with pd.HDFStore(path_to_data + "values.h5", mode="r") as hangar:
+    #     res = hangar.get("strats")
+    #
+    # res.plot()
+    # plt.show()
+
+    strats = wrapper_collect_monthly_strategies(trading_env)
+
+    # rate_on = pd.read_pickle(path_to_data + "overnight_rates.p")
+    # rf = pd.read_pickle(path_to_data + "ois_bloomi_1w_30y.p")
+    # map_signal = lambda x: x.rolling(22).mean().shift(1)
+    # strats = retail_slope(trading_env, rf["1m"], rate_on,
+    #                       map_signal=map_signal, leverage="net")
+
+    # strat = retail_dollar_index(trading_env)
+
+    strats.plot()
+    plt.show()
+
