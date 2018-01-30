@@ -527,8 +527,8 @@ def next_days_same_rate(dt, b_day=None):
     return res
 
 
-def to_better_latex(df_coef, df_tstat, fmt_coef="{}", fmt_tstat="{}",
-    **kwargs):
+def to_better_latex(df_coef, df_tstat, r_squared=None, fmt_coef="{}",
+                    fmt_tstat="{}", **kwargs):
     """
     df_coef = pd.DataFrame(np.eye(2)*3, index=["on","tw"], columns=["A","B"])
     df_coef.iloc[0, 0] = None
@@ -536,8 +536,11 @@ def to_better_latex(df_coef, df_tstat, fmt_coef="{}", fmt_tstat="{}",
     fmt_coef = '{:3.2f}'
     fmt_tstat = fmt_coef
 
+    TODO: consider this np.vstack(zip(df_coef.values, df_tstat.values))
+
     """
-    weird_fmt = lambda x: "\multicolumn{1}{c}{" + str(x) + "}"
+    pd.set_option("display.max_colwidth", 50)
+    weird_fmt = lambda x: r"\multicolumn{1}{c}{" + str(x) + "}"
 
     # def signif_fmt(x):
     #     if x <= 0.01:
@@ -572,7 +575,15 @@ def to_better_latex(df_coef, df_tstat, fmt_coef="{}", fmt_tstat="{}",
     new_mask = pd.DataFrame(new_mask, index=new_idx, columns=new_col)
     new_df = new_df.applymap(weird_fmt).where(~new_mask).fillna(new_df)
 
-    return new_df.to_latex(**kwargs)
+    if r_squared is not None:
+        new_df = pd.concat((
+            new_df,
+            r_squared.applymap(fmt_coef.format).rename(
+                index={"adj r2": "R^2", "nobs": "N obs"})),
+            axis=0)
+
+    return new_df.to_latex(**kwargs, escape=False)
+
 
 
 def resample_between_events(data, events, fun, mask=None):
@@ -655,6 +666,39 @@ def apply_between_events(data, events, func, lag=None, **kwargs):
 
     else:
         res = None
+
+    return res
+
+
+def diag_table_of_regressions(individ, joint):
+    """
+
+    Parameters
+    ----------
+    individ
+    joint
+
+    Returns
+    -------
+
+    """
+    # individual --
+    # df_individ = individ.loc["coef", :].unstack(level=0).sort_index(axis=0)
+    # df_joint = individ.loc["tstat", :].unstack(level=0).sort_index(axis=0)
+
+    # create diagonal matrix
+    b_d = pd.DataFrame(
+        data=np.vstack((np.diag(individ.loc["beta", :]),
+                        individ.loc[["const"], :].values)),
+        index=list(individ.columns) + ["const"],
+        columns=individ.columns).replace(0.0, np.nan)
+
+    # add column with the joint model
+    res = pd.concat((b_d, joint.rename("joint")), axis=1)
+
+    # swap columns to ensure diagonal look
+    res = res.loc[list(individ.columns) + ["const"],
+                  list(individ.columns) + ["joint"]]
 
     return res
 
