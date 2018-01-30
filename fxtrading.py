@@ -436,14 +436,16 @@ class FXTrading():
     """
     def __init__(self, environment, strategy, settings=None):
         """
-        Parameters
-        ----------
-
         """
+        # check if prices are not missing where actions are not
+        self.check_alignment(prices=environment.spot_prices,
+                             actions=strategy.actions)
+
+        # attributes
+        self.strategy = strategy
+        self.actions = strategy.actions
         self.prices = environment.spot_prices.copy()
         self.swap_points = environment.swap_points.copy()
-        self.actions = strategy.actions
-
         self.settings = settings
 
         # collect positions into portfolio
@@ -452,8 +454,44 @@ class FXTrading():
 
         self.portfolio = portfolio
 
-        # self.position_flags = position_flags
-        # self.position_weights = position_weights
+    @staticmethod
+    def check_alignment(prices, actions):
+        """Check if prices are not missing where actions are not missing.
+
+        Parameters
+        ----------
+        prices : pandas.Panel
+        actions : pandas.DataFrame
+
+        Returns
+        -------
+
+        """
+        # get rid of zeros in actions: these play no role
+        act_no_zeros = actions.replace(0.0, np.nan).dropna(how="all")
+
+        # reindex to have prices of same dimensions as actions
+        prc_reix = prices.reindex(major_axis=act_no_zeros.index,
+                                  minor_axis=act_no_zeros.columns)
+
+        # need ask quotes where actions are positive
+        ask_prc = prc_reix.loc["ask", :, :].where(act_no_zeros > 0)
+        buy_sig = act_no_zeros.where(act_no_zeros > 0)
+
+        # assert
+        if not ask_prc.notnull().equals(buy_sig.notnull()):
+            raise ValueError("There are buy signals where ask prices are "
+                             "missing!")
+
+        # need bid quotes where actions are negative
+        bid_prc = prc_reix.loc["bid", :, :].where(act_no_zeros < 0)
+        sell_sig = act_no_zeros.where(act_no_zeros < 0)
+
+        # assert
+        if not bid_prc.notnull().equals(sell_sig.notnull()):
+            raise ValueError("There are sell signals where bid prices are "
+                             "missing!")
+
 
     def backtest(self, method="balance"):
         """ Backtest a strategy based on self.`signals`.
@@ -474,25 +512,19 @@ class FXTrading():
         payoff : pandas.Series
             cumulative payoff, starting at 1
         """
-        # find rows where some action takes place: self.actions or
-        #   self.position_flags are not zero
-        # good_idx = self.actions.replace(0.0, np.nan).dropna(how="all").index\
-        #     .union(
-        #     self.position_flags.replace(0.0, np.nan).dropna(how="all").index)
-
-        # ipdb.set_trace()
-
         # allocate space for liquidation values
-        payoff = pd.Series(index=self.prices.major_axis)
+        payoff = pd.Series(index=self.actions.index)
 
         # loop over time and position weights
         for t, row in self.actions.iterrows():
 
-            if t < self.prices.major_axis[0]:
-                continue
+            # if t < self.prices.major_axis[0]:
+            #     continue
+            if t > self.prices.major_axis[-1]:
+                return payoff
 
-            if t == pd.Timestamp("2001-08-15"):
-                print("Stop right there! Criminal scum!")
+            # if t > pd.Timestamp("2005-06-08"):
+            #     print("Stop right there! Criminal scum!")
 
             # fetch prices and swap points ----------------------------------
             these_prices = self.prices.loc[:, t, :].T
@@ -511,7 +543,7 @@ class FXTrading():
                 res = self.portfolio.get_margin_closeout_value(these_prices)
             else:
                 raise ValueError("Unknown method! Choose 'balance' or "
-                "'unrealized_pnl' instead.")
+                                 "'unrealized_pnl' instead.")
 
             payoff.loc[t] = res
 
@@ -534,15 +566,18 @@ class FXTrading():
         writer = pd.ExcelWriter(filename, engine='xlsxwriter')
 
         # Convert dataframes to an XlsxWriter Excel object.
-        # self.signals.to_excel(writer, sheet_name='signals')
-        # self.position_flags.to_excel(writer, sheet_name='position_flags')
-        # self.position_weights.to_excel(writer, sheet_name='position_weights')
-        # self.actions.to_excel(writer, sheet_name='actions')
+        self.strategy.position_flags.to_excel(writer,
+                                              sheet_name='position_flags')
+        self.strategy.position_weights.to_excel(writer,
+                                                sheet_name='position_weights')
+        self.strategy.actions.to_excel(writer, sheet_name='actions')
 
-        self.prices.loc["ask",:,:].to_excel(writer, sheet_name='p_ask')
-        self.prices.loc["bid",:,:].to_excel(writer, sheet_name='p_bid')
-        self.swap_points.loc["ask",:,:].to_excel(writer, sheet_name='swap_ask')
-        self.swap_points.loc["bid",:,:].to_excel(writer, sheet_name='swap_bid')
+        self.prices.loc["ask", :, :].to_excel(writer, sheet_name='p_ask')
+        self.prices.loc["bid", :, :].to_excel(writer, sheet_name='p_bid')
+        self.swap_points.loc["ask", :, :].to_excel(writer,
+                                                   sheet_name='swap_ask')
+        self.swap_points.loc["bid", :, :].to_excel(writer,
+                                                   sheet_name='swap_bid')
 
         # save and close
         writer.save()
@@ -771,12 +806,11 @@ class FXPosition():
         if not self.is_open:
             return self.currency + ' ' + "(closed)"
 
-        qty = np.round(self.end_quantity, 4)
+        qty = np.round(self.quantity, 4)
 
-        s = '{} {:.4f} {}'.format(
-            "long" if self.quantity > 0 else "short",
-            self.quantity,
-            self.currency)
+        s = '{} {:.4f} {}'.format("long" if self.quantity > 0 else "short",
+                                  qty,
+                                  self.currency)
 
         return s
 

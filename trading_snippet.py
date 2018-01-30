@@ -29,6 +29,14 @@ class FXPosition(object):
 
         self.end_quantity = self.initial_quantity
 
+    def transact(quantity, price):
+        """
+        """
+        if quantity < 0:
+            self.sell(-1*quantity, price["bid"])
+        else:
+            self.sell(quantity, price["ask"])
+
     def buy(self, quantity, price):
         """
 
@@ -262,6 +270,3 @@ if __name__ == '__main__':
     pos.roll_over(swap_points.loc[1, :])
     print(pos.get_unrealized_pnl(prices.loc[1, :]))
     print(pos.get_market_value(prices.loc[1, :]))
-
-
-

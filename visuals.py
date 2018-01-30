@@ -61,6 +61,6 @@ def broomstick_plot(data, ci=(0.1, 0.9)):
     dashed_line = mlines.Line2D([], [], color='black', linestyle="--",
                                 lw=2, label=ci_label)
     ax.legend(handles=[solid_line, dashed_line], loc="upper left", fontsize=10)
-    ax.set_ylabel("cumulative return in percent", visible=True)
+    ax.set_ylabel("cumulative return, in percent", visible=True)
 
     return fig
