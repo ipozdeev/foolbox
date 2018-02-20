@@ -292,7 +292,7 @@ class FXTradingStrategy:
 
     @classmethod
     def long_short(cls, sort_values, n_portfolios, leverage="net",
-                   raise_freq=None):
+                   raise_freq=None, **kwargs):
         """Construct strategy by sorting assets into `n_portfolios`.
 
         Parameters
@@ -307,6 +307,8 @@ class FXTradingStrategy:
             pandas frequency is needed to construct a strategy of higher
             frequency from signals of lower frequency (daily returns of a
             monthly rebalanced strategy)
+        kwargs : any
+            additional arguments to portfolio_construction.rank_sort()
 
         Returns
         -------
@@ -314,7 +316,7 @@ class FXTradingStrategy:
 
         """
         # sort
-        pf = poco.rank_sort(sort_values, sort_values, n_portfolios)
+        pf = poco.rank_sort(sort_values, sort_values, n_portfolios, **kwargs)
 
         # retain only 'portfolio...' keys
         pf = {k: v for k, v in pf.items() if k.startswith("portfolio")}
@@ -354,10 +356,10 @@ class FXTradingStrategy:
         # fill position weights with those of `other`
         new_pos_weights = other.position_weights.fillna(self.position_weights)
 
-        # the new strategy is a strategy with the above compbo and unlimited
-        #   leverage
+        # the new strategy is a strategy with the above position weights and
+        #  net leverage
         new_strat = FXTradingStrategy.from_position_flags(new_pos_weights,
-            leverage="net")
+                                                          leverage="net")
         new_strat.position_flags = \
             new_strat.position_weights / new_strat.position_weights * \
             np.sign(new_strat.position_weights)
