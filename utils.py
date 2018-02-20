@@ -110,21 +110,6 @@ def align_and_fillna(data, reindex_freq=None, common_index="outer", **kwargs):
     return new_data
 
 
-def add_fake_signal(ret, sig):
-    """ Add fake series to signal: the median in each row.
-    """
-    r, s = ret.copy(), sig.copy()
-
-    # calculate median across rows
-    fake_sig = sig.apply(np.nanmedian, axis=1)
-
-    # reinstall
-    s.loc[:,"fake"] = fake_sig
-    r.loc[:,"fake"] = np.nan
-
-    return r, s
-
-
 def interevent_quantiles(events, max_fill=None, df=None):
     """ Split inter-event intervals in two parts.
     Parameters
