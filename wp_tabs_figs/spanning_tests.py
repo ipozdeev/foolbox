@@ -25,20 +25,59 @@ def data_for_spanning_tests(n_portf=3):
 
     # to logs
     fx_strats = np.log(fx_strats).diff().replace(0.0, np.nan)\
-                    .dropna(how="all") * 100
+                    .dropna(how="all") * 10000
 
     # saga
     with pd.HDFStore(path_to_data + "strategies.h5", mode="r") as hangar:
         saga_strat = hangar["saga"]
 
+    s_dt = saga_strat.index[0]
+    e_dt = saga_strat.index[-1]
+
+    # vix-like
+    with pd.HDFStore(path_to_data + "mfiv_3m.h5", mode="r") as h:
+        mfiv = h["/mfiv"]
+    fx_vix = np.sqrt(mfiv.filter(like="usd")).mean(axis=1).rename("FXVIX")
+    fx_vix = fx_vix.resample('M').mean().shift(1)
+    fx_vix = (fx_vix - fx_vix.mean()) / fx_vix.std()
+
+    # fx liquidity
+    fx_illiq = pd.read_excel(path_to_data + "fx_illiq_1991_2016_d.xlsx",
+                             index_col=0, header=0, usecols=[0, 2]).squeeze()
+    fx_illiq = (fx_illiq - fx_illiq.mean()) / fx_illiq.std()
+    fx_illiq = fx_illiq.resample('M').last().shift(1).rename("ILLIQ")
+
+    # fx_illiq = fx_illiq.reindex(index=pd.date_range(s_dt, e_dt, freq='D'),
+    #                             method="ffill", limit=31)
+
+    # industrial production
+    ip = pd.read_excel(path_to_data + "ip_high_inc_sadj_1991_2017_m.xlsx",
+                       sheet_name="monthly").squeeze().rename("IP")
+    ip.index = ip.index.map(lambda x: pd.to_datetime(x, format="%YM%m"))
+    ip = np.log(ip).diff() * 100 * 12
+    ip = ip.resample('M').last().shift(1)
+    ip = (ip - ip.mean()) / ip.std()
+    # ip = ip.reindex(index=pd.date_range(s_dt, e_dt, freq='D'),
+    #                 method="ffill", limit=31)
+
+    cpi = pd.read_excel(path_to_data + "cpi_high_inc_sadj_1991_2017_m.xlsx",
+                        sheet_name="monthly").squeeze().rename("CPI")
+    cpi.index = cpi.index.map(lambda x: pd.to_datetime(x, format="%YM%m"))
+    cpi = np.log(cpi).diff() * 100 * 12
+    cpi = cpi.resample('M').last().shift(1)
+    cpi = (cpi - cpi.mean()) / cpi.std()
+
+    # cpi = cpi.reindex(index=pd.date_range(s_dt, e_dt, freq='D'),
+    #                   method="ffill", limit=31)
+
     # to logs
-    saga_strat = np.log(saga_strat).diff().replace(0.0, np.nan).dropna() * 100
+    saga_strat = np.log(saga_strat).diff().replace(0.0, np.nan).dropna()*10000
     saga_strat.name = "saga"
 
     # Fama-French
     ff_x = pd.read_csv(path_to_data +
                        "F-F_Research_Data_5_Factors_2x3_daily.csv", skiprows=3,
-                       index_col=0, parse_dates=True)
+                       index_col=0, parse_dates=True) * 100
     ff_x = ff_x.drop("RF", axis=1)
     ff_x.columns = [p.lower() for p in ff_x.columns]
 
@@ -47,7 +86,27 @@ def data_for_spanning_tests(n_portf=3):
     fx_x = fx_strats.loc[:, ix[:, n_portf]]
     fx_x.columns = fx_x.columns.droplevel(1)
 
-    x = pd.concat((fx_x, ff_x), axis=1)
+    renames = {
+        "carry": "CAR",
+        "cma": "CMA",
+        "dollar_carry": "DCAR",
+        "smb": "SMB",
+        "hml": "HML",
+        "mkt-rf": "MKT",
+        "momentum": "MOM",
+        "value": "VAL",
+        "vrp": "VRP",
+        "rmw": "RMW",
+        "dollar_index": "DOL"
+    }
+
+    x = {
+        "fx": fx_x.rename(columns=renames, level=0),
+        "eqt": ff_x.rename(columns=renames, level=0),
+        "macro": pd.concat((fx_vix, fx_illiq, ip, cpi), axis=1)\
+            .reindex(index=pd.date_range(s_dt, e_dt, freq='D'),
+                     method="ffill", limit=31)
+    }
 
     return saga_strat, x
 
@@ -178,23 +237,6 @@ def wrapper_spanning_tests(n_portf):
     # load data
     y, x = data_for_spanning_tests(n_portf=n_portf)
 
-    renames = {
-        "carry": "CAR",
-        "cma": "CMA",
-        "dollar_carry": "DCAR",
-        "smb": "SMB",
-        "hml": "HML",
-        "mkt-rf": "MKT",
-        "momentum": "MOM",
-        "value": "VAL",
-        "vrp": "VRP",
-        "rmw": "RMW",
-        "dollar_index": "DOL"
-    }
-
-    x = x.rename(columns=renames, level=0) * 100
-    y = y * 100
-
     fx_fact = ["DOL", "CAR", "DCAR", "MOM", "VAL", "VRP"]
     eq_fact = ["MKT", "SMB", "HML", "CMA", "RMW"]
 
@@ -237,6 +279,53 @@ def wrapper_spanning_tests(n_portf):
                           buf=path_to_out + "spanning_tests.tex")
 
 
+def wrapper_spanning_tests_2(n_portf):
+    """
+
+    Parameters
+    ----------
+    n_port
+
+    Returns
+    -------
+
+    """
+    # load data
+    y, x = data_for_spanning_tests(n_portf=n_portf)
+
+    # macro
+    res_i, res_j = spanning_tests(target=y, factors=x["macro"])
+    tab_mac_b, tab_mac_ts = make_diagonals(res_i, res_j)
+    tab_mac_b = tab_mac_b.drop("joint", axis=1)
+    tab_mac_ts = tab_mac_ts.drop("joint", axis=1)
+
+    tab_mac_r2 = res_i.loc[["adj r2", "nobs"], :].dropna(axis=1)
+    tab_mac_r2.columns = tab_mac_r2.columns.droplevel(1)
+
+    res = to_better_latex(tab_mac_b, tab_mac_ts, tab_mac_r2, '{:3.2f}',
+                          '{:3.2f}',
+                          buf=path_to_out + "spanning_tests_macro.tex")
+
+    # fx
+    _, res_j = spanning_tests(target=y, factors=x["fx"])
+
+    res = to_better_latex(res_j.loc[["coef"], :], res_j.loc[["tstat"], :],
+                          res_j.tail(2),
+                          '{:3.2f}',
+                          '{:3.2f}',
+                          buf=path_to_out + "spanning_tests_fx.tex")
+
+    # eqt
+    _, res_j = spanning_tests(target=y, factors=x["eqt"])
+
+    res = to_better_latex(res_j.loc[["coef"], :], res_j.loc[["tstat"], :],
+                          res_j.tail(2),
+                          '{:3.2f}',
+                          '{:3.2f}',
+                          buf=path_to_out + "spanning_tests_eqt.tex")
+
+
+
 if __name__ == "__main__":
 
-    res = wrapper_spanning_tests(n_port=5)
+    res = wrapper_spanning_tests_2(n_portf=5)
