@@ -415,7 +415,46 @@ def retail_carry(trading_env, fwd_disc=None, map_signal=None,
     # backtest
     res = trading.backtest("unrealized")
 
-    return res
+    return strategy
+
+
+def retail_carry_strategy(fwd_disc=None, map_signal=None,
+                 monthly_sig=False, leverage="net", n_portfolios=3):
+    """Construct carry as if implemented on the forex.
+
+    Parameters
+    ----------
+    trading_env : FXTradingEnvironment
+    fwd_disc : pandas.DataFrame
+        of forward discounts (positive if rf > rf in the us)
+    map_signal : callable or None
+        function to apply to `fwd_disc`, e.g. lambda x: x.rolling(5).mean();
+        this is the last chance to implement shifting before poco.rank_sort!
+    monthly_sig : bool
+        e.g. 'B'
+    leverage : str
+    n_portfolios : int
+        number of portf in portfolio_construction.rank_sort()
+
+    Returns
+    -------
+    res
+
+    """
+    if map_signal is None:
+        map_signal = lambda x: x.shift(1)
+
+    sig = map_signal(fwd_disc)
+
+    # monthly?
+    raise_freq = 'B' if monthly_sig else None
+
+    # the strategy
+    strategy = FXTradingStrategy.long_short(sig, leverage=leverage,
+                                            n_portfolios=n_portfolios,
+                                            raise_freq=raise_freq)
+
+    return strategy
 
 
 def retail_value(trading_env, spot, cpi, leverage="net", n_portfolios=3):
