@@ -115,6 +115,7 @@ class Regression():
 
         return eps.squeeze()
 
+
 class PureOls(Regression):
     """
     Performs the purest old-school no-nonsence OLS, inv(X'X)(X'Y), just like
@@ -181,7 +182,11 @@ class PureOls(Regression):
                 "coef": coef,
                 "se": se,
                 "tstat": tstat}).T
+            # add r-squared
             res.loc["adj r2", res.columns[0]] = rsq
+
+            # add nobs
+            res.loc["nobs", res.columns[0]] = len(self.y)
 
             return res
 

@@ -4,7 +4,7 @@ import warnings
 from foolbox import portfolio_construction as poco
 
 
-class StrategyFactory():
+class StrategyFactory:
     """Factory for constructing strategies."""
     def __init__(self):
         """
@@ -17,6 +17,8 @@ class StrategyFactory():
 
         Parameters
         ----------
+        position_flags : pandas.DataFrame
+            of position flags in form of +1, -1 and 0
         method : str
             'zero' to make position weights sum up to zero;
             'net' to make absolute weights of short and long positions sum up
@@ -47,8 +49,8 @@ class StrategyFactory():
             pos_weights = \
                 position_flags.where(position_flags < 0).divide(
                     row_lev_neg, axis=0).fillna(
-                position_flags.where(position_flags > 0).divide(
-                    row_lev_pos, axis=0))
+                        position_flags.where(position_flags > 0).divide(
+                            row_lev_pos, axis=0))
 
         elif method == "unlimited":
             pos_weights = position_flags.copy()
@@ -72,16 +74,73 @@ class StrategyFactory():
 
         return actions
 
+    @staticmethod
+    def raise_flags_frequency(flags, freq):
+        """Upsample position flags prohibiting looking-ahead.
 
-class FXTradingStrategy():
+        Basically, implements .resample(freq) broadcasting the monthly
+        signal backwards. It is assumed that `freq` is higher than the
+        frequency of observations in `flags`, e.g. the latter are
+        monthly and daily trading is the goal. In such case the actions are
+        asserted to happen on the first day of each month, when the
+        previous-month signal is surely available.
+
+        Parameters
+        ----------
+        flags : pandas.DataFrame
+            of flags
+        freq : str
+            pandas frequency, e.g. 'B'
+
+        Returns
+        -------
+        res : pandas.DataFrame
+            reindexed to have frequency `freq`
+
+        """
+        assert isinstance(freq, str) and (len(freq) < 2)
+
+        flags_resp = flags.resample(freq).bfill()
+
+        # kill first period, making sure that trading happens on the
+        # first day of the new month and NOT on the last day of the
+        # previous month, as info is unavailable then
+        res = flags_resp.shift(1)
+
+        # TODO: below is old implementation, do not erase unless certain
+        # flags = flags_resp.mask(
+        #     flags.shift(-1).resample(raise_freq).last().shift(1).notnull(),
+        #     flags_resp.shift(1))
+
+        return res
+
+
+class FXTradingStrategy:
     """
     """
-    def __init__(self, actions, position_flags=None, position_weights=None):
+    def __init__(self, actions=None, position_flags=None,
+                 position_weights=None):
         """
         """
-        self.actions = actions
+        self._actions = actions
         self._position_flags = position_flags
         self._position_weights = position_weights
+
+    @property
+    def actions(self):
+        return self._actions
+
+    @actions.getter
+    def actions(self):
+        if self._actions is None:
+            self._actions = StrategyFactory().position_weights_to_actions(
+                self.position_weights)
+
+        return self._actions
+
+    @actions.setter
+    def actions(self, value):
+        self._actions = value
 
     @property
     def position_flags(self):
@@ -166,7 +225,7 @@ class FXTradingStrategy():
         # make sure there is one nan at the beginning to be able to open a pos
         if position_flags.iloc[:hold_period, :].notnull().any().any():
             warnings.warn("There are not enough observations at the start; " +
-                "will delete the first events")
+                          "will delete the first events")
             position_flags.iloc[:hold_period, :] = np.nan
 
         # NB: dimi/
@@ -179,26 +238,14 @@ class FXTradingStrategy():
             limit=max(hold_period-1, 1))
 
         # need to open and close it somewhere
-        # TODO: relevant?
         position_flags.iloc[0, :] = np.nan
         position_flags.iloc[-1, :] = np.nan
-
-        # pos_weights = StrategyFactory().deleverage_position_flags(
-        #     position_flags, method=leverage)
-        # actions = StrategyFactory().position_weights_to_actions(
-        #     pos_weights)
-        #
-        # strat = cls(actions=actions)
-        # strat.position_weights = pos_weights
-        # strat.position_flags = position_flags
-        #
-        # return strat
 
         return cls.from_position_flags(position_flags, leverage)
 
     @classmethod
     def monthly_from_daily_signals(cls, signals_d, agg_fun=None, n_portf=3,
-        leverage="net"):
+                                   leverage="net"):
         """
         Parameters
         ----------
@@ -244,25 +291,37 @@ class FXTradingStrategy():
         return cls.from_position_flags(position_flags, leverage)
 
     @classmethod
-    def from_long_short(cls, portfolios, leverage="net"):
-        """
+    def long_short(cls, sort_values, n_portfolios, leverage="net",
+                   raise_freq=None, **kwargs):
+        """Construct strategy by sorting assets into `n_portfolios`.
 
         Parameters
         ----------
-        portfolios : dict
-            output of portfolio_construction.rank_sort()
+        sort_values : pandas.DataFrame
+            of values to sort, ALREADY SHIFTED AS DESIRED
+        n_portfolios : int
+            the number of portfolios in portfolio_construction.rank_sort()
         leverage : str
             'net', 'unlimited' or 'zero'
+        raise_freq : str
+            pandas frequency is needed to construct a strategy of higher
+            frequency from signals of lower frequency (daily returns of a
+            monthly rebalanced strategy)
+        kwargs : any
+            additional arguments to portfolio_construction.rank_sort()
 
         Returns
         -------
         res : FXTradingStrategy
 
         """
-        # retain only 'portfolio...' keys
-        pf = {k: v for k, v in portfolios.items() if k.startswith("portfolio")}
+        # sort
+        pf = poco.rank_sort(sort_values, sort_values, n_portfolios, **kwargs)
 
-        # number of portfolios
+        # retain only 'portfolio...' keys
+        pf = {k: v for k, v in pf.items() if k.startswith("portfolio")}
+
+        # number of n_portfolios
         n_pf = len(pf)
 
         # long and short flags
@@ -274,6 +333,14 @@ class FXTradingStrategy():
 
         # concatenate
         flags = flags_long.fillna(flags_short)
+
+        # need to open and close it somewhere
+        flags.iloc[0, :] = np.nan
+        flags.iloc[-1, :] = np.nan
+
+        # if raise_freq
+        if raise_freq is not None:
+            flags = StrategyFactory().raise_flags_frequency(flags, raise_freq)
 
         res = cls.from_position_flags(flags, leverage=leverage)
 
@@ -289,10 +356,10 @@ class FXTradingStrategy():
         # fill position weights with those of `other`
         new_pos_weights = other.position_weights.fillna(self.position_weights)
 
-        # the new strategy is a strategy with the above compbo and unlimited
-        #   leverage
+        # the new strategy is a strategy with the above position weights and
+        #  net leverage
         new_strat = FXTradingStrategy.from_position_flags(new_pos_weights,
-            leverage="net")
+                                                          leverage="net")
         new_strat.position_flags = \
             new_strat.position_weights / new_strat.position_weights * \
             np.sign(new_strat.position_weights)
@@ -300,7 +367,7 @@ class FXTradingStrategy():
         return new_strat
 
 
-class FXTradingEnvironment():
+class FXTradingEnvironment:
     """
     """
     def __init__(self, spot_prices, swap_points):
@@ -431,7 +498,7 @@ class FXTradingEnvironment():
         self.swap_points = self.swap_points.drop(**kwargs)
 
 
-class FXTrading():
+class FXTrading:
     """
     """
     def __init__(self, environment, strategy, settings=None):
@@ -628,7 +695,7 @@ class FXTrading():
         self.actions = self.position_weights.diff().shift(-1)
 
 
-class FXPortfolio():
+class FXPortfolio:
     """Portfolio of FX positions.
 
     Parameters
@@ -764,7 +831,7 @@ class FXPortfolio():
         return res
 
 
-class FXPosition():
+class FXPosition:
     """Position in foreign currency vs.
 
     Parameters
@@ -772,7 +839,7 @@ class FXPosition():
     currency : str
         a string, most logically a 3-letter ISO such as 'usd' or 'cad'
     """
-    def __init__(self, currency="xxx", tolerance=1e-10):
+    def __init__(self, currency="xxx", tolerance=1e-6):
         """
         """
         self._tolerance = tolerance
@@ -859,7 +926,7 @@ class FXPosition():
             res = self.refill(qty, transaction_price)
         else:
             # otherwise partially close, or close and reopen
-            if np.abs(self.quantity) - np.abs(qty) < self._tolerance:
+            if (np.abs(self.quantity) - np.abs(qty)) < self._tolerance:
                 rest_qty = qty + self.quantity
                 res = self.close(bid_ask_prices)
                 self.transact(rest_qty, bid_ask_prices)
@@ -978,190 +1045,4 @@ class FXPosition():
 
 
 if __name__ == "__main__":
-
-    from foolbox.api import *
-    from foolbox.wp_tabs_figs.wp_settings import settings
-    from foolbox.utils import *
-
-    # Set the output path, input data and sample
-    start_date = pd.to_datetime(settings["sample_start"])
-    end_date = pd.to_datetime(settings["sample_end"])
-    drop_curs = settings["drop_currencies"]
-    avg_impl_over = settings["avg_impl_over"]
-    avg_refrce_over = settings["avg_refrce_over"]
-    base_lag = settings["base_holding_h"] + 2
-    base_th = settings["base_threshold"]
-
-    # carry
-    data_d = pd.read_pickle(data_path+"fx_by_tz_sp_fixed.p")
-
-    fx_tr_env = FXTradingEnvironment.from_scratch(
-        spot_prices={
-            "bid": data_d["spot_bid"].loc[:, start_date:, "NYC"],
-            "ask": data_d["spot_ask"].loc[:, start_date:, "NYC"]},
-        swap_points={
-            "bid": data_d["tnswap_bid"].loc[:, start_date:, "NYC"],
-            "ask": data_d["tnswap_ask"].loc[:, start_date:, "NYC"]}
-            )
-
-    fx_tr_env.drop(labels=["dkk"], axis="minor_axis", errors="ignore")
-    fx_tr_env.remove_swap_outliers()
-    fx_tr_env.reindex_with_freq('B')
-    fx_tr_env.align_spot_and_swap()
-    fx_tr_env.fillna(which="both", method="ffill")
-
-    fdisc_d = fx_tr_env.swap_points.mean(axis="items")
-    spot_d = fx_tr_env.spot_prices.mean(axis="items")
-
-    # dr = -1*np.log((fdisc_d + spot_d)/spot_d).rolling(22).mean()
-
-    # fx_tr_str_carry = FXTradingStrategy.monthly_from_daily_signals(
-    #     signals_d=dr, n_portf=3, leverage="net")
-
-    # ois-implied forecasts
-    curs = [p for p in spot_d.columns if p not in ["dkk", "nok", "jpy"]]
-
-    # forecast direction
-    signals_fcast = get_pe_signals(curs, base_lag, base_th*100, data_path,
-        fomc=False,
-        avg_impl_over=avg_impl_over,
-        avg_refrce_over=avg_refrce_over,
-        bday_reindex=True)
-
-    signals_fomc = get_pe_signals(curs + ["nok", "jpy"],
-        base_lag, base_th*100, data_path,
-        fomc=True,
-        avg_impl_over=avg_impl_over,
-        avg_refrce_over=avg_refrce_over,
-        bday_reindex=True)
-
-    signals_fcast.loc[:, "nok"] = np.nan
-    signals_fcast.loc[:, "jpy"] = np.nan
-
-    signals_fcast, signals_fomc = signals_fcast.align(signals_fomc, axis=0,
-        join="outer")
-
-    signals_fcast = signals_fcast.loc[start_date:end_date].reindex(
-        index=pd.date_range(start_date, end_date, freq='B'))
-
-    strategy_fcast = FXTradingStrategy.from_events(signals_fcast,
-        blackout=1, hold_period=10, leverage="net")
-
-    # combined_strat = fx_tr_str_carry + strategy_fcast
-
-    # fx_tr = FXTrading(environment=fx_tr_env, strategy=fx_tr_str_carry)
-    fx_tr = FXTrading(environment=fx_tr_env, strategy=strategy_fcast)
-    # fx_tr = FXTrading(environment=fx_tr_env, strategy=combined_strat)
-
-    # car = fx_tr.backtest("unrealiz")
-    strat = fx_tr.backtest("unrealiz")
-
-    # car.dropna().plot()
-    strat.dropna().plot()
-    strat = strat.loc[
-        strategy_fcast.position_flags.dropna(how="all").index]
-
-    car_r = np.log(car).diff()
-    strat_r = np.log(strat).diff()
-
-    pd.concat((car_r, strat_r), axis=1).cumsum().plot()
-
-    pd.concat((car_r, strat_r), axis=1).corr()
-
-    taf.descriptives(np.log(res_unr.dropna()).diff().to_frame()*100, scale=1)
-
-    res_bal.dropna().plot()
-
-    true_carry = poco.get_carry(pickle_name="data_wmr_dev_m",
-        key_name="rx",
-        n_portf=3)
-    car = true_carry.loc[start_date:, "hml"].cumsum()
-
-    pd.concat((
-        np.log(res_bal.rename("retail_balance")),
-        np.log(res_unr.rename("retail_unr")),
-        car.rename("true_carry")), axis=1).ffill().plot()
-
-    fx_tr_str_carry.actions.cumsum().loc[:, "aud"].plot()
-
-    new_strat = fx_tr_str_carry + strategy_fcast
-
-    # data
-    prices, swap_points = fetch_the_data(data_path,
-        drop_curs=settings["drop_currencies"],
-        align=True,
-        add_usd=False)
-
-    # some empty frame to prepend the signals with
-    empty_month = pd.DataFrame(
-        index=pd.date_range(
-            start_date-DateOffset(months=1),
-            start_date, freq='B'),
-        columns=prices.minor_axis).drop(start_date, axis=0)
-
-    # drop redundand stuff
-    prices = prices.loc[:,empty_month.index[0]:,:]
-    swap_points = swap_points.loc[:,empty_month.index[0]:,:]
-
-    # space for output
-    nav_fcast = pd.Panel(
-        items=np.arange(1,16),
-        major_axis=prices.major_axis,
-        minor_axis=np.arange(1,26))
-    nav_perf = pd.DataFrame(index=prices.major_axis, columns=np.arange(1,16))
-
-    # the loop
-    for h in range(10,16):
-        # h = 10
-        for p in range(10,26):
-            # p = 10
-            print("holding horizon: {}, threshold: {}".format(h,p))
-            # Get signals for all countries except for the US
-            signals = get_pe_signals(prices.minor_axis,
-                lag=h+1+settings["base_blackout"],
-                threshold=p,
-                data_path=data_path,
-                fomc=False,
-                avg_impl_over=settings["avg_impl_over"],
-                avg_refrce_over=settings["avg_refrce_over"],
-                bday_reindex=True)
-
-            if add_usd:
-                signals_usd = get_pe_signals(prices.minor_axis,
-                    lag=h+1+settings["base_blackout"],
-                    threshold=p,
-                    data_path=data_path,
-                    fomc=True,
-                    avg_impl_over=settings["avg_impl_over"],
-                    avg_refrce_over=settings["avg_refrce_over"],
-                    bday_reindex=True)
-
-                signals, signals_usd = signals.align(signals_usd, axis=0)
-
-                signals = signals.fillna(value=0.0).add(
-                    signals_usd.fillna(value=0.0))
-
-            # rm to start date
-            signals = signals.loc[start_date:,:]
-
-            # add some nan's at the beginning
-            signals = pd.concat((empty_month, signals), axis=0)
-
-            trading_settings = {
-                "holding_period": h,
-                "blackout": settings["base_blackout"]}
-
-            fxtr = FXTrading(
-                prices=prices,
-                swap_points=swap_points,
-                signals=signals,
-                settings=trading_settings)
-
-            this_nav = fxtr.backtest()
-
-            nav_fcast.loc[h,:,p] = this_nav
-
-
-            # useless comment here
-            #
-            # and here
+    pass
