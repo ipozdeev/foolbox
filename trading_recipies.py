@@ -23,8 +23,8 @@ implied_rate_pkl = "implied_rates_from_1m_ois.p"
 fx_pkl = "fx_by_tz_aligned_d.p"
 fx_pkl_fomc = "fx_by_tz_sp_fixed.p"
 
-no_good_curs = ["dkk", "jpy", "nok"]#, "cad", "chf", "eur", "gbp", "nzd", "sek"]
-no_good_curs_fomc = ["dkk"]
+no_good_curs = ["dkk", "jpy", "nok", "cad", "chf", "eur", "gbp", "nzd", "sek"]
+no_good_curs_fomc = ["dkk", "jpy", "nok", "cad", "chf", "eur", "gbp", "nzd", "aud"]
 # no_ois_curs = ["jpy", "nok"]
 
 fx_data = pd.read_pickle(path_to_data + fx_pkl)
@@ -883,37 +883,37 @@ if __name__ == "__main__":
     #          res3[1].pct_change()).cumprod()
 
     # # BROOMSTICKS==============================================================
-    # import time
-    # t0 = time.time()
-    # ix = pd.IndexSlice
-    # holding_range = range(15, 16)
-    # threshold_range = range(19, 26)
-    # combos = list(itools.product(holding_range, threshold_range))
-    # cols = pd.MultiIndex.from_tuples(combos, names=["holding", "threshold"])
-    # out = pd.DataFrame(index=pd.date_range(s_dt, e_dt, freq='B'),
-    #                    columns=cols)
-    # out_fomc = out.copy()
-    #
-    # for h in holding_range:
-    #     for tau in threshold_range:
-    #         print(h, tau)
-    #         print("time elapsed {}".format((time.time()-t0)/60))
-    #         res, res_fomc = \
-    #             saga_strategy3(tr_env.currencies, tr_env_fomc,
-    #                            holding_period=h,
-    #                            threshold=tau,
-    #                            **{"ffill": True,
-    #                               "avg_implied_over": avg_impl_over,
-    #                               "avg_refrce_over": avg_refrce_over})
-    #
-    #         res = (1 + res.pct_change().sum(axis=1) +
-    #                res_fomc.pct_change()).cumprod()
-    #
-    #         out.loc[:, ix[h, tau]] = res
-    #         out_fomc.loc[:, ix[h, tau]] = res_fomc
-    #
-    # t1 = time.time()
-    # print(t1-t0)
+    import time
+    t0 = time.time()
+    ix = pd.IndexSlice
+    holding_range = range(1, 9)
+    threshold_range = np.arange(1, 25, 3) #range(, 26)
+    combos = list(itools.product(holding_range, threshold_range))
+    cols = pd.MultiIndex.from_tuples(combos, names=["holding", "threshold"])
+    out = pd.DataFrame(index=pd.date_range(s_dt, e_dt, freq='B'),
+                       columns=cols)
+    out_fomc = out.copy()
+
+    for h in holding_range:
+        for tau in threshold_range:
+            print(h, tau)
+            print("time elapsed {}".format((time.time()-t0)/60))
+            res, res_fomc = \
+                saga_strategy3(tr_env.currencies, tr_env_fomc,
+                               holding_period=h,
+                               threshold=tau,
+                               **{"ffill": True,
+                                  "avg_implied_over": avg_impl_over,
+                                  "avg_refrce_over": avg_refrce_over})
+
+            res = (1 + res.pct_change().sum(axis=1) +
+                   res_fomc.pct_change()).cumprod()
+
+            out.loc[:, ix[h, tau]] = res
+            out_fomc.loc[:, ix[h, tau]] = res_fomc
+
+    t1 = time.time()
+    print(t1-t0)
 
 
     # with open(path_to_data+"broomstick_rx_data_v2.p", mode="wb") as fname:
