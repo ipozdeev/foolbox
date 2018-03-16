@@ -48,6 +48,88 @@ def fx_pair_to_fxcm_id(fx_pairs):
     return fxcm_id_map
 
 
+def get_fxcm_data_by_chunks(id, start_date, end_date, frequency):
+    """Given fxcm instrument id and request range and frequency, fetch the
+    data by chunks. This is a utility function and is not intended to be used
+    outside the 'get_fcxm_data()' function
+
+    Parameters
+    ----------
+    id: int
+        identificator of FXCM instrument
+    start_date: int
+        unix Epoch stamp
+    end_date:
+        unix Epoch stamp
+    frequency: str
+        specifying data frequency from one to thirty minutes: m1, m5, m15, m30
+
+    Returns
+    -------
+    data: pd.DataFrame
+        of raw fxcm request, integer columns correspond to "bid_open",
+        "bid_close", "bid_high", "bid_low", "ask_open", "ask_close",
+        "ask_high", "ask_low", "num_ticks" but to be explicitly processed
+        outside of this function
+
+    """
+    # FXCM can deliver roughly 150k datapoints per request, specify the
+    # dictionary mapping fxcm frequency to date range of a request in seconds
+    frequency_map = {"m1": int(150e3 * 60),
+                     "m5": int(150e3 * 60 * 5),
+                     "m15": int(150e3 * 60 * 15),
+                     "m30": int(150e3 * 60 * 30),
+                     }
+
+    # Get the request step
+    rqst_step = frequency_map[frequency]
+
+    # Pool requests in this list, initialize the request loop
+    data = list()
+    this_start = start_date
+    this_end = start_date + rqst_step
+
+    if this_end > end_date:
+        this_end = end_date
+
+    while this_end <= end_date:
+
+        # If the last date has already been reached break the while loop
+        if this_start == this_end:
+            break
+
+        # Get the data
+        this_data = requests.get(
+            TRADING_API_URL+"/candles/"+str(id)+"/"+frequency,
+            headers=headers, params={"num": 1, "from": this_start,
+                                     "to": this_end}
+             ).json()["candles"]
+
+        # Update iterators
+        this_start = this_end
+        this_end = this_start + rqst_step
+
+        # Check if there is enough data for the last step
+        if this_end > end_date:
+            this_end = end_date
+
+        # Filter out None's from the output
+        this_data = [x for x in this_data if x is not None]
+
+        # Check if the list is empty
+        if not this_data:
+            print("FXCM ID {} has returned no data.".format(id))
+            continue
+
+        # Append the output
+        data.append(pd.DataFrame(this_data))
+
+    # Aggregate and drop duplicate stamps, they are in the first column
+    data = pd.concat(data, ignore_index=True).drop_duplicates([0])
+
+    return data
+
+
 def get_fcxm_data(fx_pairs, frequency, start_date, end_date, num_periods=None):
     """Given an iterable of currency pairs and request settings, fetches FXCM
     data.
@@ -108,21 +190,32 @@ def get_fcxm_data(fx_pairs, frequency, start_date, end_date, num_periods=None):
 
     # Loop over the currency pairs and fetch the data
     for curr, id in id_map.iteritems():
-        # Get the data
-        this_data = requests.get(
-         TRADING_API_URL+"/candles/"+str(id)+"/"+frequency, headers=headers,
-         params={"num": num_periods, "from": start_date, "to": end_date}
-        ).json()["candles"]
 
-        # Filter out None's from the retrieved data
-        this_data = [x for x in this_data if x is not None]
+        # For high frequency requests query the data in chunks
+        if frequency in ["m1", "m5", "m15", "m30"]:
+            print("FFFFFUUUUUUU! Invoking high frequency mode. The requests"
+                  "are gonna be chunkized.")
 
-        # Check if the list is empty
-        if not this_data:
-            print("{} has returned no data.".format(curr))
-            continue
+            this_data = \
+                get_fxcm_data_by_chunks(id, start_date, end_date, frequency)
+
         else:
-            print("Data for {} has been downloaded".format(curr))
+            # Normal mode: pull the data in a single request
+            this_data = requests.get(
+             TRADING_API_URL+"/candles/"+str(id)+"/"+frequency,
+                headers=headers, params={"num": num_periods,
+                                         "from": start_date, "to": end_date}
+             ).json()["candles"]
+
+            # Filter out None's from the retrieved data
+            this_data = [x for x in this_data if x is not None]
+
+            # Check if the list is empty
+            if not this_data:
+                print("{} has returned no data.".format(curr))
+                continue
+            else:
+                print("Data for {} has been downloaded".format(curr))
 
         # Transform to dataframe, assign column, names, index by stamps
         this_data = pd.DataFrame(this_data)
@@ -165,15 +258,15 @@ if __name__ == "__main__":
     fxcm_currs = ["AUD/USD", "USD/CAD", "USD/CHF", "EUR/USD", "GBP/USD",
                   "USD/JPY", "USD/NOK", "NZD/USD", "USD/SEK"]
     data_frequency = "m15"
-    s_dt = "1999-11-30"
-    e_dt = "2008-03-15"
+    s_dt = "2015-01-01"
+    e_dt = "2016-03-15"
 
     # Set output path and output names
     out_path = set_cred.gdrive_path("research_data/fx_and_events/")
     out_raw_name = "fxcm_raw_" + data_frequency + ".p"
     out_counter_usd_name = "fxcm_counter_usd_" + data_frequency + ".p"
 
-    data_raw = get_fcxm_data(fx_pairs=fxcm_currs, frequency=data_frequency,
+    data_raw = get_fcxm_data(fx_pairs=["EUR/USD"], frequency=data_frequency,
                              start_date=s_dt, end_date=e_dt)
 
     # Convert datapoints to USD being countercurrency if it's not
@@ -203,9 +296,9 @@ if __name__ == "__main__":
             data_usd_counter[key] = df
 
     # Dump the data
-    with open(out_path+out_raw_name, mode="wb") as hut:
-        pickle.dump(data_raw, hut)
-    with open(out_path+out_counter_usd_name, mode="wb") as hut:
-        pickle.dump(data_usd_counter, hut)
+    # with open(out_path+out_raw_name, mode="wb") as hut:
+    #     pickle.dump(data_raw, hut)
+    # with open(out_path+out_counter_usd_name, mode="wb") as hut:
+    #     pickle.dump(data_usd_counter, hut)
 
     print("kek")
