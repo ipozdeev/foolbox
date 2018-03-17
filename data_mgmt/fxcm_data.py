@@ -118,7 +118,10 @@ def get_fxcm_data_by_chunks(id, start_date, end_date, frequency):
 
         # Check if the list is empty
         if not this_data:
-            print("FXCM ID {} has returned no data.".format(id))
+            print("FXCM ID {} has returned no data for the period from {}"
+                  " to {}.".format(id,
+                                   pd.Timestamp.utcfromtimestamp(this_start),
+                                   pd.Timestamp.utcfromtimestamp(this_end)))
             continue
 
         # Append the output
@@ -193,8 +196,9 @@ def get_fcxm_data(fx_pairs, frequency, start_date, end_date, num_periods=None):
 
         # For high frequency requests query the data in chunks
         if frequency in ["m1", "m5", "m15", "m30"]:
-            print("FFFFFUUUUUUU! Invoking high frequency mode. The requests"
-                  "are gonna be chunkized.")
+            print("FFFFFUUUUUUU! Invoking the high frequency mode. The "
+                  "requests are gonna be chunkized. Currency is {}, its ID "
+                  "is {}.".format(curr, id))
 
             this_data = \
                 get_fxcm_data_by_chunks(id, start_date, end_date, frequency)
@@ -212,18 +216,24 @@ def get_fcxm_data(fx_pairs, frequency, start_date, end_date, num_periods=None):
 
             # Check if the list is empty
             if not this_data:
-                print("{} has returned no data.".format(curr))
+                print("{} has returned no data for the period from {} "
+                      "to {}.".format(
+                    curr, pd.Timestamp.utcfromtimestamp(start_date),
+                    pd.Timestamp.utcfromtimestamp(end_date))
+                    )
                 continue
             else:
-                print("Data for {} has been downloaded".format(curr))
+                print("Data for {} has been downloaded.".format(curr))
 
         # Transform to dataframe, assign column, names, index by stamps
         this_data = pd.DataFrame(this_data)
         this_data.columns = ["stamp", "bid_open", "bid_close", "bid_high",
                              "bid_low", "ask_open", "ask_close", "ask_high",
                              "ask_low", "num_ticks"]
+
+        # Convert to utc timestamps
         this_data["stamp"] = this_data["stamp"].apply(
-            lambda x: pd.Timestamp.fromtimestamp(x))
+            lambda x: pd.Timestamp.fromtimestamp(x).tz_localize("UTC"))
         this_data = this_data.set_index("stamp")
 
         # Append the output lists
@@ -258,15 +268,15 @@ if __name__ == "__main__":
     fxcm_currs = ["AUD/USD", "USD/CAD", "USD/CHF", "EUR/USD", "GBP/USD",
                   "USD/JPY", "USD/NOK", "NZD/USD", "USD/SEK"]
     data_frequency = "m15"
-    s_dt = "2015-01-01"
-    e_dt = "2016-03-15"
+    s_dt = "1999-12-31"
+    e_dt = "2018-03-15"
 
     # Set output path and output names
     out_path = set_cred.gdrive_path("research_data/fx_and_events/")
     out_raw_name = "fxcm_raw_" + data_frequency + ".p"
     out_counter_usd_name = "fxcm_counter_usd_" + data_frequency + ".p"
 
-    data_raw = get_fcxm_data(fx_pairs=["EUR/USD"], frequency=data_frequency,
+    data_raw = get_fcxm_data(fx_pairs=fxcm_currs, frequency=data_frequency,
                              start_date=s_dt, end_date=e_dt)
 
     # Convert datapoints to USD being countercurrency if it's not
@@ -296,9 +306,9 @@ if __name__ == "__main__":
             data_usd_counter[key] = df
 
     # Dump the data
-    # with open(out_path+out_raw_name, mode="wb") as hut:
-    #     pickle.dump(data_raw, hut)
-    # with open(out_path+out_counter_usd_name, mode="wb") as hut:
-    #     pickle.dump(data_usd_counter, hut)
+    with open(out_path+out_raw_name, mode="wb") as hut:
+        pickle.dump(data_raw, hut)
+    with open(out_path+out_counter_usd_name, mode="wb") as hut:
+        pickle.dump(data_usd_counter, hut)
 
     print("kek")
