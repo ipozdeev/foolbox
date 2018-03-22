@@ -922,3 +922,26 @@ def nw_cov(data):
                        columns = data.columns, dtype="float")
 
     return vcv
+
+
+def simple_se_diff_in_means(data1, data2):
+    """Given two pd.Series or 1-dimensional pd.DataFrames, computes standard
+    error for the difference in means test for 'data1' and 'data2'.
+
+    Parameters
+    ----------
+    data1: pd.Series
+        first dataset
+    data2: pd.Series
+        second dataset
+
+    Returns
+    -------
+    se: float
+        standard error of difference in means of 'data1' and 'data2'
+
+    """
+
+    se = np.sqrt(data1.var()/data1.count() + data2.var()/data2.count())
+
+    return se
