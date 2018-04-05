@@ -183,7 +183,7 @@ class PolicyExpectation:
         return pe
 
     @classmethod
-    def from_funds_futures(cls, meetings, funds_futures):
+    def from_funds_futures(cls, meetings, funds_futures, **kwargs):
         """ Extract policy expectations from Fed funds futures.
 
         For each date when a Fed funds futures is available, it is possible to
@@ -271,7 +271,8 @@ class PolicyExpectation:
         # create a new PolicyExpectation instance to return
         pe = PolicyExpectation(
             meetings=meetings,
-            expected_proxy_rate=expected_proxy_rate)
+            expected_proxy_rate=expected_proxy_rate,
+            **kwargs)
 
         return pe
 
@@ -1110,6 +1111,7 @@ def into_currency(data, new_cur, counter_cur="usd"):
 
     return new_data
 
+
 def pe_backtest(returns, holding_range, threshold_range,
                 data_path, avg_impl_over=2, avg_refrce_over=2, sum=False):
     """
@@ -1225,6 +1227,7 @@ def pe_backtest(returns, holding_range, threshold_range,
 
     return results
 
+
 def pe_perfect_foresight_strat(returns, holding_range, data_path,
                                forecast_consistent=False,
                                smooth_burn=5, sum=False):
@@ -1329,6 +1332,7 @@ def pe_perfect_foresight_strat(returns, holding_range, data_path,
 
     return results
 
+
 def event_backtest_wrapper(fx_data, fx_data_us, holding_range, threshold_range,
                            data_path, **kwargs):
     """Wrapper around 'event_trading_backtest' combining fomc dollar index and
@@ -1378,6 +1382,7 @@ def event_backtest_wrapper(fx_data, fx_data_us, holding_range, threshold_range,
         fillna(value=ret_x_us).fillna(value=ret_us)
 
     return strat_ret
+
 
 def event_trading_backtest(fx_data, holding_range, threshold_range,
                            data_path, fomc=False, **kwargs):
@@ -1504,6 +1509,7 @@ def event_trading_backtest(fx_data, holding_range, threshold_range,
 
     return results
 
+
 def get_pe_signals(currencies, lag, threshold, data_path, fomc=False,
                    **kwargs):
     """Fetches a dataframe of signals from the 'PolicyExpectation' class, for
@@ -1587,6 +1593,68 @@ def get_pe_signals(currencies, lag, threshold, data_path, fomc=False,
         # signals.columns = currencies
 
     return signals
+
+
+def realized_variance(data, hour_start=None, hour_end=None, freq='M',
+                      n_in_day=None, r_vola=False):
+    """Calculate realized variance over a certain frequency.
+
+    This function sums up squared returns to arrive at the 'realized
+    variance' of returns in `data`. It is assumed that the frequency of
+    `data` is daily or higher. To ensure that the outcome is insensitive to
+    the amount of missing observations within each calculation window, the
+    mean of squared returns is taken and multiplied with the number of
+    observations in one day to arrive at the daily variance, and then again
+    by 252 to annulaze the latter.
+
+    Parameters
+    ----------
+    data : pandas.DataFrame or pandas.Series
+        of returns
+    hour_start : int
+        on each day, everyting earlier than this hour is discarded
+    hour_end : int
+        on each day, everyting later than this hour is discarded
+    freq : str or int
+        calculation period, e.g. 'M' to estimate variance in that month
+    n_in_day : int
+        (optional) the number of observations of the data frequency in one
+        day; used to assert that we do not sum unequal number of values;
+        could be inferred if the index of `data` has frequency as an attribute
+    r_vola : bool
+        True to return realized volatility (sqrt) instead of variance
+
+    Returns
+    -------
+    rv : pandas.DataFrame or pandas.Series
+        of annualzed variance or volatility
+
+    """
+    # infer frequency
+    if n_in_day is None:
+        n_in_day = int(1 / (data.index.freq.delta.total_seconds() /
+                            (24 * 60 * 60)))
+    if hour_end is None:
+        hour_end = 24
+    if hour_start is None:
+        hour_start = 0
+
+    #
+    idx = (data.index.hour > hour_start) & (data.index.hour < hour_end) & \
+        (~data.index.weekday.isin([5, 6]))
+    ret_trim = data.loc[idx, :]
+
+    # realized variance
+    if isinstance(freq, str):
+        rv = ret_trim.pow(2).resample(freq).mean() * n_in_day * 252
+    else:
+        rv = ret_trim.pow(2).rolling(freq).mean() * n_in_day * 252
+
+    # take square root if asked
+    if r_vola:
+        rv = np.sqrt(rv)
+
+    return rv
 
 
 if __name__ == "__main__":
