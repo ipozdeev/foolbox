@@ -233,7 +233,7 @@ def get_fcxm_data(fx_pairs, frequency, start_date, end_date, num_periods=None):
 
         # Convert to utc timestamps
         this_data["stamp"] = this_data["stamp"].apply(
-            lambda x: pd.Timestamp.fromtimestamp(x).tz_localize("UTC"))
+            lambda x: pd.Timestamp.utcfromtimestamp(x).tz_localize("UTC"))
         this_data = this_data.set_index("stamp")
 
         # Append the output lists
@@ -269,7 +269,7 @@ if __name__ == "__main__":
                   "USD/JPY", "USD/NOK", "NZD/USD", "USD/SEK"]
     data_frequency = "m15"
     s_dt = "1999-12-31"
-    e_dt = "2018-03-15"
+    e_dt = "2018-03-31"
 
     # Set output path and output names
     out_path = set_cred.gdrive_path("research_data/fx_and_events/")
@@ -312,3 +312,19 @@ if __name__ == "__main__":
         pickle.dump(data_usd_counter, hut)
 
     print("kek")
+
+    # Define the currency pairs of interest, data frequency and request period
+    # fxcm_currs = ["EUR/USD"]
+    # data_frequency = "m5"
+    # s_dt = "2018-04-04"
+    # e_dt = "2018-04-05"
+    #
+    # # Set output path and output names
+    # out_path = set_cred.gdrive_path("research_data/fx_and_events/")
+    #
+    # data_raw = get_fcxm_data(fx_pairs=fxcm_currs, frequency=data_frequency,
+    #                          start_date=s_dt, end_date=e_dt)
+    #
+    # mid = (data_raw["ask_close"] + data_raw["bid_close"])/2
+    # mid.plot()
+
