@@ -1595,8 +1595,7 @@ def get_pe_signals(currencies, lag, threshold, data_path, fomc=False,
     return signals
 
 
-def realized_variance(data, hour_start=None, hour_end=None, freq='M',
-                      n_in_day=None, r_vola=False):
+def realized_variance(data, freq='M', n_in_day=None, r_vola=False):
     """Calculate realized variance over a certain frequency.
 
     This function sums up squared returns to arrive at the 'realized
@@ -1611,10 +1610,10 @@ def realized_variance(data, hour_start=None, hour_end=None, freq='M',
     ----------
     data : pandas.DataFrame or pandas.Series
         of returns
-    hour_start : int
-        on each day, everyting earlier than this hour is discarded
-    hour_end : int
-        on each day, everyting later than this hour is discarded
+    # hour_start : int
+    #     on each day, everyting earlier than this hour is discarded
+    # hour_end : int
+    #     on each day, everyting later than this hour is discarded
     freq : str or int
         calculation period, e.g. 'M' to estimate variance in that month
     n_in_day : int
@@ -1634,27 +1633,108 @@ def realized_variance(data, hour_start=None, hour_end=None, freq='M',
     if n_in_day is None:
         n_in_day = int(1 / (data.index.freq.delta.total_seconds() /
                             (24 * 60 * 60)))
-    if hour_end is None:
-        hour_end = 24
-    if hour_start is None:
-        hour_start = 0
-
+    # if hour_end is None:
+    #     hour_end = 24
+    # if hour_start is None:
+    #     hour_start = 0
     #
-    idx = (data.index.hour > hour_start) & (data.index.hour < hour_end) & \
-        (~data.index.weekday.isin([5, 6]))
-    ret_trim = data.loc[idx, :]
+    # #
+    # idx = (data.index.hour > hour_start) & (data.index.hour < hour_end) & \
+    #     (~data.index.weekday.isin([5, 6]))
+    # ret_trim = data.loc[idx, :]
 
     # realized variance
     if isinstance(freq, str):
-        rv = ret_trim.pow(2).resample(freq).mean() * n_in_day * 252
+        rv = data.pow(2).resample(freq).mean() * n_in_day * 252
     else:
-        rv = ret_trim.pow(2).rolling(freq).mean() * n_in_day * 252
+        rv = data.pow(2).rolling(freq).mean() * n_in_day * 252
 
     # take square root if asked
     if r_vola:
         rv = np.sqrt(rv)
 
     return rv
+
+
+def realized_covariance(data, freq='M', n_in_day=None, r_corr=False):
+    """Compute realized monthly covariance by summing daily squared values.
+
+    For a given resampling frequency, computes the realized covariance
+    matrix as sum(r_i*r_j) for i,j. The values are annualized using 252 as
+    the number of days in a year. Also, see docstring for `realized_variance`
+
+    Parameters
+    ----------
+    data : pandas.DataFrame
+        of returns
+    freq : str or int
+        calculation period, e.g. 'M' to estimate variance in that month
+    n_in_day : int
+        (optional) the number of observations of the data frequency in one
+        day; used to assert that we do not sum unequal number of values;
+        could be inferred if the index of `data` has frequency as an attribute
+    r_corr : bool
+        True to return realized correlation (sqrt) instead of covariance
+
+    Returns
+    -------
+    rv : pandas.DataFrame
+        of annualzed covariance or correlation
+
+    """
+    if not isinstance(freq, str):
+        raise NotImplementedError("Use pandas frequencies for now.")
+
+    if not isinstance(data, pd.DataFrame):
+        raise ValueError("Only dataframes are accepted! For Series, "
+                         "covariance makes no sence, use 'realized_variance'.")
+
+    # infer frequency
+    if n_in_day is None:
+        n_in_day = int(1 / (data.index.freq.delta.total_seconds() /
+                            (24 * 60 * 60)))
+
+    def one_period_covariance(df):
+        # numerator is r_i*r_j
+        num = df.T.dot(df)
+
+        # analogue of .mean(): to annualize in a proper manner, divide by the
+        #   min of the no of observations in r_i and r_j
+        denom = pd.DataFrame(
+            data=np.minimum(*np.meshgrid(df.count(), df.count())),
+            index=data.columns, columns=data.columns)
+
+        res = num.div(denom)
+
+        return res
+
+    # for each calculation period, compute the matrix
+    res = dict()
+    for t, grp in data.groupby(pd.Grouper(freq=freq)):
+        res[t] = one_period_covariance(grp)
+
+    # concat everything
+    res = pd.concat(res, axis=1)
+
+    # annualize
+    res *= (n_in_day * 252)
+
+    # level names: better when dates are named as 'date'
+    res.index.levels.names = [data.index.name, data.columns.name]
+    res = res.sort_index()
+
+    # deal with correlations if asked
+    if not r_corr:
+        return res
+    else:
+        res_corr = dict()
+        for t, grp in res.groupby(axis=0, level=0):
+            d_mat = np.sqrt(np.diag(grp))
+            res_corr[t] = (1/d_mat).dot(grp).dot(1/d_mat)
+
+        res_corr = pd.concat(res_corr, axis=0)
+
+        return res_corr
 
 
 if __name__ == "__main__":
