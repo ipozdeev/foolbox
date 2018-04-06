@@ -622,9 +622,10 @@ def retail_dollar_carry(trading_env, us_rf, foreign_rf=None, map_signal=None,
     if map_signal is None:
         map_signal = lambda x: x.shift(1)
 
-    if foreign_rf is None:
-        foreign_rf = trading_env.mid_swap_points / \
-                     trading_env.mid_spot_prices * -1
+    # TODO: Oh, this is wrong, no good comparing fwd disc and dollar rate!
+    # if foreign_rf is None:
+    #     foreign_rf = trading_env.mid_swap_points / \
+    #                  trading_env.mid_spot_prices * -1
 
     mean_fwd_disc = foreign_rf.mean(axis=1)
 
@@ -651,7 +652,7 @@ def retail_dollar_carry(trading_env, us_rf, foreign_rf=None, map_signal=None,
     e_dt = trading_env.mid_spot_prices.last_valid_index()
     sig = sig.loc[s_dt:e_dt, :]
 
-    strategy = FXTradingStrategy.from_position_flags(sig, leverage=leverage)
+    strategy = FXTradingStrategy(position_flags=sig, leverage=leverage)
 
     # trading
     trading = FXTrading(environment=trading_env, strategy=strategy)
@@ -682,11 +683,11 @@ def retail_dollar_index(trading_env, leverage="net", monthly_sig=False):
         wght.loc[t, :] = row + 0.0001*this_sign
         this_sign *= -1
 
+    strategy = FXTradingStrategy(position_weights=wght)
+
     if monthly_sig:
         raise_freq = 'B'
-        wght = StrategyFactory().raise_flags_frequency(wght, raise_freq)
-
-    strategy = FXTradingStrategy(position_weights=wght)
+        strategy = strategy.upsample(freq=raise_freq)
 
     # trading
     trading = FXTrading(environment=trading_env, strategy=strategy)
@@ -728,7 +729,7 @@ def retail_slope(trading_env, rate_long, rate_short, map_signal=None,
     flags = sig.ffill()
 
     # the strategy
-    strategy = FXTradingStrategy.from_position_flags(flags, leverage=leverage)
+    strategy = FXTradingStrategy(position_flags=flags, leverage=leverage)
 
     # trading
     trading = FXTrading(environment=trading_env, strategy=strategy)
@@ -1444,4 +1445,3 @@ if __name__ == "__main__":
 
     strats.plot()
     plt.show()
-
