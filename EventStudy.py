@@ -63,7 +63,7 @@ class EventStudy:
 
     @property
     def mask_between_events(self):
-        res = self.timeline.loc[:, pd.IndexSlice[:, "inter_evt"]]
+        res = self.timeline.xs("inter_evt", axis=1, level=1, drop_level=True)
 
         return res
 
@@ -585,18 +585,24 @@ class EventStudy:
 
         return ci
 
-    def boot_the_mean(self, ps, n_iter=500, n_blocks=None):
+    def boot_the_mean(self, what="car", n_iter=500, n_blocks=None,
+                      fillna=False):
         """Block bootstrap.
+
         Returns
         -------
-        ci : pandas.DataFrame
-            with columns for confidence interval bands
-        ps : float/tuple
-            see above
+        what : str
+            what to take the mean of: 'ar' or 'car'
         n_iter : int
             number of iterations
         n_blocks : int
             size of blocks to use for resampling
+        fillna : bool
+            fill na in the data when bootstrapping
+
+        Returns
+        -------
+        booted : pandas.DataFrame
         """
         # defenestrate
         ta, tb, tc, td = self._window
@@ -606,12 +612,13 @@ class EventStudy:
             n_blocks = td - ta + 1
 
         # boot from `data` without windows around events --------------------
-        boot_from = dict()
-        for k, v in self.timeline.items():
-            idx = v.loc[:, "inter_evt"].notnull()
-            boot_from[k] = self.data.loc[idx, k]
-
-        boot_from = pd.DataFrame.from_dict(boot_from)
+        # boot_from = dict()
+        # for k, v in self.timeline.groupby(axis=1, level=0):
+        #     idx = v[k].loc[:, "inter_evt"]
+        #     boot_from[k] = self.data.loc[idx, k]
+        #
+        # boot_from = pd.DataFrame.from_dict(boot_from)
+        boot_from = self.data.where(self.mask_between_events)
 
         # no of events for each asset ---------------------------------------
         n_evts = {c: self.events[c].count() for c in self.assets}
@@ -624,7 +631,7 @@ class EventStudy:
             print(p)
 
             # shuffle data
-            shuff_data = self.shuffle_data(boot_from, n_blocks=n_blocks)
+            shuff_data = self.shuffle_data(boot_from, n_blocks, fillna)
 
             # shuffle events
             # make sure resampled events do not lie outside normal range
@@ -644,35 +651,69 @@ class EventStudy:
                 window=self._window,
                 mean_type=self._mean_type)
 
-            booted.iloc[:, p] = this_evt_study.the_mean
+            # calculate the mean based on the reshuffled dataframe
+            if what == "car":
+                this_what = this_evt_study.car
+            else:
+                this_what = this_evt_study.ar
+
+            func = this_evt_study.mean_fun(self._mean_type)
+            booted.iloc[:, p] = func(this_what)
 
         return booted
 
     @staticmethod
-    def shuffle_data(data, n_blocks):
+    def shuffle_data(data, n_blocks, fillna=False):
+        """Shuffle data in blocks.
+
+        First, fill the na in `data` using randomly sampled observations in
+        `data` itself. Then, the data is shuffled in blocks.
+
+        Parameters
+        ----------
+        data : pandas.DataFrame
+        n_blocks : int
+        fillna : bool
+            fill na in the data when bootstrapping
+        Returns
+        -------
+        res : pandas.DataFrame
+            of shuffled data
         """
-        """
-        T, N = data.shape
+        n_obs, n_cols = data.shape
 
-        arr_no_na = np.array([
-            np.random.choice(
-                data[p].dropna().values, T) for p in data.columns]).T
+        # fill na in `data` by botstrapping it ------------------------------
+        if fillna:
+            # bootstrap `data`
+            arr_no_na = np.array([
+                np.random.choice(
+                    data[p].dropna().values, n_obs) for p in data.columns]).T
 
-        old_df_no_na = pd.DataFrame(
-            data=arr_no_na,
-            index=data.index,
-            columns=data.columns)
+            # to frame
+            old_df_no_na = pd.DataFrame(
+                data=arr_no_na,
+                index=data.index,
+                columns=data.columns)
 
-        new_df_no_na = data.fillna(old_df_no_na).values
+            # fill na
+            new_df_no_na = data.fillna(old_df_no_na).values
 
+        else:
+            new_df_no_na = data.values
+
+        # make the number of rows be a multiple of the number of blocks (for
+        #   easier resampling)
         new_df_no_na = np.concatenate((
             new_df_no_na,
-            new_df_no_na[np.random.choice(range(T), n_blocks - T % n_blocks)]))
+            new_df_no_na[np.random.choice(range(n_obs),
+                                          n_blocks - n_obs % n_blocks)]))
 
+        # resample
         M = new_df_no_na.shape[0] // n_blocks
-        res = new_df_no_na.reshape(M, -1, N)
-        res = res[np.random.permutation(M)].reshape(-1, N)
+        res = new_df_no_na.reshape(M, -1, n_cols)
+        res = res[np.random.permutation(M)].reshape(-1, n_cols)
 
+        # to frame again
         res = pd.DataFrame(data=res, columns=data.columns)
 
         return res
