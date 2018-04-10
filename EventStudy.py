@@ -961,10 +961,10 @@ if __name__ == "__main__":
     from pandas.tseries.offsets import BDay
 
     # currency to drop
-    drop_curs = ["jpy","dkk"]
+    drop_curs = ["jpy","dkk", "nok", ]
 
     # window
-    wind = (-10, -1, 1, 5)
+    wind = (-10, -1, 0, 5)
     wa, wb, wc, wd = wind
 
     # start, end dates
@@ -976,14 +976,34 @@ if __name__ == "__main__":
     out_path = set_credentials.gdrive_path("opec_meetings/tex/figs/")
 
     # spot returns + drop currencies ----------------------------------------
-    with open(data_path + settings["fx_data"], mode='rb') as fname:
-        fx = pickle.load(fname)
-    ret = np.log(fx["spot_mid"].drop(drop_curs,axis=1,errors="ignore")).diff()
+    # with open(data_path + settings["fx_data"], mode='rb') as fname:
+    #     fx = pickle.load(fname)
+    fx = pd.read_pickle(data_path + settings["fx_data"])
+
+    fx = pd.read_pickle(data_path + "bond_index_data.p")
+    mat = "10+y"
+    data = list()
+    currs = list()
+    for key, df in fx.items():
+        data.append(np.log(df[mat]).diff() - np.log(df["5-7y"]).diff())
+        currs.append(key)
+    data = pd.concat(data, axis=1)
+    data.columns = currs
+
+    data = data.drop(["jpy", "usd"], axis=1)
+    ret = data
+
+    # ret = np.log(data).diff()
     ret = ret.loc[(s_dt - BDay(22)):, :]
 
+
+    # ret = np.log(fx["spot_mid"].drop(drop_curs,axis=1,errors="ignore")).diff()
+    # ret = ret.loc[(s_dt - BDay(22)):, :]
+
     # events + drop currencies ----------------------------------------------
-    with open(data_path + settings["events_data"], mode='rb') as fname:
-        events_data = pickle.load(fname)
+    # with open(data_path + settings["events_data"], mode='rb') as fname:
+    #     events_data = pickle.load(fname)
+    events_data = pd.read_pickle(data_path + settings["events_data"])
 
     events = events_data["joint_cbs"].drop(drop_curs + ["usd"],
         axis=1, errors="ignore")
@@ -993,22 +1013,51 @@ if __name__ == "__main__":
     data = ret.reindex(
         index=pd.date_range(ret.index[0], ret.index[-1], freq='B'))
 
+    # data_frequency = "H1"
+    #
+    # out_counter_usd_name = "fxcm_counter_usd_" + data_frequency + ".p"
+    #
+    # data = pd.read_pickle(data_path + out_counter_usd_name)
+    # data = data["ask_close"].loc[s_dt:e_dt, events.columns].dropna(how="all")
+    # data = data.pct_change()
+    # data = data.loc[(s_dt - BDay(22)):, :]
+    #
+    # events.index = [ix.tz_localize("UTC") for ix in events.index]
+    # events = events.loc[data.index[0]:data.index[-1], :]
+    # events = events.dropna(how="all")
+
+
+    # window
+    # wind = (-240, -5, 0, 100)
+    wa, wb, wc, wd = wind
+
+    # exog = pd.DataFrame(1, index=data.index, columns=currs)
+    #
+    # exog_normal, exog_res = \
+    #     EventStudyFactory().get_normal_data_exog(data, events, exog, wind)
+
     # normal data, all events sample ----------------------------------------
-    es = EventStudy(data=data*100,
+    es = EventStudy(data=(data)*100,
                     events=events,
                     mean_type="count_weighted",
-                    window=wind,
-                    x_overlaps=True,
-                    normal_data=0.0)
+                    window=wind)
 
-    data_between_events = es.data_between_events
-    norm_data_all_evt = data_between_events.ewm(alpha=0.95).mean().shift(-wa+1)
-
-    # hike? cut? status quo? ------------------------------------------------
-    evt = events.where(events < 0).dropna(how="all")
-
-    # normal data
-    normal_data = norm_data_all_evt.where(evt.notnull()).loc[evt.index, :]
+    esh = EventStudy(data=(data)*100,
+                     events=events.where(events > 0).dropna(how="all"),
+                     mean_type="count_weighted",
+                     window=wind)
+    esl = EventStudy(data=(data)*100,
+                     events=events.where(events < 0).dropna(how="all"),
+                     mean_type="count_weighted",
+                     window=wind)
+    esn = EventStudy(data=(data)*100,
+                     events=events.where(events == 0).dropna(how="all"),
+                     mean_type="count_weighted",
+                     window=wind)
+    es.plot()
+    esh.plot()
+    esl.plot()
+    esn.plot()
 
     # event study!
     es = EventStudy(data=data*100,
