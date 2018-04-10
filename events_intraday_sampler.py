@@ -3,6 +3,7 @@ from foolbox.econometrics import simple_se_diff_in_means
 from foolbox.wp_tabs_figs.wp_settings import *
 from foolbox.api import my_blue
 import seaborn as sns
+import numpy as np
 
 
 class EventSampler:
@@ -430,7 +431,7 @@ def barplot_intraday_by_hour(data):
             labels.append(str(stamp)+":00")
 
     ax = sns.barplot("stamp", "diff_means", data=data, ci=None, color=my_blue,
-                     saturation=1, yerr=2 * diff["se"], ecolor="k",
+                     saturation=1, yerr=2 * data["se"], ecolor="k",
                      capsize=5, error_kw={"elinewidth": 1.75})
 
     # Shift the integer ticks by -0.5 so that bars are not centered and
@@ -459,8 +460,7 @@ if __name__ == "__main__":
     # Set up the event window
     pre = (BDay(-10), BDay(-1))
     # Set post subsample inside the pre-event window, making it irrelevant
-    post = (BDay(-1), BDay(-1))
-
+    post = (pre[1], pre[1])
     # Difference between which subsamples to plot. There are 4 subsamples
     # 'hike', 'cut', 'no change' and 'none'.
     event_type1 = "cut"   # compute difference in returns before cuts
@@ -468,7 +468,10 @@ if __name__ == "__main__":
 
     # Compute statistics for these currenices
     currs = ["aud", "cad", "chf", "eur", "gbp", "nok", "nzd", "sek"]
-
+    # currs = ["aud", "nzd"]
+    # currs = ["chf", "eur", "gbp", "nok", "sek"]
+    # currs = ["gbp", "sek", "nok", "chf"]
+    # currs = ["aud", "cad", "jpy", "nzd"]
     # Compute statistics around these announcements
     events_by = "local_cbs"  # set to 'usd' to compute around fomc to 'eur' for
                              # the ecb, etc
@@ -477,6 +480,11 @@ if __name__ == "__main__":
     data = pd.read_pickle(data_path + out_counter_usd_name)
     data = data["ask_close"].pct_change().loc[
            (s_dt - BDay(22)):, currs] * 1e4
+
+    tz = "Europe/London"
+    # tz = "EST"
+    # data.index = [x.astimezone(tz) for x in data.index]
+    # data.index.name = "stamp"
 
     events_data = pd.read_pickle(data_path + settings["events_data"])
     if events_by == "local_cbs":
@@ -497,6 +505,12 @@ if __name__ == "__main__":
     stacked = eda.stack_data()
     diff = eda.compare_means_by_stamp_and_event(
         stacked, event_type1, event_type2, lambda x: x.hour).reset_index()
+    # stacked["stamp"] = stacked["stamp"].apply(lambda x: x.strftime("%H:%M"))
+    # stacked.loc[stacked["stamp"] == "22:33", :] = np.nan
+    # stacked.dropna(how="all")
+    # diff = eda.compare_means_by_stamp_and_event(
+    #     stacked, event_type1, event_type2,
+    #     ).reset_index()
 
     fig, ax = plt.subplots(figsize=(15, 7))
     ax = barplot_intraday_by_hour(diff)

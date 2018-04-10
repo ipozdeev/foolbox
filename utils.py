@@ -570,7 +570,6 @@ def to_better_latex(df_coef, df_tstat, r_squared=None, fmt_coef="{}",
     return new_df.to_latex(**kwargs, escape=False)
 
 
-
 def resample_between_events(data, events, fun, mask=None):
     """
     """

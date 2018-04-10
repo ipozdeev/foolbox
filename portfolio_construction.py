@@ -72,7 +72,8 @@ def rank_sort(returns, signals, n_portfolios=3, add_fake=False):
         # where bins are equal to 1,2,...
         this_portf = returns.where(bins == p)
         # write each portfolio's constituent assets
-        portfolios["portfolio" + str(p+1)] = this_portf
+        portfolios["portfolio" + str(p+1)] = this_portf.drop("fake", axis=1,
+                                                             errors="ignore")
         # get the equally-weighted return on each portfolio
         portfolios["p" + str(p+1)] = this_portf.mean(axis=1)
         portfolios["p" + str(p+1)].name = "p" + str(p+1)

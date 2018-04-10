@@ -1,4 +1,6 @@
 import pandas as pd
+idx = pd.IndexSlice
+
 import numpy as np
 import statsmodels.api as sm
 import matplotlib.pyplot as plt
@@ -332,23 +334,26 @@ class PureOls(Regression):
         return hodrick_vcv
 
 
-class DynamicOLS():
-    """ One-factor (+constant) OLS setting."""
+class DynamicOLS:
+    """One-factor (+constant) OLS setting."""
     def __init__(self, y0, x0):
         """
         """
         assert isinstance(x0.squeeze(), pd.Series)
 
-        self.y, self.x = y0.align(x0.squeeze(), axis=0, join="inner")
+        y, x = y0.align(x0.squeeze(), axis=0, join="inner")
 
-        if isinstance(self.y, pd.Series):
-            if self.y.name is None:
-                self.y.name = "response"
-            self.y = self.y.to_frame()
+        if isinstance(y, pd.Series):
+            if y.name is None:
+                y.name = "response"
+            y = y.to_frame()
 
         # add name in case `y` does not have one
-        if self.x.name is None:
-            self.x.name = "regressor"
+        if x.name is None:
+            x.name = "regressor"
+
+        self.x = x
+        self.y = y
 
     def fit(self, method, denom=False, **kwargs):
         """
@@ -365,11 +370,14 @@ class DynamicOLS():
         """
         if self.y.shape[1] < 2:
             res = self.fit_to_series(self.y.squeeze(), self.x,
-                method=method, denom=denom, **kwargs)
+                                     method=method, denom=denom, **kwargs)
         else:
-            res = {c: self.fit_to_series(self.y.loc[:, c], self.x,
-                method=method, denom=denom, **kwargs) for c in self.y.columns}
-            res = pd.Panel.from_dict(res, orient="minor")
+            res = dict()
+            for c, col in self.y.iteritems():
+                res[c] = self.fit_to_series(col, self.x, method=method,
+                                            denom=denom, **kwargs)
+
+            res = pd.concat(res, axis=1)
 
         return res
 
@@ -389,8 +397,12 @@ class DynamicOLS():
             roll_cov_yx = yx.rolling(**kwargs).cov()
 
             # calculate beta
-            b = roll_cov_yx.loc[:, y.name, x.name]/\
-                roll_cov_yx.loc[:, x.name, x.name]
+            b = roll_cov_yx.xs(y.name, level=1, axis=0, drop_level=True)\
+                .loc[:, x.name] /\
+                roll_cov_yx.xs(x.name, level=1, axis=0, drop_level=True)\
+                    .loc[:, x.name]
+            # b = roll_cov_yx.loc[idx[:, y.name], x.name]/\
+            #     roll_cov_yx.loc[idx[:, x.name], x.name]
 
             # calculate alpha
             a = y.rolling(**kwargs).mean() - b*x.rolling(**kwargs).mean()
@@ -403,8 +415,12 @@ class DynamicOLS():
             roll_cov_yx = yx.expanding(**kwargs).cov()
 
             # calculate beta
-            b = roll_cov_yx.loc[:, y.name, x.name] /\
-                roll_cov_yx.loc[:, x.name, x.name]
+            b = roll_cov_yx.xs(y.name, level=1, axis=0, drop_level=True)\
+                .loc[:, x.name] /\
+                roll_cov_yx.xs(x.name, level=1, axis=0, drop_level=True)\
+                    .loc[:, x.name]
+            # b = roll_cov_yx.loc[idx[:, y.name], x.name] /\
+            #     roll_cov_yx.loc[idx[:, x.name], x.name]
 
             # calculate alpha
             a = y.expanding(**kwargs).mean() - b*x.expanding(**kwargs).mean()
@@ -417,8 +433,6 @@ class DynamicOLS():
             roll_cov_yx = yx.groupby(**kwargs).cov()
             if roll_cov_yx.index.nlevels > 2:
                 raise ValueError("Ensure the grouper returns two levels!")
-
-            idx = pd.IndexSlice
 
             b = roll_cov_yx.loc[idx[:, y.name], x.name].xs(
                 y.name, level=1, axis=0) /\
@@ -439,6 +453,47 @@ class DynamicOLS():
 
         return res
 
+    @staticmethod
+    def get_dynamic_cov(y, x, method="expanding", **kwargs):
+        """
+
+        Parameters
+        ----------
+        y : pandas.DataFrame or pandas.Series
+        x : pandas.DataFrame or pandas.Series
+        method : str
+        kwargs : dict
+
+        Returns
+        -------
+
+        """
+        # do not allow for Series
+        if isinstance(y, pd.Series):
+            y = y.to_frame("y")
+        if isinstance(x, pd.Series):
+            x = x.to_frame("x")
+
+        # merge
+        yx = y.join(x, how="outer", lsuffix='_y', rsuffix='_x')
+
+        if method == "rolling":
+            # rolling covariance
+            yx_dyn_covmat = yx.rolling(**kwargs).cov()
+
+        elif method == "expanding":
+            # expanding covariance
+            yx_dyn_covmat = yx.expanding(**kwargs).cov()
+
+        elif method == "grouped_by":
+            # grouped_by covariance
+            yx_dyn_covmat = yx.groupby(**kwargs).cov()
+            if yx_dyn_covmat.index.nlevels > 2:
+                raise ValueError("Ensure the grouper returns two levels!")
+
+        return yx_dyn_covmat
+
+
 def get_dynamic_betas(Y, x, method, **kwargs):
     """
     """
@@ -449,11 +504,12 @@ def get_dynamic_betas(Y, x, method, **kwargs):
     for c in Y.columns:
         mod = DynamicOLS(method=method, y0=Y[c], x0=x, **kwargs)
         _, b = mod.fit()
-        res.loc[:,c] = b
+        res.loc[:, c] = b
 
     return res
 
-class PrincipalComponents():
+
+class PrincipalComponents:
     """
     """
     def __init__(self, X, n_comps):

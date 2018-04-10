@@ -12,70 +12,85 @@ class StrategyFactory:
         pass
 
     @staticmethod
-    def deleverage_position_flags(position_flags, method="net"):
-        """Deleverage position flags.
+    def rescale_weights(weights, leverage="net"):
+        """Rescale weights of (possibly) leveraged positions.
 
         Parameters
         ----------
-        position_flags : pandas.DataFrame
+        weights : pandas.DataFrame
             of position flags in form of +1, -1 and 0
-        method : str
+        leverage : str
             'zero' to make position weights sum up to zero;
             'net' to make absolute weights of short and long positions sum up
                 to one each (sum(abs(negative positions)) = 1);
             'unlimited' for unlimited leverage.
         """
-        if method not in ("zero", "net", "unlimited"):
-            raise ValueError("leverage not known!")
-
         # weights are understood to be fractions of portfolio value
-        if method == "zero":
+        if leverage == "zero":
             # NB: dangerous, because meaningless whenever there are long/sort
             #   positions only
             # make sure that pandas does not sum all nan's to zero
-            row_lev = np.abs(position_flags).apply(axis=1, func=np.nansum)
+            row_lev = np.abs(weights).apply(axis=1, func=np.nansum)
 
             # divide by leverage
-            pos_weights = position_flags.divide(row_lev, axis=0)
+            pos_weights = weights.divide(row_lev, axis=0)
 
-        elif method == "net":
+        elif leverage == "net":
             # deleverage positive and negative positions separately
-            row_lev_pos = position_flags.where(position_flags > 0)\
+            row_lev_pos = weights.where(weights > 0)\
                 .apply(axis=1, func=np.nansum)
-            row_lev_neg = -1*position_flags.where(position_flags < 0)\
+            row_lev_neg = -1 * weights.where(weights < 0)\
                 .apply(axis=1, func=np.nansum)
 
             # divide by leverage
             pos_weights = \
-                position_flags.where(position_flags < 0).divide(
+                weights.where(weights < 0).divide(
                     row_lev_neg, axis=0).fillna(
-                        position_flags.where(position_flags > 0).divide(
+                        weights.where(weights > 0).divide(
                             row_lev_pos, axis=0))
 
-        elif method == "unlimited":
-            pos_weights = position_flags.copy()
+        elif leverage == "unlimited":
+            pos_weights = np.sign(weights)
+
+        else:
+            raise NotImplementedError("Leverage not known!")
 
         return pos_weights
 
+    def position_flags_to_weights(self, position_flags, leverage="net"):
+        """
+        leverage : str
+            "unlimited" for allowing unlimited leverage
+            "net" for restricting it to 1
+            "zero" for restricting that short and long positions net out to
+                no-leverage
+        """
+        # position flags need be of a suitable type
+        position_flags = position_flags.astype(float)
+
+        res = self.rescale_weights(position_flags, leverage=leverage)
+
+        return res
+
     @staticmethod
-    def position_weights_to_actions(position_weights):
+    def position_weights_to_actions(weights):
         """Get actions from (deleveraged if needed) position weights."""
 
         # the very first row must be all zeros: the day before does not
         #   exist to open a position on
-        position_weights.iloc[0, :] *= np.nan
+        weights.iloc[0, :] *= np.nan
 
         # reinstall zeros where nan's are
-        position_weights = position_weights.fillna(value=0.0)
+        weights = weights.fillna(value=0.0)
 
         # actions are changes in positions: to realize a return on day t, a
         #   position on t-1 should be opened
-        actions = position_weights.diff().shift(-1)
+        actions = weights.diff().shift(-1)
 
         return actions
 
     @staticmethod
-    def raise_flags_frequency(flags, freq):
+    def raise_frequency(flags, freq):
         """Upsample position flags prohibiting looking-ahead.
 
         Basically, implements .resample(freq) broadcasting the monthly
@@ -117,14 +132,21 @@ class StrategyFactory:
 
 class FXTradingStrategy:
     """
+    Parameters
+    ----------
+    actions : pandas.DataFrame
+    position_flags : pandas.DataFrame
+    position_weights : pandas.DataFrame
+    leverage : str
     """
     def __init__(self, actions=None, position_flags=None,
-                 position_weights=None):
+                 position_weights=None, leverage=None):
         """
         """
         self._actions = actions
         self._position_flags = position_flags
         self._position_weights = position_weights
+        self._leverage = leverage
 
     @property
     def actions(self):
@@ -163,35 +185,15 @@ class FXTradingStrategy:
     @position_weights.getter
     def position_weights(self):
         if self._position_weights is None:
-            raise ValueError("No position weights specified!")
+            self._position_weights = \
+                StrategyFactory().position_flags_to_weights(
+                    self.position_flags, self._leverage)
+
         return self._position_weights
 
     @position_weights.setter
     def position_weights(self, value):
         self._position_weights = value
-
-    @classmethod
-    def from_position_flags(cls, position_flags, leverage="net"):
-        """
-        leverage : str
-            "unlimited" for allowing unlimited leverage
-            "net" for restricting it to 1
-            "zero" for restricting that short and long positions net out to
-                no-leverage
-        """
-        # position flags need be of a suitable type
-        p_flags = position_flags.astype(float)
-
-        pos_weights = StrategyFactory().deleverage_position_flags(
-            p_flags, method=leverage)
-        actions = StrategyFactory().position_weights_to_actions(
-            pos_weights)
-
-        strat = cls(actions=actions)
-        strat.position_weights = pos_weights
-        strat.position_flags = position_flags
-
-        return strat
 
     @classmethod
     def from_events(cls, events, blackout, hold_period, leverage="net"):
@@ -235,64 +237,48 @@ class FXTradingStrategy:
 
         # fill into the past
         position_flags = position_flags.fillna(method="bfill",
-            limit=max(hold_period-1, 1))
+                                               limit=max(hold_period-1, 1))
 
         # need to open and close it somewhere
         position_flags.iloc[0, :] = np.nan
         position_flags.iloc[-1, :] = np.nan
 
-        return cls.from_position_flags(position_flags, leverage)
+        return cls(position_flags=position_flags, leverage=leverage)
 
-    @classmethod
-    def monthly_from_daily_signals(cls, signals_d, agg_fun=None, n_portf=3,
-                                   leverage="net"):
-        """
+    def upsample(self, freq, **kwargs):
+        """Change strategy to a higher frequency without changing the signals.
+
         Parameters
         ----------
-        log_fdisc : pd.DataFrame
-            of approximate interest rate differentials
+        freq : str
+            pandas frequency
+        kwargs : dict
+            keyword arguments for pandas.resample()
 
         Returns
         -------
-        strat : FXTradingStrategy
+        new_strat : FXTradingStrategy
+
         """
-        if agg_fun is None:
-            agg_fun = lambda x: x.iloc[-1,:]
+        assert isinstance(freq, str) and (len(freq) < 2)
 
-        signals_m = signals_d.resample('M').apply(agg_fun)
-        pf = poco.rank_sort(signals_m, signals_m.shift(1), n_portf)
+        # operate on position flags
+        new_weights = self.position_weights.copy()
 
-        short_leg = -1*pf["portfolio1"].notnull().where(
-            pf["portfolio1"]).astype(float)
-        long_leg = pf["portfolio"+str(n_portf)].notnull().where(
-            pf["portfolio"+str(n_portf)]).astype(float)
-        both_legs = short_leg.fillna(long_leg)
+        # resample
+        new_weights = new_weights.resample(freq, **kwargs).bfill()
 
-        # reindex, bfill
-        position_flags = both_legs.reindex(index=signals_d.index,
-            method="bfill")
+        # kill first period, making sure that trading happens on the
+        # first timestamp of the new 'month' and NOT on the last one of the
+        # previous 'month', as info is still unavailable then
+        new_weights = new_weights.shift(1)
 
-        # need to open and close it somewhere
-        position_flags.iloc[0,:] = np.nan
-        position_flags.iloc[-1,:] = np.nan
+        new_strat = FXTradingStrategy(position_weights=new_weights)
 
-        # # construct strategy
-        # pos_weights = StrategyFactory().deleverage_position_flags(
-        #     position_flags, method=leverage)
-        # actions = StrategyFactory().position_weights_to_actions(
-        #     pos_weights)
-        #
-        # strat = cls(actions=actions)
-        # strat.position_weights = pos_weights
-        # strat.position_flags = position_flags
-        #
-        # return strat
-
-        return cls.from_position_flags(position_flags, leverage)
+        return new_strat
 
     @classmethod
-    def long_short(cls, sort_values, n_portfolios, leverage="net",
-                   raise_freq=None, **kwargs):
+    def long_short(cls, sort_values, n_portfolios, leverage="net", **kwargs):
         """Construct strategy by sorting assets into `n_portfolios`.
 
         Parameters
@@ -303,11 +289,7 @@ class FXTradingStrategy:
             the number of portfolios in portfolio_construction.rank_sort()
         leverage : str
             'net', 'unlimited' or 'zero'
-        raise_freq : str
-            pandas frequency is needed to construct a strategy of higher
-            frequency from signals of lower frequency (daily returns of a
-            monthly rebalanced strategy)
-        kwargs : any
+        kwargs : dict
             additional arguments to portfolio_construction.rank_sort()
 
         Returns
@@ -338,11 +320,7 @@ class FXTradingStrategy:
         flags.iloc[0, :] = np.nan
         flags.iloc[-1, :] = np.nan
 
-        # if raise_freq
-        if raise_freq is not None:
-            flags = StrategyFactory().raise_flags_frequency(flags, raise_freq)
-
-        res = cls.from_position_flags(flags, leverage=leverage)
+        res = cls(position_flags=flags, leverage=leverage)
 
         return res
 
@@ -358,8 +336,8 @@ class FXTradingStrategy:
 
         # the new strategy is a strategy with the above position weights and
         #  net leverage
-        new_strat = FXTradingStrategy.from_position_flags(new_pos_weights,
-                                                          leverage="net")
+        new_strat = FXTradingStrategy(position_flags=new_pos_weights,
+                                      leverage="net")
         new_strat.position_flags = \
             new_strat.position_weights / new_strat.position_weights * \
             np.sign(new_strat.position_weights)
@@ -400,8 +378,8 @@ class FXTradingEnvironment:
         """
         if isinstance(spot_prices, dict):
             if not all([p in ["bid", "ask"] for p in spot_prices.keys()]):
-                raise ValueError("When providing a dictionary, it must "+
-                    "include 'bid' and 'ask' dataframes!")
+                raise ValueError("When providing a dictionary, it must " +
+                                 "include 'bid' and 'ask' dataframes!")
         elif isinstance(spot_prices, pd.DataFrame):
             spot_prices = {
                 "bid": spot_prices,
@@ -418,8 +396,8 @@ class FXTradingEnvironment:
                 "ask": spot_prices["bid"]*0.0}
         elif isinstance(swap_points, dict):
             if not all([p in ["bid", "ask"] for p in swap_points.keys()]):
-                raise ValueError("When providing a dictionary, it must "+
-                    "include 'bid' and 'ask' dataframes!")
+                raise ValueError("When providing a dictionary, it must " +
+                                 "include 'bid' and 'ask' dataframes!")
         elif isinstance(swap_points, pd.DataFrame):
             swap_points = {
                 "bid": swap_points,
@@ -466,10 +444,10 @@ class FXTradingEnvironment:
             self.swap_points.fillna(inplace=True, **kwargs)
             self.spot_prices.fillna(inplace=True, **kwargs)
         else:
-            raise ValueError("Only 'swap_points', 'spot_prices' and 'both' "+
-                "are acceptable as arguments!")
+            raise ValueError("Only 'swap_points', 'spot_prices' and 'both' " +
+                             "are acceptable as arguments!")
 
-    def reindex_with_freq(self, reindex_freq=None, **kwargs):
+    def reindex_with_freq(self, reindex_freq=None):
         """
         Parameters
         ----------
@@ -481,13 +459,13 @@ class FXTradingEnvironment:
         """
         swap_points_idx = self.swap_points.major_axis
         new_idx = pd.date_range(swap_points_idx[0], swap_points_idx[-1],
-            freq=reindex_freq)
+                                freq=reindex_freq)
 
         self.swap_points = self.swap_points.reindex(major_axis=new_idx)
 
         spot_prices_idx = self.spot_prices.major_axis
         new_idx = pd.date_range(spot_prices_idx[0], spot_prices_idx[-1],
-            freq=reindex_freq)
+                                freq=reindex_freq)
 
         self.spot_prices = self.spot_prices.reindex(major_axis=new_idx)
 
@@ -558,7 +536,6 @@ class FXTrading:
         if not bid_prc.notnull().equals(sell_sig.notnull()):
             raise ValueError("There are sell signals where bid prices are "
                              "missing!")
-
 
     def backtest(self, method="balance"):
         """ Backtest a strategy based on self.`signals`.
@@ -758,7 +735,7 @@ class FXPortfolio:
         # get margin closeout value
         # TODO: mid price is suggested by OANDA
         prices_mid = pd.concat([bid_ask_prices.mean(axis=0).to_frame().T, ]*2,
-            axis=0)
+                               axis=0)
         prices_mid.index = bid_ask_prices.index
         marg_closeout = self.get_margin_closeout_value(prices_mid)
 
@@ -784,6 +761,8 @@ class FXPortfolio:
         ----------
         dp : pandas.Series
             indexed with currency names, e.g. "aud"
+        bid_ask_prices : pandas.DataFrame
+            with assets for columns
         """
         # loop over names of dp, transact in respective currency
         for cur, p in dp.iteritems():
@@ -971,7 +950,7 @@ class FXPosition:
 
         if np.abs(self.quantity) < np.abs(qty):
             raise ValueError("Amount drained exceed position size; use " +
-                ".transact() instead")
+                             ".transact() instead")
 
         # calculate p&l
         res = np.abs(qty) * (price - self.avg_price) * self.position_sign
