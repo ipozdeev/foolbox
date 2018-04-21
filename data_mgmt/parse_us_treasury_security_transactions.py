@@ -31,7 +31,7 @@ if __name__ == "__main__":
     # Core Eurozone countries (adopted EUR since 1999)
     eurozone_core = ["Austria", "Belgium", "Finland", "France", "Germany",
                      "Ireland", "Italy", "Luxembourg", "Netherlands",
-                     "Portugal", "Spain"]
+                     "Portugal", "Spain", "Greece"]
 
     # Countries to report
     report_countries = {"aud": ["Australia"], "cad": ["Canada"],
