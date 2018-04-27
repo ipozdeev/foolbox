@@ -38,9 +38,10 @@ if __name__ == "__main__":
                         "chf": ["Switzerland"], "dkk": ["Denmark"],
                         "eur": eurozone_core, "gbp": ["United Kingdom"],
                         "jpy": ["Japan"], "nzd": ["New Zealand"],
-                        "nok": ["Norway"], "sek": ["Sweden"]}
+                        "nok": ["Norway"], "sek": ["Sweden"],
+                        "usd": ["Grand Total"]}
     currency_order = ["aud", "cad", "chf", "dkk", "eur", "gbp", "jpy", "nzd",
-                      "nok", "sek"]
+                      "nok", "sek", "usd"]
 
     # Read the file
     raw_data = pd.read_csv(path+file_name, skiprows=19, names=col_names,
@@ -69,6 +70,21 @@ if __name__ == "__main__":
             this_df.loc[:, curr] = df[dtype]
 
         by_dtype[dtype] = this_df
+
+    # Add some aggregate data types
+    by_dtype["in_total_bonds"] = by_dtype["in_tbonds"] + \
+                                 by_dtype["in_foreign_bonds"] + \
+                                 by_dtype["in_gov_corp_bonds"] + \
+                                 by_dtype["in_us_corp_bonds"]
+    by_dtype["in_total_stocks"] = by_dtype["in_us_stocks"] + \
+                                  by_dtype["in_foreign_stocks"]
+
+    by_dtype["out_total_bonds"] = by_dtype["out_tbonds"] + \
+                                  by_dtype["out_foreign_bonds"] + \
+                                  by_dtype["out_gov_corp_bonds"] + \
+                                  by_dtype["out_us_corp_bonds"]
+    by_dtype["out_total_stocks"] = by_dtype["out_us_stocks"] + \
+                                   by_dtype["out_foreign_stocks"]
 
     # Save the data
     with open(path + out_name, mode="wb") as halupa:
