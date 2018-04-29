@@ -17,8 +17,16 @@ if __name__ == "__main__":
     data_frequency = "H1"
     out_counter_usd_name = "fxcm_counter_usd_" + data_frequency + ".p"
 
-    # Set the desired timezone: the original data in UTC
-    tz = None  # None = do nothing, "EST", "CET", "Europe/London"
+    # Set the desired timezone: the original data in UTC (should be pytz str)
+    tz = "Europe/London"  # None = do nothing, "EST", "CET", "Europe/London"
+
+    # Map pytz sting names to strings labeling the x-axis of the graph
+    tz_naming_dict ={
+        None: "UTC",
+        "Europe/London": "London",
+        "EST": "EST"
+        }
+    tz_label = tz_naming_dict[tz]
 
     # Set up the event window
     pre = (BDay(-10), BDay(-1))
@@ -114,7 +122,7 @@ if __name__ == "__main__":
     this_ax.set_xticks(this_data["stamp"]-0.5)
     this_ax.set_xticklabels(labels)
 
-    this_ax.set_xlabel("UTC Time")
+    this_ax.set_xlabel("{} Time".format(tz_label))
 
     # Add name for the y-axes
     fig.text(0.0, 0.5, "Difference in hourly mean return in basis points",
