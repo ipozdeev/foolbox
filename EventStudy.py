@@ -1023,11 +1023,25 @@ if __name__ == "__main__":
 
     fx = pd.read_pickle(data_path + "bond_index_data.p")
     mat = "10+y"
+    mats = ["1m", "3m", "6m", "12m"]
+    mats = ["1-3y", "3-5y", "5-7y", "7-10y", "10+y"]
+    mats = ["1-3y", "3-5y", "5-7y",]
+    mats = ["3m", "1m"]
     data = list()
     currs = list()
-    for key, df in fx.items():
-        data.append(np.log(df[mat]).diff() - np.log(df["5-7y"]).diff())
-        currs.append(key)
+    for curr, df in fx.items():
+        #data.append(np.log(df[mat]).diff()d - 0*np.log(df["1-3y"]).diff())
+        #data.append(df[mat].diff()-df["1-3y"].diff())
+        #data.append(df.diff().mean(axis=1) - fx["usd"].diff().mean(axis=1))
+
+        # data.append(np.log(df[mat]).diff() -
+        #             np.log(fx["usd"][mat]).diff())
+
+        # data.append(df[mat].diff().sub(fx["usd"][mat].diff(),
+        #             axis=0))
+        data.append(np.log(df[mats]).diff().mean(axis=1) -
+                    np.log(fx["usd"][mats]).diff().mean(axis=1))
+        currs.append(curr)
     data = pd.concat(data, axis=1)
     data.columns = currs
 
@@ -1050,10 +1064,17 @@ if __name__ == "__main__":
         axis=1, errors="ignore")
     events = events.loc[s_dt:e_dt]
 
+    #
+    # events = pd.concat([events_data["joint_cbs"]["usd"]
+    #                     for curr in ret.columns], axis=1)
+    # events.columns = ret.columns
+    # events = events.loc[s_dt:e_dt]
+
     # reindex with business day ---------------------------------------------
     data = ret.reindex(
         index=pd.date_range(ret.index[0], ret.index[-1], freq='B'))
 
+    # data = data - data.rolling(22).mean().shift(1)
     # data_frequency = "H1"
     #
     # out_counter_usd_name = "fxcm_counter_usd_" + data_frequency + ".p"
@@ -1095,10 +1116,13 @@ if __name__ == "__main__":
                      events=events.where(events == 0).dropna(how="all"),
                      mean_type="count_weighted",
                      window=wind)
-    es.plot()
-    esh.plot()
-    esl.plot()
-    esn.plot()
+    # es.plot()
+    esh.get_ci(0.95, "boot", n_iter=13)
+    esl.get_ci(0.95, "boot", n_iter=13)
+    esn.get_ci(0.95, "boot", n_iter=13)
+    esh.plot(plot_ci=True)
+    esl.plot(plot_ci=True)
+    esn.plot(plot_ci=True)
 
     # event study!
     es = EventStudy(data=data*100,
