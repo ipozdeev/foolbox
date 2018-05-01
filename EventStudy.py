@@ -478,9 +478,12 @@ class EventStudy:
 
         # calculate confidence band
         if method == "simple":
-            ci = self.simple_ci(ps=ps)
+            if "variances" not in kwargs.keys():
+                raise ValueError("Specify variances for the confidence "
+                                 "interval!")
+            ci = self.simple_ci(ps=ps, **kwargs)
         elif method == "boot":
-            booted = self.boot_the_mean(ps, **kwargs)
+            booted = self.boot_the_mean(**kwargs)
             self.booted = booted
             ci = booted.quantile(ps, axis=1).T
         else:
@@ -937,7 +940,7 @@ class EventStudyFactory:
 
         return res
 
-    def get_normal_data_exog(self, data, events, exog, window):
+    def get_normal_data_exog(self, data, events, exog, window, add_constant):
         """
 
         Parameters
@@ -974,14 +977,16 @@ class EventStudyFactory:
             for t in this_evt.index:
                 # it is ensured by outside_windows that .loc[:t, ] also
                 # excludes the window around t
-                mod = PureOls(this_y, this_x_est.loc[:t, ], add_constant=True)
+                mod = PureOls(this_y, this_x_est.loc[:],
+                              add_constant=add_constant)
 
-                # get x around t to make a forecast; +1 needed seince day 0
+                # get x around t to make a forecast; +1 needed since day 0
                 # is the event day
                 x_fcast_right = this_x_fcast.loc[t:].head(wd+1)
                 x_fcast_left = this_x_fcast.loc[:t].tail(-wa+1)
 
                 # avoid duplicates
+                # TODO: watch out for Series vs. DataFrame
                 t_x_fcast = pd.concat((x_fcast_left, x_fcast_right.iloc[1:]),
                                       axis=0)
 
@@ -994,6 +999,84 @@ class EventStudyFactory:
                 resid_var.loc[t, col] = mod.get_residuals().var()
 
         return norm_data, resid_var
+
+    def get_normal_data_ewm(self, data, events, event_window, **kwargs):
+        """
+
+        Parameters
+        ----------
+        data : pandas.DataFrame
+        events : pandas.DataFrame
+        event_window : tuple
+        kwargs : dict
+
+        Returns
+        -------
+
+        """
+        if "min_periods" not in kwargs.keys():
+            kwargs["min_periods"] = 1
+
+        msk = self.mark_windows(data=data, events=events, window=event_window,
+                                outside=True)
+
+        # normal_data = data.where(msk).ewm(**kwargs).mean()\
+        #     .where(~msk).replace(np.nan, 0.0)
+
+        normal_data = data.where(msk).ewm(**kwargs).mean().shift(1)
+
+        return normal_data
+
+    def get_normal_data_between_events(self, data, events, event_window):
+        """
+
+        Parameters
+        ----------
+        data
+        events
+        event_window
+
+        Returns
+        -------
+
+        """
+        # init auxiliary event study
+        temp_es = EventStudy(data=data, events=events, window=event_window)
+
+        # mark timeline to be able to do the cool stuff
+        timeline = temp_es.mark_timeline(data, events, event_window)
+
+        res_means = dict()
+        res_vars = dict()
+
+        for c, c_col in data.iteritems():
+            this_inter_evt = timeline[c].loc[:, "inter_evt"].rename(c)
+            this_grouper = timeline[c].loc[:, "next_evt_no"].rename(c)
+            this_m = c_col.where(this_inter_evt).groupby(this_grouper).mean()
+            this_v = c_col.where(this_inter_evt).groupby(this_grouper).var()
+
+            res_means[c] = this_m.ffill()
+            res_vars[c] = this_v.ffill()
+
+        filler = \
+            timeline.loc[:, (slice(None), ["evt_wind_pre", "evt_wind_post"])]
+        filler = filler.notnull().any(axis=1, level=0)
+
+        # means
+        res_means = pd.concat(res_means, axis=1)
+        res_means = res_means.reindex(index=data.index)
+        res_means = res_means.bfill(limit=max(-1*event_window[0], 0))\
+            .ffill(limit=max(event_window[-1], 0))
+        res_means = res_means.where(filler)
+
+        # variances
+        res_vars = pd.concat(res_vars, axis=1)
+        res_vars = res_vars.reindex(index=data.index)
+        res_vars = res_vars.bfill(limit=max(-1 * event_window[0], 0)) \
+            .ffill(limit=max(event_window[-1], 0))
+        res_vars = res_vars.where(filler)
+
+        return res_means, res_vars
 
 
 if __name__ == "__main__":
