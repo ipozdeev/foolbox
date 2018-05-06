@@ -1,31 +1,132 @@
 import pandas as pd
 import numpy as np
-import pickle
-from scipy.stats import norm
 from foolbox.api import *
+from foolbox.finance import PolicyExpectation
+from foolbox.wp_tabs_figs.wp_settings import *
 
-import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 import matplotlib.lines as mlines
-from matplotlib.ticker import MultipleLocator, FixedLocator, FormatStrFormatter
+from matplotlib.ticker import MultipleLocator, FormatStrFormatter
 
 minorLocator = MultipleLocator(1)
 majorLocator = MultipleLocator(5)
 
-# matplotlib settings -------------------------------------------------------
-plt.rc("font", family="serif", size=12)
-gr_1 = "#8c8c8c"
-# gr_2 = "#595959"
+# data path -------------------------------------------------------------
+data_path = set_credentials.gdrive_path("research_data/fx_and_events/")
+out_path = set_credentials.gdrive_path(
+    "research_data/fx_and_events/wp_figures_limbo/")
 
-# %matplotlib
+# currency to drop
+drop_curs = settings["drop_currencies"] + ["usd"]
 
-def fig_event_study(events, ret, direction,
-    mean_type="count_weighted",
-    ci_width=0.95,
-    normal_data=0.0,
-    window=(-10,-1,1,5)):
+# dates to trim to
+s_dt = settings["sample_start"]
+e_dt = settings["sample_end"]
+
+
+def prepare_bond_data(maturity="1m"):
+    """
+    Returns
+    -------
+
+    """
+    bonds_data = pd.read_pickle(data_path + "msci_ted_vix_d.p")
+
+    # res = pd.concat(bonds_data, axis=1).xs(maturity, axis=1, level=1,
+    #                                        drop_level=True)
+    res = bonds_data["msci_pi"]
+
+    # res = res.drop(drop_curs, axis=1, errors="ignore")
+
+    res = np.log(res).diff() * 252
+
+    return res
+
+
+def prepare_events_data(perfect_foresight=False):
+    """
+
+    Parameters
+    ----------
+    perfect_foresight
+
+    Returns
+    -------
+
+    """
+    # window
+    wa, wb, wc, wd = -10, -1, 1, 5
+
+    # events ----------------------------------------------------------------
+    events_data = pd.read_pickle(data_path + settings["events_data"])
+    events = events_data["joint_cbs"]
+    # events = events.loc[s_dt:e_dt].drop(drop_curs, axis=1, errors="ignore")
+
+    if not perfect_foresight:
+        events_exp = dict()
+
+        # drop no-ois currencies
+        events = events.drop(
+            settings["drop_currencies"] + settings["no_ois_currencies"],
+            axis=1, errors="ignore")
+
+        # mappers
+        map_proxy_rate = lambda x: x.rolling(5, min_periods=1).mean()
+        map_expected_rate = map_proxy_rate
+
+        for c in events.columns:
+            pe = PolicyExpectation.from_pickles(data_path, c,
+                                                start_dt=events.index[0])
+
+            this_exp = pe.forecast_policy_direction(
+                lag=-wa + 2, h_low=-0.1, h_high=0.1,
+                map_proxy_rate=map_proxy_rate,
+                map_expected_rate=map_expected_rate)
+
+            events_exp[c] = this_exp
+
+        events = pd.concat(events_exp, axis=1)
+
+    events = events.dropna(how="all")
+
+    return events
+
+
+def prepare_fx_data():
+    """
+
+    Parameters
+    ----------
+    perfect_foresight
+
+    Returns
+    -------
+
+    """
+    # spot returns ----------------------------------------------------------
+    fx_data = pd.read_pickle(data_path + settings["fx_data"])
+    spot = fx_data["spot_mid"]
+
+    # fx_data = pd.read_pickle(data_path + "fxcm_counter_usd_h1.p")
+    # spot = (fx_data["bid_close"] + fx_data["ask_close"]) / 2
+    # spot.index = spot.index.tz_convert("US/Eastern")
+    # spot = spot.loc[spot.index.hour.isin([16, 17])]
+    # spot = spot.resample('B').last()
+
+    ret = np.log(spot).diff() * 100
+    ret = ret.loc[s_dt:e_dt, :]
+    ret.index = ret.index.tz_localize(None)
+
+    return ret
+
+
+def fig_event_study(events, ret, direction, mean_type="count_weighted",
+                    window=(-10, -1, 1, 5), ci_kwds=None, ci_exog=None):
     """
     """
+    if ci_kwds is None:
+        ci_kwds = {"ps": 0.95, "method": "boot", "n_iter": 100}
+
     # unpack window
     wa, wb, wc, wd = window
 
@@ -34,55 +135,70 @@ def fig_event_study(events, ret, direction,
         events = events.copy().where(events < 0).dropna(how="all")
     elif direction == "hike":
         events = events.copy().where(events > 0).dropna(how="all")
+    elif direction == "no_changes":
+        events = events.copy().where(events == 0).dropna(how="all")
     else:
         raise ValueError("Not implemented.")
 
-    es = EventStudy(data=ret,
-        events=events,
-        window=window,
-        mean_type=mean_type,
-        normal_data=normal_data,
-        x_overlaps=True)
+    # event study instance
+    es = EventStudy(ret, events, window, mean_type=mean_type)
 
-    cumsums = es.evt_avg_ts_sum.mean(axis="items")
+    # confidence interval
+    if (ci_kwds["method"] == "simple") & \
+            (ci_kwds.get("variances", None) is None):
+        variances = (es.data**2).where(es.mask_between_events).ewm(
+            alpha=0.4).mean()
+        variances = variances.where(es.events.notnull()).reindex(
+            index=es.events.index)
+        ci_kwds["variances"] = variances
+
+    if ci_exog is None:
+        _ = es.get_ci(**ci_kwds)
+    else:
+        es.ci = ci_exog
+
+    # car -------------------------------------------------------------------
+    cumsums = es.car.mean(axis=1, level="assets")
+
+    # insert zero row
     cumsums.loc[0, :] = np.nan
     cumsums = cumsums.sort_index()
 
-    # ci_2 = es.get_ci(ps=0.9, method="simple")
-    ci = es.get_ci(ps=ci_width, method="simple")
-    # ci.loc[0, :] = np.nan
-    # ci = ci.sort_index()
-
+    # mean ------------------------------------------------------------------
     the_mean = es.the_mean.copy()
+
+    # insert zero row
     the_mean.loc[0] = np.nan
     the_mean = the_mean.sort_index()
 
     # plot ------------------------------------------------------------------
     # plot individual
-    fig_individ, ax_individ = plt.subplots(figsize=(8.4,11.7/3))
+    fig_individ, ax_individ = plt.subplots(figsize=(8.4, 11.7/3))
 
     # individual currencies
-    cumsums.plot(ax=ax_individ, color=gr_1)
+    cumsums.plot(ax=ax_individ, color=my_gray)
 
     # black dots at the "inception"
-    cumsums.loc[[wb],:].plot(ax=ax_individ, color="k",
-        linestyle="none", marker=".", markerfacecolor="k")
-    cumsums.loc[[wc],:].plot(ax=ax_individ, color="k",
-        linestyle="none", marker=".", markerfacecolor="k")
+    cumsums.loc[[wb], :].plot(ax=ax_individ, color="k",
+                              linestyle="none", marker=".",
+                              markerfacecolor="k")
+    cumsums.loc[[wc], :].plot(ax=ax_individ, color="k",
+                              linestyle="none", marker=".",
+                              markerfacecolor="k")
 
     ax_individ.legend_.remove()
 
     # plot ------------------------------------------------------------------
     # plot average
-    fig_avg, ax_avg = plt.subplots(figsize=(8.4,11.7/3))
+    fig_avg, ax_avg = plt.subplots(figsize=(8.4, 11.7/3))
 
     the_mean.plot(ax=ax_avg, color='k', linestyle="-", linewidth=1.5)
 
     # plot confidence interval
-    ax_avg.fill_between(es.the_mean.index,
-        es.ci.iloc[:,0].values,
-        es.ci.iloc[:,1].values,
-        color=gr_1, alpha=0.5, label="conf. interval")
+    ax_avg.fill_between(es.the_mean.index, es.ci.iloc[:, 0].values,
+                        es.ci.iloc[:, 1].values,
+                        color=my_gray, alpha=0.5, label="conf. interval")
+
     # ax_avg.fill_between(es.the_mean.index,
     #     ci_2.iloc[:,0].values,
     #     ci_2.iloc[:,1].values,
@@ -90,12 +206,15 @@ def fig_event_study(events, ret, direction,
 
     # final retouche --------------------------------------------------------
     furbish_plot(ax_individ, arrows=True,
-        tot_curs={"a": cumsums.iloc[0, :], "d": cumsums.iloc[-1, :]})
+                 tot_curs={"a": cumsums.iloc[0, :], "d": cumsums.iloc[-1, :]})
 
     furbish_plot(ax_avg, set_xlabel=True, arrows=False)
-    black_line = mlines.Line2D([], [],
-        linewidth=1.5, color='k', label="cross-currency CAR")
-    gray_patch = mpatches.Patch(color=gr_1, label='95% conf. int.')
+
+    black_line = mlines.Line2D([], [], linewidth=1.5, color='k',
+                               label="cross-currency CAR")
+
+    gray_patch = mpatches.Patch(color=my_gray, label='95% conf. int.')
+
     # gray_patch_2 = mpatches.Patch(color=gr_2, label='90% conf. int.')
     # lines = [black_line, gray_patch, gray_patch_2]
     lines = [black_line, gray_patch]
@@ -107,6 +226,7 @@ def fig_event_study(events, ret, direction,
     ax_avg.set_ylabel("cumulative return, in percent")
 
     return fig_individ, fig_avg
+
 
 def furbish_plot(ax, set_xlabel=False, arrows=False, tot_curs=None):
     """
@@ -122,11 +242,11 @@ def furbish_plot(ax, set_xlabel=False, arrows=False, tot_curs=None):
     # arrow, text -----------------------------------------------------------
     if arrows:
         ax.arrow(x=-1, y=ylim[1]*0.7, dx=-3.3, dy=0,
-            length_includes_head=True,
-            head_width=dylim/30,
-            head_length=0.2,
-            linewidth=2,
-            fc='k', ec='k')
+                 length_includes_head=True,
+                 head_width=dylim/30,
+                 head_length=0.2,
+                 linewidth=2,
+                 fc='k', ec='k')
         # ax.arrow(x=-1, y=ylim[0]+0.1, dx=-3.3, dy=0,
         #     length_includes_head=True,
         #     head_width=dylim/30,
@@ -134,18 +254,18 @@ def furbish_plot(ax, set_xlabel=False, arrows=False, tot_curs=None):
         #     linewidth=2,
         #     fc='k', ec='k')
         ax.text(-1, ylim[1]*0.75, r"hold from x to -1",
-            verticalalignment="bottom", horizontalalignment="right",
-            fontsize=12)
+                verticalalignment="bottom", horizontalalignment="right",
+                fontsize=12)
         # ax.text(-1, ylim[0]+0.15, r"hold from x to -1",
         #     verticalalignment="bottom", horizontalalignment="right",
         #     fontsize=12)
 
         ax.arrow(x=1, y=ylim[1]*0.7, dx=2.3, dy=0,
-            length_includes_head=True,
-            head_width=dylim/30,
-            head_length=0.2,
-            linewidth=2,
-            fc='k', ec='k')
+                 length_includes_head=True,
+                 head_width=dylim/30,
+                 head_length=0.2,
+                 linewidth=2,
+                 fc='k', ec='k')
         # ax.arrow(x=1, y=ylim[0]+0.1, dx=2.3, dy=0,
         #     length_includes_head=True,
         #     head_width=dylim/30,
@@ -153,8 +273,8 @@ def furbish_plot(ax, set_xlabel=False, arrows=False, tot_curs=None):
         #     linewidth=2,
         #     fc='k', ec='k')
         ax.text(1, ylim[1]*0.75, r"hold from 1 to x",
-            verticalalignment="bottom", horizontalalignment="left",
-            fontsize=12)
+                verticalalignment="bottom", horizontalalignment="left",
+                fontsize=12)
         # ax.text(1, ylim[0]+0.15, r"hold from 1 to x",
         #     verticalalignment="bottom", horizontalalignment="left",
         #     fontsize=12)
@@ -187,336 +307,151 @@ def furbish_plot(ax, set_xlabel=False, arrows=False, tot_curs=None):
         for c, p in tot_curs["a"].iteritems():
             this_x_pos = -10.1 - 0.6*(cnt % 2)
             ax.annotate(c, xy=(this_x_pos, p),
-                horizontalalignment='right',
-                verticalalignment='center',
-                fontsize=12)
+                        horizontalalignment='right',
+                        verticalalignment='center',
+                        fontsize=12)
             cnt += 1
 
         cnt = 0
         for c, p in tot_curs["d"].iteritems():
             this_x_pos = 5.1 + 0.6*(cnt % 2)
             ax.annotate(c, xy=(this_x_pos, p),
-                horizontalalignment='left',
-                verticalalignment='center',
-                fontsize=12)
+                        horizontalalignment='left',
+                        verticalalignment='center',
+                        fontsize=12)
             cnt += 1
 
     return
 
+
+def prepare_rates_data(maturity="1m"):
+    """
+
+    Returns
+    -------
+
+    """
+    bonds_data = pd.read_pickle(data_path + "ois_bloomi_1w_30y.p")
+
+    res = pd.concat(bonds_data, axis=1).xs(maturity, axis=1, level=0,
+                                           drop_level=True)
+
+    # res = res.drop(drop_curs, axis=1, errors="ignore")
+
+    return res
+
+
+def prepare_futures_data(which="carry"):
+    """
+    Parameters
+    ---------
+    which : str
+        'short', 'long' or 'carry'
+
+    Returns
+    -------
+
+    """
+    data = pd.read_pickle(data_path + "bond_cont_futures_2000_2018_d.p")
+
+    data = pd.concat(data, axis=1)
+
+    if which != "carry":
+        res = data.xs(which, axis=1, level=1, drop_level=True)
+    else:
+        res = data.xs("long", axis=1, level=1, drop_level=True) / \
+              data.xs("short", axis=1, level=1, drop_level=True)
+
+    res = np.log(res).diff()
+    
+    res = res.where(np.abs(res).lt(
+        pd.DataFrame(1, index=res.index, columns=res.columns).mul(
+            2*res.quantile([0.01, 0.99]).diff().iloc[-1], axis=1))) * 100
+
+    return res
+
+
 if __name__ == "__main__":
 
-    # parameters ------------------------------------------------------------
-    from foolbox.wp_tabs_figs.wp_settings import *
+    curs = ["aud", "cad", "eur", "gbp", "nzd", ]
 
-    # data path -------------------------------------------------------------
-    data_path = set_credentials.gdrive_path("research_data/fx_and_events/")
-    out_path = set_credentials.gdrive_path(
-        "research_data/fx_and_events/wp_figures_limbo/")
+    # rates = prepare_rates_data()
+    events = prepare_events_data(perfect_foresight=False)
+    # data = prepare_bond_data(maturity="1m")
+    data = prepare_futures_data("short")
 
-    # currency to drop
-    drop_curs = settings["drop_currencies"]
+    window = (-10, -1, 1, 5)
 
-    # dates to trim to
-    s_dt = settings["sample_start"]
-    e_dt = settings["sample_end"]
+    # normal data
+    temp_es = EventStudy(data.loc[:, curs], events.loc[:, curs], window)
+    # normal_data = temp_es.data.where(temp_es.mask_between_events).ewm(
+    #     alpha=0.075).mean().where(~temp_es.mask_between_events).shift(1)\
+    #     .replace(np.nan, 0.0)
+    normal_data = 0
 
-    # window
-    wa, wb, wc, wd = -10, -1, 1, 5
-    window = (wa, wb, wc, wd)
+    # data_mean = temp_es.data.where(temp_es.mask_between_events).ewm(
+    #     alpha=0.4).mean().shift(1)
+    # data_dmd = data - data_mean
 
-    # spot returns ----------------------------------------------------------
-    with open(data_path + settings["fx_data"], mode='rb') as fname:
-        fx_data = pickle.load(fname)
+    # normal_data, variances = EventStudyFactory().get_normal_data_exog(
+    #     data=data.loc[:, curs], events=events.loc[:, curs],
+    #     exog=pd.concat({c: data.drop(c, axis=1).mean(axis=1) for c in curs},
+    #                    axis=1),
+    #     window=window, add_constant=True)
 
-    ds = np.log(fx_data["spot_mid"]).diff()*100
-    ds = ds.loc[s_dt:e_dt, :]
+    ds = data - normal_data
+    # ds = data.copy()
 
-    # events ----------------------------------------------------------------
-    with open(data_path + settings["events_data"], mode='rb') as fname:
-        events_data = pickle.load(fname)
+    events = events.loc[:, curs]
+    ds = ds.loc[:, curs]
 
-    events = events_data["joint_cbs"]
-    events = events.loc[s_dt:e_dt, :]
-
-    # fomc --------------------------------------------------------------
-    with open(data_path + "fx_by_tz_sp_fixed.p", mode='rb') as fname:
-        fx_data_us = pickle.load(fname)
-    ret_fomc = np.log(fx_data_us["spot_mid"].loc[:, :, "NYC"]\
-        .drop(drop_curs, axis=1, errors="ignore")).diff()*100
-
-    fomc = pd.concat([events.loc[:, "usd"], ]*\
-        events.drop(drop_curs + ["usd"], axis=1, errors="ignore").shape[1],
-            axis=1)*-1
-    fomc.columns = events.drop(
-        drop_curs + ["usd"], axis=1, errors="ignore").columns
+    # # ci
+    # temp_es = EventStudy(ds, events, window)
+    # ci = temp_es.get_ci(ps=0.95, method="boot", n_iter=125, what="car")
 
     # loop over direction of rate decision: "ups" or "downs"
-    for d in ["hike", "cut"]:
+    for d in ["cut", "hike"]:
         # d = "hike"
         # and over counter currencies
-        for c in ["jpy", "gbp"]:
+        for c in ["usd"]:
             # c = "usd"
             # trim returns
-            this_ret = into_currency(ds, c).drop(
-                [p for p in drop_curs if p != c], axis=1, errors="ignore")
+            # this_ret = into_currency(ds, c).drop(
+            #     [p for p in drop_curs if p != c], axis=1, errors="ignore")
 
             # and events accordingly
-            this_evt = events.loc[:, this_ret.columns]
+            this_evt, this_ret = events.align(ds, axis=1, join="inner")
+
+            ci_kwds = {"method": "simple", "ps": 0.95}
+            # ci_kwds = None
 
             # event study ---------------------------------------------------
             f_i, f_a = fig_event_study(this_evt, this_ret,
-                direction=d,
-                mean_type="count_weighted",
-                ci_width=0.95,
-                normal_data=0.0,
-                window=window)
+                                       direction=d, mean_type="count_weighted",
+                                       ci_kwds=ci_kwds, window=window)
+            plt.show()
 
-            # save ----------------------------------------------------------
-            f_i.tight_layout()
-            f_a.tight_layout()
+            # # save ----------------------------------------------------------
+            # f_i.tight_layout()
+            # f_a.tight_layout()
+            #
+            # f_i.savefig(out_path +\
+            #     '_'.join(("xxx", c,  "before", d, "wght_indv.pdf")))
+            # f_a.savefig(out_path +\
+            #     '_'.join(("xxx", c,  "before", d, "wght_avg.pdf")))
 
-            f_i.savefig(out_path +\
-                '_'.join(("xxx", c,  "before", d, "wght_indv.pdf")))
-            f_a.savefig(out_path +\
-                '_'.join(("xxx", c,  "before", d, "wght_avg.pdf")))
+            # # fomc ----------------------------------------------------------
+            # if c == "usd":
+            #     f_i_fomc, f_a_fomc = fig_event_study(
+            #         fomc, ret_fomc, direction=d, mean_type="count_weighted",
+            #         ci_width=0.95, window=window)
 
-            # fomc ----------------------------------------------------------
-            if c == "usd":
-                f_i_fomc, f_a_fomc = fig_event_study(fomc, ret_fomc,
-                    direction=d,
-                    mean_type="count_weighted",
-                    ci_width=0.95,
-                    window=window)
-                f_i_fomc.tight_layout()
-                f_a_fomc.tight_layout()
-                f_i_fomc.savefig(out_path +\
-                    '_'.join(
-                        ("xxx", c,  "before", "fomc", d, "wght_indv.pdf")))
-                f_a_fomc.savefig(out_path +\
-                    '_'.join(
-                        ("xxx", c,  "before", "fomc", d, "wght_avg.pdf")))
+                # f_i_fomc.tight_layout()
+                # f_a_fomc.tight_layout()
+                # f_i_fomc.savefig(out_path +\
+                #     '_'.join(
+                #         ("xxx", c,  "before", "fomc", d, "wght_indv.pdf")))
+                # f_a_fomc.savefig(out_path +\
+                #     '_'.join(
+                #         ("xxx", c,  "before", "fomc", d, "wght_avg.pdf")))
 
-    with open(data_path + "implied_rates_bloomberg.p", mode="rb") as hngr:
-        ir = pickle.load(hngr)
-
-    with open(data_path + "ois_bloomberg.p", mode="rb") as hngr:
-        ois_data = pickle.load(hngr)
-
-    on = pd.DataFrame({k: v.loc[:, "ON"] for k, v in ois_data.items()})
-
-    dr = ir - on
-    dr = dr.dropna(axis=1, how="all")
-
-
-    this_dr = dr.shift(12).where(np.abs(events) > 0.0001)
-    this_dr = events.copy().where(np.abs(events) > 0.0001)
-
-    cumret = ds.rolling(10).sum().shift(1).where(np.abs(events) > 0.0001)
-
-    this_dr, cumret = this_dr.align(cumret, axis=1, join="inner")
-
-    y = cumret.stack().rename("return").astype(float)
-    x = this_dr.stack().rename("dr").astype(float)
-
-    mod = PureOls(y0=y, X0=x, add_constant=True)
-    mod.get_diagnostics()
-
-    dr.where(events > 0.00001).aud.dropna(how="all")
-    pd.concat((
-        this_dr.where(events > 0.00001).chf.rename("dr"),
-        cumret.where(events > 0.00001).chf.rename("return")), axis=1)\
-        .plot.scatter(x="dr", y="return")
-
-    dr = dr.shift(12).where(events)
-
-    this_ds = ds.drop(
-        [p for p in drop_curs] + ["usd"], axis=1, errors="ignore")
-
-    dr = dr.loc[:, this_ds.columns]
-
-    res = dict()
-    for thresh in np.arange(0.1, 0.35, 0.05):
-        # thresh = 0.1
-        this_evt = dr.where(np.abs(dr) >= thresh)
-        this_evt.dropna(how="all")
-        es = EventStudy(data=this_ds,
-            events=np.sign(this_evt.where(np.sign(this_evt) < 0)),
-            window=window,
-            mean_type="count_weighted",
-            normal_data=0.0,
-            x_overlaps=True)
-
-        cumsums = es.evt_avg_ts_sum.mean(axis="items")
-        res[thresh] = cumsums.loc[-10, :]
-
-    res = pd.DataFrame(res).T
-
-    res.plot()
-
-    cumret = this_ds.reindex(
-        index=pd.date_range(this_ds.index[0], this_ds.index[-1], freq='B'))
-    cumret = cumret.rolling(10).sum().shift(1)
-
-    r = cumret.where(events < 0)
-    this_dr = dr.shift(12).where(events < 0)
-    r = r.stack().astype(float)
-    this_dr = this_dr.stack()
-
-    r.head()
-    this_dr.head()
-
-    r, this_dr = r.align(this_dr, join="inner")
-
-    r.index = np.arange(r.shape[0])
-    this_dr.index = np.arange(this_dr.shape[0])
-
-    r = r.rename("return")
-    this_dr = this_dr.rename("dr")
-
-    from foolbox.linear_models import PureOls
-
-    mod = PureOls(r, this_dr, add_constant=True)
-    mod.get_diagnostics()
-
-    pd.concat((r, this_dr), axis=1).plot.scatter(x="dr", y="return")
-
-
-
-
-# # event study for all banks in a loop ---------------------------------------
-# # space for output
-# avg_vars = pd.Series(index=all_evts.columns)*np.nan
-# # means = pd.Series(index=all_evts.columns)*np.nan
-# cumsums = pd.DataFrame(
-#     columns=all_evts.columns,
-#     index=np.concatenate((np.arange(wa,wb+1), np.arange(wc,wd+1))))*np.nan
-# n_events = pd.Series(index=all_evts.columns)*np.nan
-#
-# for cur in all_evts.columns:
-#     # cur = "jpy"
-#     # these datasets
-#
-#     # # TODO: this is temp
-#     # evt = events["fomc"].loc[s_dt:e_dt]
-#
-#     evt = all_evts.loc[:,cur].dropna()
-#
-#     # number of events, for weighting
-#     n_events.loc[cur] = evt.where(
-#         (evt < 0) if direction == "downs" else (evt > 0)).\
-#         dropna().count()
-#
-#     ret = s_d[cur]*100
-#
-#     # run event study
-#     evt_study = event_study_wrapper(ret, evt,
-#         reix_w_bday=False,
-#         direction=direction,
-#         crisis="both",
-#         window=[wa,wb,wc,wd], ps=0.9,
-#         ci_method="simple",
-#         plot=False,
-#         impose_mu=0.0)
-#
-#     cumsums.loc[:,cur] = evt_study.get_cs_ts(evt_study.before, evt_study.after)
-#     avg_vars.loc[cur] = evt_study.grp_var.sum()/evt_study.grp_var.count()**2
-#     # means.loc[cur] = evt_study.tot_mu
-#
-# # weight according to the number of events
-# # wght = pd.Series(1.0, index=cumsums.columns)/len(cumsums.columns)
-# wght = n_events/n_events.sum()
-#
-# # confidence interval -------------------------------------------------------
-# avg_avg_std = np.sqrt(avg_vars.sum()/avg_vars.count()**2)
-# # or weighted
-# avg_avg_std = np.sqrt(avg_vars.dot(wght**2))
-# # mu = means.mean()
-#
-# q = np.sqrt(np.hstack(
-#     (np.arange(-(wa)+(wb)+1,0,-1), np.arange(1,(wd)-(wc)+2))))
-#
-# ci_lo = norm.ppf(0.05)*q*avg_avg_std
-# ci_hi = norm.ppf(0.95)*q*avg_avg_std
-#
-# ci = pd.DataFrame(
-#     index=cumsums.dropna().index,
-#     columns=[0.05,0.95])
-#
-# ci.loc[:,0.05] = ci_lo
-# ci.loc[:,0.95] = ci_hi
-#
-# # reindex a bit
-# cumsums = cumsums.reindex(index=np.arange(wa,wd+1))
-#
-# # plot!
-# fig, ax = plt.subplots(figsize=(8.4,11.7/3))
-#
-# cumsums.plot(ax=ax, color=gr_1)
-# # cumsums[drop_what].plot(ax=ax[0], color=gr_1, linestyle='--')
-#
-# cumsums.loc[[-1],:].plot(ax=ax, color="k",
-#     linestyle="none", marker=".", markerfacecolor="k")
-# cumsums.loc[[1],:].plot(ax=ax, color="k",
-#     linestyle="none", marker=".", markerfacecolor="k")
-# ax.legend_.remove()
-# cumsums.dot(wght).plot(
-#     ax=ax, color='k', linestyle="-", linewidth=1.5)
-# # cumsums.drop(drop_what, axis=1).mean(axis=1).plot(
-# #     ax=ax[1], color='k', linewidth=1.5)
-#
-# ax.fill_between(cumsums.dropna().index,
-#     ci.iloc[:,0].values,
-#     ci.iloc[:,1].values,
-#     color=gr_1, alpha=0.5, label="conf. interval")
-#
-# minorLocator = MultipleLocator(1)
-# majorLocator = MultipleLocator(5)
-#
-# # ax.xaxis.set_ticks(cumsums.dropna().index)
-# ax.axhline(y=0, color='r', linestyle='--', linewidth=1.0, alpha=0.75)
-# ax.xaxis.set_major_locator(majorLocator)
-# ax.xaxis.set_minor_locator(minorLocator)
-# ax.grid(which="both", alpha=0.33, linestyle=":")
-#
-# ax.set_xlabel("days after event", fontsize=12)
-#
-# fig.savefig(out_path+"xxxusd_before_"+direction+"_weighted_avg_new.pdf",
-#     bbox_inches="tight")
-# fig.savefig(out_path+"xxxusd_before_"+direction+"_weighted_indiv_new.pdf",
-#     bbox_inches="tight")
-
-# events["snb"].to_clipboard()
-#
-# cumsums
-#
-# dt_idx = np.logical_or(
-#     np.logical_and(s_d.index > "2004-01-01", s_d.index < "2011-09-06"),
-#     s_d.index > "2015-01-15")
-# es = event_study_wrapper(
-#     s_d.loc[:,"chf"].where(dt_idx).dropna(),
-#     events["joint_cbs"].loc[:,"chf"].dropna(),
-#     reix_w_bday=False,
-#     direction="downs", window=(wa,wb,wc,wd), ps=0.9,
-#     ci_method="simple",
-#     plot=True)
-
-# import pytz
-# dt_tok = pd.to_datetime("2016-01-15 20:00:00").\
-#     tz_localize(pytz.timezone("Asia/Tokyo"))
-# dt_lon = pd.to_datetime("2016-01-15 17:00:00").\
-#     tz_localize(pytz.timezone("Europe/London"))
-# dt_nyc = pd.to_datetime("2017-03-15 17:00:00").\
-#     tz_localize(pytz.timezone("America/New_York"))
-#
-# dt_tok.tz_convert(pytz.timezone("Europe/Oslo"))
-# dt_lon.tz_convert(pytz.timezone("America/New_York"))
-# dt_tok.tz_convert(pytz.timezone("America/New_York"))
-#
-# dt.tz_convert(pytz.timezone("Europe/Berlin"))
-
-
-x = np.random.normal(size=(1000,)) / 10 + 0.01
-y = np.cumprod(1 + x)
-
-import matplotlib.pyplot as plt
-plt.plot(y)
