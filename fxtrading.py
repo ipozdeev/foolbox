@@ -278,7 +278,8 @@ class FXTradingStrategy:
         return new_strat
 
     @classmethod
-    def long_short(cls, sort_values, n_portfolios, leverage="net", **kwargs):
+    def long_short(cls, sort_values, n_portfolios=None, legsize=None,
+                   leverage="net", **kwargs):
         """Construct strategy by sorting assets into `n_portfolios`.
 
         Parameters
@@ -298,7 +299,8 @@ class FXTradingStrategy:
 
         """
         # sort
-        pf = poco.rank_sort(sort_values, sort_values, n_portfolios, **kwargs)
+        pf = poco.rank_sort(sort_values, sort_values, n_portfolios,
+                            legsize, **kwargs)
 
         # retain only 'portfolio...' keys
         pf = {k: v for k, v in pf.items() if k.startswith("portfolio")}
@@ -321,6 +323,9 @@ class FXTradingStrategy:
         flags.iloc[-1, :] = np.nan
 
         res = cls(position_flags=flags, leverage=leverage)
+
+        # meta info for the no of portfolios
+        res.n_portfolios = n_portfolios
 
         return res
 
