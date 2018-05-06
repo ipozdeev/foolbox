@@ -1,16 +1,18 @@
 import pandas as pd
+from pandas.tseries.offsets import BDay
 import numpy as np
+import pickle
 from scipy.stats import norm
 import matplotlib.pyplot as plt
 import warnings
+
 from foolbox.data_mgmt import set_credentials
 from foolbox.utils import resample_between_events
 from foolbox.wp_tabs_figs.wp_settings import *
-import pickle
 from foolbox.linear_models import PureOls
 
 path_out = set_credentials.set_path("research_data/fx_and_events/",
-    which="gdrive")
+                                    which="gdrive")
 
 
 class EventStudy:
@@ -41,6 +43,8 @@ class EventStudy:
         events.index = events.index.map(pd.to_datetime)
         data.index = data.index.map(pd.to_datetime)
 
+        data, events = EventStudyFactory().align_for_event_study(data, events)
+
         self.data = data
         self.events = events
 
@@ -70,8 +74,8 @@ class EventStudy:
     @property
     def timeline(self):
         if self._timeline is None:
-            self._timeline = self.mark_timeline(self.data, self.events,
-                                                self._window)
+            self._timeline = EventStudyFactory().mark_timeline(
+                self.data, self.events, self._window)
 
         return self._timeline
 
@@ -263,83 +267,6 @@ class EventStudy:
 
         return new_evt, evt_diff
 
-    @staticmethod
-    def mark_timeline(data, events, window):
-        """
-
-        Parameters
-        ----------
-        data
-        events
-        window
-
-        Returns
-        -------
-
-        """
-        # defenestrate
-        ta, tb, tc, td = window
-        window_pre = np.arange(ta, 0)
-        window_post = np.arange(1, td + 1)
-
-        # pre- and post-event indices, by window ----------------------------
-        # reindex events, create df with 1 where an event took place
-        evt_notnull = events.reindex_like(data).notnull()
-        evt = evt_notnull.where(evt_notnull)
-
-        # replace 1 with 0 to have day-zero events
-        evt_pre = evt.copy().replace(1, 0)
-        evt_post = evt.copy().replace(1, 0)
-
-        # pre-event
-        for p in window_pre[::-1]:
-            evt_pre.fillna((evt * p).bfill(limit=np.abs(p)), inplace=True)
-
-        # kill day-0 events
-        evt_pre = evt_pre.where(evt.isnull())
-
-        # post-event
-        for p in window_post:
-            evt_post.fillna((evt * p).ffill(limit=np.abs(p)), inplace=True)
-
-        # exclude values not in (ta, tb) and (tc, td)
-        idx_correct_window = (evt_pre <= tb) | (evt_post >= tc)
-        idx_between_evt = ~((evt_pre >= ta) | (evt_post <= td))
-
-        # exclude overlaps
-        idx_overlap = (evt_pre <= tb) & (evt_post >= tc)
-        idx_correct_window = idx_correct_window & (~idx_overlap)
-
-        evt_pre = evt_pre.where(idx_correct_window)
-        evt_post = evt_post.where(idx_correct_window)
-
-        # event id (date), gets repeated over the whole window --------------
-        # repeat series of dates as many times as there are assets
-        dt_series = pd.Series(data=data.index, index=data.index)
-        dt_df = pd.concat([dt_series.rename(c) for c in data.columns], axis=1)
-
-        # leave only cells where there are events
-        dt_df = dt_df.where(evt_notnull)
-
-        # next event number is the number of event immediately following date
-        next_evt_no = dt_df.fillna(method="bfill")
-
-        # fill with dates
-        dt_df.bfill(limit=-ta, inplace=True)
-        dt_df.ffill(limit=td, inplace=True)
-        dt_df = dt_df.where(idx_correct_window)
-
-        # concat to a df with MultiIndex; swaplevel needed to have level [0]
-        #  to keep asset names
-        timeline = pd.concat({
-            "evt_no": dt_df,
-            "evt_wind_pre": evt_pre,
-            "evt_wind_post": evt_post,
-            "inter_evt": idx_between_evt,
-            "next_evt_no": next_evt_no}, axis=1).swaplevel(axis=1)
-
-        return timeline
-
     def get_ar(self):
         """Wrapper for pivot_with_timeline for every column in self.`data`.
 
@@ -524,7 +451,8 @@ class EventStudy:
                                columns=var_ar.columns)
 
         # mask var_car to have na where there are na in car
-        var_car = var_car.where(self.car.notnull())
+        # TODO: do we need .notnull()? maybe not...
+        # var_car = var_car.where(self.car.notnull())
 
         # var of average CAR across events and assets
         var_fun = self.var_fun(method=self._mean_type)
@@ -731,6 +659,8 @@ class EventStudy:
 
         Returns
         -------
+        fig : matplotlib.Figure
+        ax : matplotlib.Axes
 
         """
         # defenestrate
@@ -875,6 +805,116 @@ class EventStudyFactory:
         pass
 
     @staticmethod
+    def mark_timeline(data, events, window):
+        """
+
+        Parameters
+        ----------
+        data
+        events
+        window
+
+        Returns
+        -------
+
+        """
+        # defenestrate
+        ta, tb, tc, td = window
+        window_pre = np.arange(ta, 0)
+        window_post = np.arange(1, td + 1)
+
+        # pre- and post-event indices, by window ----------------------------
+        # reindex events, create df with 1 where an event took place
+        evt_notnull = events.reindex_like(data).notnull()
+        evt = evt_notnull.where(evt_notnull)
+
+        # replace 1 with 0 to have day-zero events
+        evt_pre = evt.copy().replace(1, 0)
+        evt_post = evt.copy().replace(1, 0)
+
+        # pre-event
+        for p in window_pre[::-1]:
+            evt_pre.fillna((evt * p).bfill(limit=np.abs(p)), inplace=True)
+
+        # kill day-0 events
+        evt_pre = evt_pre.where(evt.isnull())
+
+        # post-event
+        for p in window_post:
+            evt_post.fillna((evt * p).ffill(limit=np.abs(p)), inplace=True)
+
+        # exclude values not in (ta, tb) and (tc, td)
+        idx_correct_window = (evt_pre <= tb) | (evt_post >= tc)
+        idx_between_evt = ~((evt_pre >= ta) | (evt_post <= td))
+
+        # exclude overlaps
+        idx_overlap = (evt_pre <= tb) & (evt_post >= tc)
+        idx_correct_window = idx_correct_window & (~idx_overlap)
+
+        evt_pre = evt_pre.where(idx_correct_window)
+        evt_post = evt_post.where(idx_correct_window)
+
+        # event id (date), gets repeated over the whole window --------------
+        # repeat series of dates as many times as there are assets
+        dt_series = pd.Series(data=data.index, index=data.index)
+        dt_df = pd.concat([dt_series.rename(c) for c in data.columns], axis=1)
+
+        # leave only cells where there are events
+        dt_df = dt_df.where(evt_notnull)
+
+        # next event number is the number of event immediately following date
+        next_evt_no = dt_df.fillna(method="bfill")
+
+        # fill with dates
+        dt_df.bfill(limit=-ta, inplace=True)
+        dt_df.ffill(limit=td, inplace=True)
+        dt_df = dt_df.where(idx_correct_window)
+
+        # concat to a df with MultiIndex; swaplevel needed to have level [0]
+        #  to keep asset names
+        timeline = pd.concat({
+            "evt_no": dt_df,
+            "evt_wind_pre": evt_pre,
+            "evt_wind_post": evt_post,
+            "inter_evt": idx_between_evt,
+            "next_evt_no": next_evt_no}, axis=1).swaplevel(axis=1)
+
+        timeline.columns.names = ["data", "element"]
+
+        return timeline
+
+    @staticmethod
+    def align_for_event_study(data, events):
+        """
+
+        Parameters
+        ----------
+        data : pandas.Series or pandas.DataFrame
+        events : pandas.Series or pandas.DataFrame
+
+        Returns
+        -------
+
+        """
+        if isinstance(data, pd.Series):
+            n = "data" if data.name is None else data.name
+
+            data = data.to_frame(n)
+
+            if isinstance(events, pd.Series):
+                events = events.to_frame(n)
+            else:
+                events.columns = [n, ]
+        else:
+            n = data.columns
+            if isinstance(events, pd.Series):
+                events = pd.DataFrame.from_dict({k: events for k in n})
+            else:
+                events, data = events.align(data, axis=1, join="outer")
+
+        return data, events
+
+    @staticmethod
     def broadcast(*args, columns):
         """Broadcast columns if asset returns share events or other series.
 
@@ -903,7 +943,7 @@ class EventStudyFactory:
 
             return res
 
-        return (broadcast_fun(arg) for arg in args)
+        return tuple([broadcast_fun(arg) for arg in args])
 
     @staticmethod
     def mark_windows(data, events, window, outside=False):
@@ -954,6 +994,9 @@ class EventStudyFactory:
         -------
 
         """
+        # data, events = self.align_for_event_study(data, events)
+        # exog, = self.broadcast(exog, columns=data.columns)
+
         # defenestrate
         wa, wb, wc, wd = window
 
@@ -971,19 +1014,21 @@ class EventStudyFactory:
 
             # put na in the df of regressors where event widnows are
             this_x_est = exog[col].where(outside_windows[col])
-            this_x_fcast = exog[col].where(~outside_windows[col])
+            # this_x_fcast = exog[col].where(~outside_windows[col])
+            this_x_fcast = exog[col]
 
             # loop over events, use expanding windows TODO: what about other?
             for t in this_evt.index:
                 # it is ensured by outside_windows that .loc[:t, ] also
                 # excludes the window around t
-                mod = PureOls(this_y, this_x_est.loc[:],
+                mod = PureOls(this_y, this_x_est.loc[:t],
                               add_constant=add_constant)
 
                 # get x around t to make a forecast; +1 needed since day 0
                 # is the event day
                 x_fcast_right = this_x_fcast.loc[t:].head(wd+1)
-                x_fcast_left = this_x_fcast.loc[:t].tail(-wa+1)
+                # x_fcast_left = this_x_fcast.loc[:t].tail(-wa+1)
+                x_fcast_left = this_x_fcast.loc[:t]
 
                 # avoid duplicates
                 # TODO: watch out for Series vs. DataFrame
@@ -1012,20 +1057,30 @@ class EventStudyFactory:
 
         Returns
         -------
+        normal_data : pandas.DataFrame
 
         """
         if "min_periods" not in kwargs.keys():
             kwargs["min_periods"] = 1
 
-        msk = self.mark_windows(data=data, events=events, window=event_window,
-                                outside=True)
+        msk = self.mark_timeline(data=data, events=events, window=event_window)
+        msk = msk.xs("next_evt_no", axis=1, level=1).where(
+            msk.xs("inter_evt", axis=1, level=1))
 
         # normal_data = data.where(msk).ewm(**kwargs).mean()\
         #     .where(~msk).replace(np.nan, 0.0)
 
-        normal_data = data.where(msk).ewm(**kwargs).mean().shift(1)
+        normal_data = data.where(msk.notnull()).ewm(**kwargs).mean().shift(1)
 
-        return normal_data
+        # variances
+        eps_s2 = dict()
+
+        for c, c_col in data.iteritems():
+            eps_s2[c] = c_col.where(msk[c].notnull()).groupby(msk[c]).var()
+
+        eps_s2 = pd.concat(eps_s2, axis=1)
+
+        return normal_data, eps_s2
 
     def get_normal_data_between_events(self, data, events, event_window):
         """
@@ -1040,11 +1095,8 @@ class EventStudyFactory:
         -------
 
         """
-        # init auxiliary event study
-        temp_es = EventStudy(data=data, events=events, window=event_window)
-
         # mark timeline to be able to do the cool stuff
-        timeline = temp_es.mark_timeline(data, events, event_window)
+        timeline = self.mark_timeline(data, events, event_window)
 
         res_means = dict()
         res_vars = dict()
@@ -1079,13 +1131,15 @@ class EventStudyFactory:
         return res_means, res_vars
 
 
-if __name__ == "__main__":
+def main():
+    """
 
-    from foolbox.api import *
-    from pandas.tseries.offsets import BDay
+    Returns
+    -------
 
+    """
     # currency to drop
-    drop_curs = ["jpy","dkk", "nok", ]
+    drop_curs = ["jpy", "dkk", "nok", ]
 
     # window
     wind = (-10, -1, 0, 5)
@@ -1106,25 +1160,11 @@ if __name__ == "__main__":
 
     fx = pd.read_pickle(data_path + "bond_index_data.p")
     mat = "10+y"
-    mats = ["1m", "3m", "6m", "12m"]
-    mats = ["1-3y", "3-5y", "5-7y", "7-10y", "10+y"]
-    mats = ["1-3y", "3-5y", "5-7y",]
-    mats = ["3m", "1m"]
     data = list()
     currs = list()
-    for curr, df in fx.items():
-        #data.append(np.log(df[mat]).diff()d - 0*np.log(df["1-3y"]).diff())
-        #data.append(df[mat].diff()-df["1-3y"].diff())
-        #data.append(df.diff().mean(axis=1) - fx["usd"].diff().mean(axis=1))
-
-        # data.append(np.log(df[mat]).diff() -
-        #             np.log(fx["usd"][mat]).diff())
-
-        # data.append(df[mat].diff().sub(fx["usd"][mat].diff(),
-        #             axis=0))
-        data.append(np.log(df[mats]).diff().mean(axis=1) -
-                    np.log(fx["usd"][mats]).diff().mean(axis=1))
-        currs.append(curr)
+    for key, df in fx.items():
+        data.append(np.log(df[mat]).diff() - np.log(df["5-7y"]).diff())
+        currs.append(key)
     data = pd.concat(data, axis=1)
     data.columns = currs
 
@@ -1134,30 +1174,19 @@ if __name__ == "__main__":
     # ret = np.log(data).diff()
     ret = ret.loc[(s_dt - BDay(22)):, :]
 
-
-    # ret = np.log(fx["spot_mid"].drop(drop_curs,axis=1,errors="ignore")).diff()
-    # ret = ret.loc[(s_dt - BDay(22)):, :]
-
     # events + drop currencies ----------------------------------------------
     # with open(data_path + settings["events_data"], mode='rb') as fname:
     #     events_data = pickle.load(fname)
     events_data = pd.read_pickle(data_path + settings["events_data"])
 
     events = events_data["joint_cbs"].drop(drop_curs + ["usd"],
-        axis=1, errors="ignore")
+                                           axis=1, errors="ignore")
     events = events.loc[s_dt:e_dt]
-
-    #
-    # events = pd.concat([events_data["joint_cbs"]["usd"]
-    #                     for curr in ret.columns], axis=1)
-    # events.columns = ret.columns
-    # events = events.loc[s_dt:e_dt]
 
     # reindex with business day ---------------------------------------------
     data = ret.reindex(
         index=pd.date_range(ret.index[0], ret.index[-1], freq='B'))
 
-    # data = data - data.rolling(22).mean().shift(1)
     # data_frequency = "H1"
     #
     # out_counter_usd_name = "fxcm_counter_usd_" + data_frequency + ".p"
@@ -1171,7 +1200,6 @@ if __name__ == "__main__":
     # events = events.loc[data.index[0]:data.index[-1], :]
     # events = events.dropna(how="all")
 
-
     # window
     # wind = (-240, -5, 0, 100)
     wa, wb, wc, wd = wind
@@ -1182,62 +1210,28 @@ if __name__ == "__main__":
     #     EventStudyFactory().get_normal_data_exog(data, events, exog, wind)
 
     # normal data, all events sample ----------------------------------------
-    es = EventStudy(data=(data)*100,
+    es = EventStudy(data=(data) * 100,
                     events=events,
                     mean_type="count_weighted",
                     window=wind)
 
-    esh = EventStudy(data=(data)*100,
+    esh = EventStudy(data=(data) * 100,
                      events=events.where(events > 0).dropna(how="all"),
                      mean_type="count_weighted",
                      window=wind)
-    esl = EventStudy(data=(data)*100,
+    esl = EventStudy(data=(data) * 100,
                      events=events.where(events < 0).dropna(how="all"),
                      mean_type="count_weighted",
                      window=wind)
-    esn = EventStudy(data=(data)*100,
+    esn = EventStudy(data=(data) * 100,
                      events=events.where(events == 0).dropna(how="all"),
                      mean_type="count_weighted",
                      window=wind)
-    # es.plot()
-    esh.get_ci(0.95, "boot", n_iter=13)
-    esl.get_ci(0.95, "boot", n_iter=13)
-    esn.get_ci(0.95, "boot", n_iter=13)
-    esh.plot(plot_ci=True)
-    esl.plot(plot_ci=True)
-    esn.plot(plot_ci=True)
 
-    # event study!
-    es = EventStudy(data=data*100,
-                    events=evt,
-                    mean_type="count_weighted",
-                    window=wind,
-                    x_overlaps=True,
-                    normal_data=normal_data)
 
-    ci = es.get_ci(ps=0.95, method="boot", M=222)
-    fig, ax = es.plot()
+if __name__ == "__main__":
+
+    main()
 
 
 
-    # recipe #2: constructor ------------------------------------------------
-    es = EventStudy.with_normal_data(data=data*100,
-                                     events=evt,
-                                     mean_type="count_weighted",
-                                     window=wind,
-                                     x_overlaps=True,
-                                     norm_data_method="between_events")
-
-    fig, ax = es.plot()
-
-    # recipe #3: zero mean --------------------------------------------------
-    es = EventStudy(data=data*100,
-                    events=evt,
-                    mean_type="count_weighted",
-                    window=wind,
-                    x_overlaps=True,
-                    normal_data=0)
-
-    ci = es.get_ci(ps=0.95, method="simple")
-    es.the_mean
-    fig, ax = es.plot()
