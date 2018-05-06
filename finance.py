@@ -634,9 +634,9 @@ class PolicyExpectation:
         res = pd.Series(index=dr.index, dtype=float)
 
         # classify!
-        res.ix[dr < h_low] = -1
-        res.ix[dr > h_high] = 1
-        res.ix[(dr <= h_high) & (dr >= h_low)] = 0
+        res.loc[dr < h_low] = -1
+        res.loc[dr > h_high] = 1
+        res.loc[(dr <= h_high) & (dr >= h_low)] = 0
 
         return res
 
@@ -767,7 +767,7 @@ class PolicyExpectation:
     #         for dt in range(1,len(self.meetings.index)):
     #             this_dt = self.meetings.index[dt]
     #             prev_dt = self.meetings.index[dt-1] + DateOffset(days=2)
-    #             this_piece = refrce_aligned.ix[
+    #             this_piece = refrce_aligned.ix[s
     #                 refrce_aligned.loc[:,"dates"]==this_dt,0]
     #             refrce_aligned.ix[
     #                 refrce_aligned.loc[:,"dates"]==this_dt,0].loc[prev_dt:] = \
@@ -1162,7 +1162,7 @@ def pe_backtest(returns, holding_range, threshold_range,
 
     """
     # Get he pandas slicer for convenient MultiIndex reference
-    ix = pd.IndexSlice
+    idx = pd.IndexSlice
 
     # Set up the output structure
     results = dict()
@@ -1213,10 +1213,10 @@ def pe_backtest(returns, holding_range, threshold_range,
             # Append the disaggregated and aggregated outputs
             # TODO: Review mean vs sum/count
             if sum:
-                aggr.loc[:, ix[holding_period, threshold]] =\
+                aggr.loc[:, idx[holding_period, threshold]] =\
                     strat.mean(axis=1) * strat.count(axis=1)
             else:
-                aggr.loc[:, ix[holding_period, threshold]] = strat.mean(axis=1)
+                aggr.loc[:, idx[holding_period, threshold]] = strat.mean(axis=1)
             results["disaggr"][str(holding_period)][str(threshold)] = strat
 
             print("Policy expectation backtest\n",
@@ -1439,7 +1439,7 @@ def event_trading_backtest(fx_data, holding_range, threshold_range,
 
     """
     # Get he pandas slicer for convenient MultiIndex reference
-    ix = pd.IndexSlice
+    idx = pd.IndexSlice
 
     # Initialize trading strategy settings
     trade_strat_settings = {"horizon_a": None,
@@ -1496,9 +1496,10 @@ def event_trading_backtest(fx_data, holding_range, threshold_range,
 
             # For FOMC, report aggregated mean, else sum over the x-section
             if fomc:
-                aggr.loc[:, ix[holding_period, threshold]] = strat.mean(axis=1)
+                aggr.loc[:, idx[holding_period, threshold]] =\
+                    strat.mean(axis=1)
             else:
-                aggr.loc[:, ix[holding_period, threshold]] =\
+                aggr.loc[:, idx[holding_period, threshold]] =\
                     strat.mean(axis=1) * strat.count(axis=1)
 
             print("Policy expectation backtest\n",
@@ -1633,15 +1634,6 @@ def realized_variance(data, freq='M', n_in_day=None, r_vola=False):
     if n_in_day is None:
         n_in_day = int(1 / (data.index.freq.delta.total_seconds() /
                             (24 * 60 * 60)))
-    # if hour_end is None:
-    #     hour_end = 24
-    # if hour_start is None:
-    #     hour_start = 0
-    #
-    # #
-    # idx = (data.index.hour > hour_start) & (data.index.hour < hour_end) & \
-    #     (~data.index.weekday.isin([5, 6]))
-    # ret_trim = data.loc[idx, :]
 
     # realized variance
     if isinstance(freq, str):
@@ -1656,7 +1648,7 @@ def realized_variance(data, freq='M', n_in_day=None, r_vola=False):
     return rv
 
 
-def realized_covariance(data, freq='M', n_in_day=None, r_corr=False):
+def realized_covariance(data, sample_freq='M', n_in_day=None, r_corr=False):
     """Compute realized monthly covariance by summing daily squared values.
 
     For a given resampling frequency, computes the realized covariance
@@ -1667,7 +1659,7 @@ def realized_covariance(data, freq='M', n_in_day=None, r_corr=False):
     ----------
     data : pandas.DataFrame
         of returns
-    freq : str or int
+    sample_freq : str
         calculation period, e.g. 'M' to estimate variance in that month
     n_in_day : int
         (optional) the number of observations of the data frequency in one
@@ -1682,7 +1674,7 @@ def realized_covariance(data, freq='M', n_in_day=None, r_corr=False):
         of annualzed covariance or correlation
 
     """
-    if not isinstance(freq, str):
+    if not isinstance(sample_freq, str):
         raise NotImplementedError("Use pandas frequencies for now.")
 
     if not isinstance(data, pd.DataFrame):
@@ -1694,7 +1686,7 @@ def realized_covariance(data, freq='M', n_in_day=None, r_corr=False):
         n_in_day = int(1 / (data.index.freq.delta.total_seconds() /
                             (24 * 60 * 60)))
 
-    def one_period_covariance(df):
+    def one_period_covariance(df, n_in_period):
         # numerator is r_i*r_j
         num = df.T.dot(df)
 
@@ -1704,20 +1696,20 @@ def realized_covariance(data, freq='M', n_in_day=None, r_corr=False):
             data=np.minimum(*np.meshgrid(df.count(), df.count())),
             index=data.columns, columns=data.columns)
 
-        res = num.div(denom)
+        res = num.div(denom) * n_in_period
 
         return res
 
     # for each calculation period, compute the matrix
     res = dict()
-    for t, grp in data.groupby(pd.Grouper(freq=freq)):
-        res[t] = one_period_covariance(grp)
+    for t, grp in data.groupby(pd.Grouper(freq=sample_freq)):
+        res[t] = one_period_covariance(grp, n_in_day)
 
     # concat everything
-    res = pd.concat(res, axis=1)
+    res = pd.concat(res, axis=0)
 
     # annualize
-    res *= (n_in_day * 252)
+    res *= 252
 
     # level names: better when dates are named as 'date'
     res.index.levels.names = [data.index.name, data.columns.name]

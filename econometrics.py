@@ -25,6 +25,7 @@ logging.basicConfig(level=logging.INFO)
 
 set_credentials.set_r_environment()
 
+
 class ARIMA:
     """ARIMA model.
 
@@ -50,7 +51,7 @@ class ARIMA:
 
         Parameters
         ----------
-        kwargs
+        kwargs : dict
 
         Returns
         -------
@@ -60,9 +61,9 @@ class ARIMA:
 
         self._fitted = fitted
 
-        return
+        return fitted
 
-    def predict(self, out_of_sample=False, **kwargs):
+    def predict(self, fitted, out_of_sample=False, is_exp=False, **kwargs):
         """
 
         Parameters
@@ -74,12 +75,17 @@ class ARIMA:
         -------
 
         """
-        if out_of_sample:
+        if not out_of_sample:
             pass
+        else:
+            fcast = fitted.forecast(steps=1)[0][0]
 
-        res = self._fitted.predict(**kwargs)
+        if is_exp:
+            # jensen's term
+            var_uhat = fitted.sigma2
+            fcast = np.exp(fcast + 0.5*var_uhat)
 
-        return res
+        return fcast
 
 
 class GARCH:
@@ -132,7 +138,7 @@ class GARCH:
                    p=self.arch_lags, q=self.garch_lags)
         )
 
-    def fit(self, data, include_mean=True):
+    def fit(self, data, include_mean=True, **kwargs):
         """Estimate model parameters.
 
         Parameters
@@ -157,7 +163,8 @@ class GARCH:
 
         # fit GARCH
         fitted = self.r_fGarch.garchFit(formula=self.formula, data=rdf,
-                                        trace=False, include_mean=include_mean)
+                                        trace=False, include_mean=include_mean,
+                                        **kwargs)
 
         fitted.data_orig = data_clean
 
@@ -182,27 +189,31 @@ class GARCH:
 
         return h
 
-    def predict(self, fitted, n_ahead=1):
+    def predict(self, fitted, n_ahead=1, s2_hat_init=None):
         """
 
         Parameters
         ----------
         fitted
-        n_ahead
+        n_ahead : int
+        s2_hat_init : float
 
         Returns
         -------
+        res : float or numpy.ndarray
 
         """
         coef = self.get_coef(fitted)
-        s2_hat_1 = self._predict_one(fitted)
+        
+        if s2_hat_init is None:
+            s2_hat_init = self._predict_one(fitted)
 
         if n_ahead < 2:
-            return s2_hat_1
+            return s2_hat_init
 
         else:
             res = pd.Series(index=range(1, n_ahead+1))
-            res.loc[1] = s2_hat_1
+            res.loc[1] = s2_hat_init
 
             # for t in range(2, n_ahead+1):
             #     res.loc[t] = coef.loc["omega"] +\
@@ -212,11 +223,11 @@ class GARCH:
             x = np.ones((n_ahead-1, ))*coef["omega"]
             b = [1, ]
             a = [1, -coef.loc[["alpha1", "beta1"]].sum()]
-            zi = signal.lfiltic(b, a, [s2_hat_1])
+            zi = signal.lfiltic(b, a, [s2_hat_init])
 
             res.loc[2:] = signal.lfilter(b, a, x, zi=zi)[0]
 
-            return res
+        return res
 
     def _predict_one(self, fitted):
         """

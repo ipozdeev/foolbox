@@ -1,40 +1,11 @@
 import pandas as pd
 import numpy as np
 from foolbox.data_mgmt.set_credentials import set_path
+from foolbox.finance import realized_variance
 from foolbox.linear_models import PureOls
-from foolbox.finance import EventStudy
 
 
 path_to_fx = set_path("research_data/fx_and_events/")
-
-
-def calculate_rv(data, hour_start=None, hour_end=None, n_in_day=1):
-    """
-
-    Parameters
-    ----------
-    data
-    hour_start
-    hour_end
-
-    Returns
-    -------
-
-    """
-    if hour_end is None:
-        hour_end = 24
-    if hour_start is None:
-        hour_start = 0
-
-    idx = (data.index.hour > hour_start) & (data.index.hour < hour_end) & \
-        (~data.index.weekday.isin([5, 6]))
-    ret_trim = data.loc[idx, :]
-
-    rv = ret_trim.pow(2).resample('B').mean() * n_in_day * 252
-
-    rv = np.sqrt(rv) * 100
-
-    return rv
 
 
 def deseasonalize(data, use_log=True):
@@ -70,24 +41,52 @@ def deseasonalize(data, use_log=True):
     return res
 
 
-if __name__ == "__main__":
-    # 15min
-    data = pd.read_pickle(path_to_fx + "fxcm_counter_usd_m15.p")
-    ret = np.log(((data["bid_close"] + data["ask_close"])/2)).diff()
+def main():
+    """
+
+    Returns
+    -------
+
+    """
+    # data from bloomberg ---------------------------------------------------
+    data_bloom = pd.read_pickle(path_to_fx + "fx_hf_ba_2017_2018.p")
+
+    # resample at 15min
+    data_bloom = data_bloom["mid"]
+    data_bloom.index = data_bloom.index.tz_convert("US/Eastern")
+    data_bloom = data_bloom.resample("15T").last()
+
+    # returns
+    ret_bloom = np.log(data_bloom).diff()
 
     # rv
-    rv = calculate_rv(ret, 8, 21, n_in_day=24*4)
+    rv_bloom = realized_variance(ret_bloom, freq='B', n_in_day=None,
+                                 r_vola=True)
 
-    # seasonal
-    rv_deseas = deseasonalize(rv, use_log=True)
+    # data from fxcm --------------------------------------------------------
+    data_fxcm = pd.read_pickle(path_to_fx + "fxcm_counter_usd_m15.p")
 
-    # rv_deseas.plot()
+    # returns
+    data_fxcm = (data_fxcm["bid_close"] + data_fxcm["ask_close"])/2
+    data_fxcm.index = data_fxcm.index.tz_convert("US/Eastern")
 
-    events_data = pd.read_pickle(path_to_fx + "events.p")
-    evt = events_data["joint_cbs"]
-    rv, evt = rv.align(evt, axis=1, join="inner")
-    rv_deseas.index = rv_deseas.index.date
-    evt.index = evt.index.date
-    es = EventStudy(data=rv_deseas, events=evt, window=(-10, -1, 0, 3),
-                    mean_type="count_weighted")
-    es.the_mean
+    # resample at 15min
+    data_fxcm = data_fxcm.resample("15T").last()
+
+    ret_fxcm = np.log(data_fxcm).diff()
+
+    # rv
+    rv_fxcm = realized_variance(ret_fxcm, freq='B', n_in_day=None,
+                                r_vola=True)
+
+    rv_bloom, rv_fxcm = rv_bloom.align(rv_fxcm, axis=0, join="inner")
+
+    # ret_bloom, ret_fxcm = ret_bloom.align(ret_fxcm, axis=0, join="inner")
+
+    # rv_bloom.corrwith(rv_fxcm)
+
+    print(rv_bloom.corrwith(rv_fxcm))
+
+
+if __name__ == "__main__":
+    main()

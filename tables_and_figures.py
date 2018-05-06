@@ -127,6 +127,8 @@ def descriptives(data, scale=12, use_statsmodels=False, **kwargs):
     scale: float
         controls frequency conversion, e.g. to annualize monthly data, set
         scale=12 (default)
+    use_statsmodels : bool
+        True to use statsmodels (faster)
     kwargs: dict
         arguments to mod.fit of when use_statsmodels=True, e.g.
         cov_kwds={"maxlags":1}
@@ -142,46 +144,40 @@ def descriptives(data, scale=12, use_statsmodels=False, **kwargs):
         data = data.to_frame("xyz")
 
     # Names for rows in the output DataFrame
-    rows = ["mean", "se_mean", "tstat", "median", "std", "skew", "kurt",
-        "sharpe", "ac1", "se_ac1"]
+    rows = ["mean", "se_mean", "tstat", "median", "std", "q95",
+            "q05", "skewness", "kurtosis", "sharpe", "ac1", "se_ac1"]
+
     # Generate the output DataFrame
-    out = pd.DataFrame(index=rows, columns=data.columns, dtype="float")
+    out = pd.DataFrame(index=rows, columns=data.columns, dtype=float)
+
+    # compute what can be computed in vectorized form
+    out.loc["mean", :] = data.mean() * scale
+    out.loc["median", :] = data.median() * scale
+    out.loc["std", :] = data.std() * np.sqrt(scale)
+    out.loc["q95", :] = data.quantile(0.95) * scale
+    out.loc["q05", :] = data.quantile(0.05) * scale
+    out.loc["skewness", :] = data.skew()
+    out.loc["kurtosis", :] = data.kurtosis()
+    out.loc["sharpe", :] = out.loc["mean"].div(out.loc["std"])
 
     # Iterate over input's columns, computing statistics
-    for column in data.columns:
-        # column = data.columns[0]
+    for c, c_col in data.iteritems():
         if use_statsmodels:
-            endog = data[column].dropna().values
+            endog = c_col.dropna().values
             exog = np.ones(shape=(len(endog),))
             mod = sm.OLS(endog, exog)
             mod_fit = mod.fit(cov_type='HAC', **kwargs)
-            mean = mod_fit.params
             se_mean = mod_fit.bse
         else:
-            mean, se_mean, _ = ec.rOls(
-                data[column], None, const=True, HAC=True)
-        # # Compute mean with HAC-adjusted standard error
-        # mean, se_mean, _ = ec.rOls(data[column], None, const=True, HAC=True)
+            _, se_mean, _ = ec.rOls(c_col.dropna(), None, const=True, HAC=True)
 
+        out.loc["se_mean", c] = se_mean[0] * scale
+        out.loc["tstat", c] = out.loc["mean", c] / out.loc["se_mean", c]
 
-        out[column]["mean"] = mean[0] * scale
-        out[column]["se_mean"] = se_mean[0] * scale
-        out[column]["tstat"] = mean[0] / se_mean[0]
-
-        # Compute autocorrelation with HAC-adjusted standard error, suppress
-        # inntercept
-        ac, se_ac, _ = ec.rOls(data[column], data[column].shift(1),
-                               const=False, HAC=True)
-        out[column]["ac1"] = ac[0]
-        out[column]["se_ac1"] = se_ac[0]
-
-        # Compute the remaining statistics
-        out[column]["median"] = data[column].median() * scale
-        out[column]["std"] = data[column].std() * np.sqrt(scale)
-        out[column]["skew"] = data[column].skew()
-        out[column]["kurt"] = data[column].kurt()
-        out[column]["sharpe"] = data[column].mean() / data[column].std() *\
-                                np.sqrt(scale)
+        # autocorrelation with HAC-adjusted standard error, suppress inntercept
+        ac, se_ac, _ = ec.rOls(c_col, c_col.shift(1), const=False, HAC=True)
+        out.loc["ac1", c] = ac[0]
+        out.loc["se_ac1", c] = se_ac[0]
 
     return out
 
