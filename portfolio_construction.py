@@ -5,14 +5,17 @@ from foolbox.data_mgmt import set_credentials as setc
 import pickle
 
 
-def rank_sort(returns, signals, n_portfolios=3, add_fake=False):
+def rank_sort(returns, signals, n_portfolios=None, legsize=None,
+              add_fake=False):
     """
 
     Parameters
     ----------
-    returns
-    signals
-    n_portfolios
+    returns : pandas.DataFrame
+    signals : pandas.DataFrame
+    n_portfolios : int
+    legsize : int
+        no of assets in the extreme legs
     add_fake : bool
         True to add a 'fake' column with median signal (won't affect
         composition of the exteme portfolios) to `signals` and a column
@@ -22,12 +25,43 @@ def rank_sort(returns, signals, n_portfolios=3, add_fake=False):
     -------
 
     """
+    # write the list's contents into output dictionary
+    portfolios = dict()
+
+    # dropna, align ---------------------------------------------------------
     returns = returns.dropna(how="all")
     signals = signals.dropna(how="all")
 
     # align two frames to ensure the index is the same
     returns, signals = returns.align(signals, axis=0, join="inner")
 
+    # -----------------------------------------------------------------------
+    # one portfolio only
+    if n_portfolios == 1:
+        sig_notnull = signals.notnull()
+        portfolios["portfolio1"] = sig_notnull.div(sig_notnull.sum(axis=1),
+                                                   axis=0)
+        portfolios["pf1"] = returns.mean(axis=1)
+
+        return portfolios
+
+    if legsize is not None:
+        # number of assets
+        n = signals.shape[1]
+
+        if n_portfolios is not None:
+            raise ValueError("Only one of legsize and n_portfolios can live!")
+
+        # number of portfolios will be e.g. np.ceil(9/4) = 3
+        n_portfolios = int(np.ceil(signals.shape[1] / legsize))
+
+        # to achieve this, we need this many fakes to be added:
+        for f in range(max(n % legsize - 1, 0)):
+            returns, signals = add_fake_signal(returns, signals)
+
+        return rank_sort(returns, signals, n_portfolios)
+
+    # else sort as usually --------------------------------------------------
     # add fake column if needed
     if add_fake:
         returns, signals = add_fake_signal(returns, signals)
@@ -43,10 +77,10 @@ def rank_sort(returns, signals, n_portfolios=3, add_fake=False):
     # init space for bins
     bins = signal_ranks*np.nan
 
-    # start hashing!
-    hash_bins = {}
+    # start cacheing!
+    cache_bins = {}
 
-    # loop over rows; for each calculate # of assets, construct bins, hash
+    # loop over rows; for each calculate # of assets, construct bins, cache
     #   them; result is a DataFrame of bin numbers
     for idx, row in signal_ranks.iterrows():
         # drop nans: needed for digitize later
@@ -55,17 +89,13 @@ def rank_sort(returns, signals, n_portfolios=3, add_fake=False):
         n_assets = this_row.count()
 
         # hash bins
-        if n_assets not in hash_bins:
+        if n_assets not in cache_bins:
             # Generate quantile bins, applying rule specified in 'custom_bins'
-            hash_bins[n_assets] = custom_bins(n_assets, n_portfolios)
+            cache_bins[n_assets] = custom_bins(n_assets, n_portfolios)
 
         # cut into bins
         bins.loc[idx, this_row.index] = np.digitize(
-            this_row, hash_bins[n_assets])
-
-    # -----------------------------------------------------------------------
-    # write the list's contents into output dictionary
-    portfolios = dict()
+            this_row, cache_bins[n_assets])
 
     # allocate
     for p in range(n_portfolios):
