@@ -371,8 +371,9 @@ def prepare_futures_data(which="carry"):
     return res
 
 
-if __name__ == "__main__":
-
+def main0():
+    """
+    """
     curs = ["aud", "cad", "eur", "gbp", "nzd", ]
 
     # rates = prepare_rates_data()
@@ -454,4 +455,26 @@ if __name__ == "__main__":
                 # f_a_fomc.savefig(out_path +\
                 #     '_'.join(
                 #         ("xxx", c,  "before", "fomc", d, "wght_avg.pdf")))
+
+
+def main1():
+    """
+    """
+    curs = ["aud", "cad", "eur", "gbp", "nzd", "sek"]
+
+    ds = prepare_fx_data().loc[:, curs]
+    events = prepare_events_data(perfect_foresight=True).loc[:, curs]
+
+    fig, ax = fig_event_study(events, ds, "cut", mean_type="count_weighted",
+                              window=(-10, -1, 1, 5),
+                              ci_kwds={"method": "boot", "ps": 0.99,
+                                       "n_iter": 125})
+
+    return
+
+
+if __name__ == "__main__":
+
+    main1()
+
 
