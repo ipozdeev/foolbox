@@ -3,8 +3,6 @@ from events_intraday_sampler import *
 from wp_tabs_figs.wp_settings import settings
 from pandas.tseries.offsets import BDay
 from foolbox.linear_models import PureOls
-import statsmodels.api as sm
-
 
 if __name__ == "__main__":
     # Settigns ----------------------------------------------------------------
@@ -18,12 +16,16 @@ if __name__ == "__main__":
 
     # Whether to include currency fixed effects or estimate panel ols with a
     # single intercept for all currencies
-    include_currency_fe = False
+    include_currency_fe = True
 
     # OIS/ON rates settigns
     ois_data_name = "ois_bloomi_1w_30y.p"
     on_data_name = "overnight_rates.p"
     ois_mat = "1m"
+
+    # Lag difference between ois and on rates by this number of days
+    ois_lag = 10
+    ois_smooth = 1
 
     # Sample settings
     s_dt = settings["sample_start"]
@@ -54,14 +56,16 @@ if __name__ == "__main__":
         spot_ret = np.log(spot).diff() * 1e4
 
     # Compute difference between OIS and overnight rates in bps
-    ois_diff = (ois_data.rolling(1).mean() - on_data.rolling(1).mean())*1e2
+    ois_diff = (ois_data.rolling(ois_smooth).mean() -
+                on_data.rolling(ois_smooth).mean()).shift(ois_lag) * 1e2
 
     # Estimation --------------------------------------------------------------
     # Get the stacked returns, and yield curve slopes; mark events classes
     eda = EventDataAggregator(events_data, spot_ret, pre, post)
     stacked_ret = eda.stack_data()
 
-    eda_ois = EventDataAggregator(events_data, ois_diff.shift(10), pre, post)
+    eda_ois = EventDataAggregator(events_data, ois_diff, pre,
+                                  post)
     stacked_ois = eda_ois.stack_data()
 
     # Fetch dummies for currency-specific fixed effects and event class
@@ -79,9 +83,9 @@ if __name__ == "__main__":
     # Construct matrix of regressors
     if include_currency_fe:
         X = pd.concat([curr_fe, stacked_ois["data"].rename("ois"),
-                       event_dummies,interaction_terms], axis=1)
+                       event_dummies, interaction_terms], axis=1)
     else:
-        X = pd.concat([stacked_ois["data"].rename("ois"), event_dummies,
+        X = pd.concat([stacked_ois["data"].rename("ois_spread"), event_dummies,
                        interaction_terms], axis=1)
 
     ols = PureOls(y0=stacked_ret["data"], X0=X,
@@ -89,6 +93,7 @@ if __name__ == "__main__":
     ols.fit()
 
     res = ols.get_diagnostics(HAC=False)
+    print(res)
 
 
 
