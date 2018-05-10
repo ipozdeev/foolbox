@@ -17,6 +17,7 @@ if __name__ == "__main__":
     # Whether to include currency fixed effects or estimate panel ols with a
     # single intercept for all currencies
     include_currency_fe = True
+    use_hac = False  # no HAC in panel data
 
     # OIS/ON rates settigns
     ois_data_name = "ois_bloomi_1w_30y.p"
@@ -70,6 +71,7 @@ if __name__ == "__main__":
 
     # Fetch dummies for currency-specific fixed effects and event class
     dummies = pd.get_dummies(stacked_ret.drop(["data", "index"], axis=1))
+    dummies = dummies.astype(float)
 
     curr_fe = dummies[["asset_" + curr for curr in currs]]
 
@@ -92,7 +94,7 @@ if __name__ == "__main__":
                   add_constant=not include_currency_fe)
     ols.fit()
 
-    res = ols.get_diagnostics(HAC=False)
+    res = ols.get_diagnostics(HAC=use_hac)
     print(res)
 
 
