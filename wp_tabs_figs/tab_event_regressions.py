@@ -21,9 +21,26 @@ if __name__ == "__main__":
         "(3)": ["ois_spread", "ois_x_hike", "ois_x_cut", "ois_x_no_change"],
         "(4)": ["ois_spread", "event_hike", "event_cut", "event_no change",
                 "ois_x_hike", "ois_x_cut", "ois_x_no_change"],
-        # "(5)": ["ois_spread", "event_hike", "event_cut", "event_no change",
-        #         "ois_x_hike", "ois_x_cut", "ois_x_no_change", "fwd_disc",
-        #         "libor_spread"]
+        "(5)": [
+                "ois_spread", "ois_x_hike", "ois_x_cut", "ois_x_no_change",
+
+                "event_hike", "event_cut", "event_no change",
+
+                # "fwd_disc",
+                # "libor_spread",
+
+                # "long_bonds",
+                # "long_bonds_x_hike", "long_bonds_x_cut",
+                # "long_bonds_x_no change",
+                #
+                # "short_bonds",
+                # "short_bonds_x_hike", "short_bonds_x_cut",
+                # "short_bonds_x_no change",
+
+                "all_bonds",
+                "all_bonds_x_hike", "all_bonds_x_cut",
+                "all_bonds_x_no change",
+                ]
         }
     specification_order = ["(1)", "(2)", "(3)", "(4)"] #+ ["(5)"]
     var_order = specifications["(4)"]
@@ -46,17 +63,29 @@ if __name__ == "__main__":
     ois_data_name = "ois_bloomi_1w_30y.p"
     on_data_name = "overnight_rates.p"
     libor_data_name = "libor_spliced_2000_2007_d.p"
+    bond_data_name = "bond_index_data.p"
+
     ois_mat = "1m"
+    bond_mats = ["1m", "3m", "6m", "12m", '1-3y', '3-5y', '5-7y', '7-10y',
+                 '10+y']
+
+    short_mats = ["1m", "3m", "6m", "12m"]
+    long_mats = ['1-3y', '3-5y', '5-7y', '7-10y', '10+y']
 
     # Lag difference between ois and on rates by this number of days
     ois_lag = 10
     ois_smooth = 1
 
-    libor_lag = 1
-    libor_smooth = 1
+    return_smooth = 10
 
-    fwd_disc_lag = 1
-    fwd_disc_smooth = 1
+    bond_lag = 0
+    bond_smooth = 22
+
+    libor_lag = 10
+    libor_smooth = 10
+
+    fwd_disc_lag = 10
+    fwd_disc_smooth = 22
 
     # Sample settings
     s_dt = settings["sample_start"]
@@ -79,7 +108,7 @@ if __name__ == "__main__":
 
     # Compute returns in bps
     spot = fx_data["spot_mid"].loc[currs, s_dt:e_dt, fixing_time]
-    spot_ret = np.log(spot).diff() * 1e4
+    spot_ret = (np.log(spot).diff() * 1e4).rolling(return_smooth).sum()
 
     # Get the forward discount data
     fx_data_wmr = pd.read_pickle(data_path+"data_wmr_dev_d.p")
@@ -94,6 +123,21 @@ if __name__ == "__main__":
                 1e2
 
     # ois_diff.mask(np.abs(ois_diff) < 0.1, 0, inplace=True)
+
+    bond_index_data = pd.read_pickle(data_path+bond_data_name)
+    for key, df in bond_index_data.items():
+        tmp = df.mask(np.log(df).diff() == 0, np.nan)
+        bond_index_data[key] = \
+            (np.log(tmp).diff() - np.log(bond_index_data["usd"]).diff()) \
+            .shift(bond_lag).rolling(bond_smooth).mean()
+
+    bond_index_data = pd.concat(bond_index_data, keys=bond_index_data.keys())
+
+    bond_index_ret = bond_index_data.loc[pd.IndexSlice[currs, s_dt:e_dt],
+                                         bond_mats] * 1e4
+    bond_index_ret["long_bonds"] = bond_index_ret[long_mats].mean(axis=1)
+    bond_index_ret["short_bonds"] = bond_index_ret[short_mats].mean(axis=1)
+    bond_index_ret["all_bonds"] = bond_index_ret[bond_mats].mean(axis=1)
 
     # Process the data --------------------------------------------------------
     # Get the stacked returns, and yield curve slopes; mark events classes
@@ -138,7 +182,7 @@ if __name__ == "__main__":
          event_dummies, interaction_terms, interaction_terms_libor], axis=1)
     data = data.set_index(["asset", "index"])
     data.sort_index(level=[0, 1], inplace=True)
-    data.dropna(inplace=True)
+    data.dropna(how="all", inplace=True)
 
     # Drop duplicates for overlapping events, fuck eurozone
     data = data[~data.index.duplicated(keep='first')]
@@ -147,6 +191,21 @@ if __name__ == "__main__":
     data.index.names = ["asset", "date"]
     y = data[["spot_ret"]]
     X = data.drop(["spot_ret"], axis=1)
+
+    event_dummies = X[event_dummies.columns]
+    bond_index_ret = bond_index_ret.reindex(X.index)
+    interaction_terms_bonds = list()
+    for col in bond_index_ret.columns:
+        tmp = event_dummies.multiply(bond_index_ret[col], axis=0)
+        tmp.columns = [col+"_x_"+evt_type.split("_")[1]
+                       for evt_type in event_dummies.columns]
+        interaction_terms_bonds.append(tmp)
+    interaction_terms_bonds = pd.concat(interaction_terms_bonds, axis=1)
+
+    X = pd.concat([X, bond_index_ret, interaction_terms_bonds],
+                  axis=1, join="outer")
+
+
 
     # Estimate stuff ----------------------------------------------------------
     summary = {}
