@@ -333,6 +333,39 @@ class PureOls(Regression):
 
         return hodrick_vcv
 
+    def to_latex(self, inference="se", fmt_coef="{:.4f}",
+                 fmt_inference="({:.2f})", **kwargs):
+        """
+
+        Parameters
+        ----------
+        inference : str
+            report errors of the coefficients 'se' or t-stats 't-stat'
+
+        Returns
+        -------
+
+        """
+        est = self.get_diagnostics(**kwargs)
+
+        coef = est.loc["coef", :]
+        infce = est.loc[("se" if inference.startswith("s") else "tstat"), :]
+
+        x_coef = r"\underset{{" + fmt_inference + "}}{{" + fmt_coef + "}}"
+        x_name = "X_{{{:s}}}"
+
+        res = " + ".join(
+            (x_coef + ' ' + x_name).format(infce[k], coef[k], str(k))
+            for k in coef.index if k != "const")
+
+        if self.add_constant:
+            res = x_coef.format(infce["const"], coef["const"], "const") + \
+                  " + " + res
+
+        res = "y = " + res
+
+        return res
+
 
 class DynamicOLS:
     """One-factor (+constant) OLS setting."""
