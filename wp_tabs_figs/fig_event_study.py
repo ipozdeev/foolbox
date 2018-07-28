@@ -460,7 +460,7 @@ def main0():
 def main1():
     """
     """
-    curs = ["aud", "cad", "eur", "gbp", "nzd", "sek"]
+    curs = ["aud", "cad", "chf", "eur", "gbp", "nzd", "nok", "sek"]
 
     ds = prepare_fx_data().loc[:, curs]
     events = prepare_events_data(perfect_foresight=True).loc[:, curs]
@@ -477,4 +477,4 @@ if __name__ == "__main__":
 
     main1()
 
-
+    plt.show()
