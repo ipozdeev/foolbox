@@ -1,42 +1,70 @@
-import pandas_datareader.data as web
-from foolbox.api import *
+import cProfile
+import functools
+import pickle
+import os
+from accelerate import profiler
+import datetime
+from foolbox.data_mgmt import set_credentials as set_cred
+path_to_data = set_cred.set_path("research_data/fx_and_events/")
 
-if __name__ == "__main__":
 
-    out_path = set_credentials.set_path("ois_project/figs/")
 
-    # data ------------------------------------------------------------------
-    # fed funds futures
-    with open(data_path + "fed_funds_futures_settle.p", mode="rb") as hangar:
-        fff_data = pickle.load(hangar)
+def cprofile_analysis(**option_kwargs):
+    def outerwrapper(func):
+        @functools.wraps(func)
+        def wrapper(*args, **kwargs):
+            p = cProfile.Profile()
+            try:
+                p.enable()
+                ret = func(*args, **kwargs)
+                p.disable()
+                return ret
+            finally:
+                _refor_time = datetime.datetime.now().strftime("%Y%m%d_%Hh%Mm%Ss")
+                filename = os.path.join(
+                    path_to_data + func.__name__
+                    +'_' + _refor_time +'_profiler_test.prof')
+                p.dump_stats(filename)
+                p.print_stats()
 
-    # # overnight rate
-    # with open(data_path + "overnight_rates.p", mode="rb") as hangar:
-    #     on_rates_data = pickle.load(hangar)
-    #
-    # on_rate = on_rates_data["usd"]
+                if option_kwargs.get('activate'):
+                    os.system("snakeviz " + filename)
 
-    on_rate = web.DataReader("DFF", data_source="fred", start="1988-01-01")
 
-    on_rate_m = on_rate.reindex(
-        index=pd.date_range(on_rate.index[0], on_rate.index[-1], freq='D'),
-        method="ffill").resample('M').mean()
-    on_rate_m.name = "on"
+        return wrapper
+    return outerwrapper
 
-    # take end-of-month fff
-    eom_fff = fff_data.resample('M').last().shift(1)
 
-    fff_m = pd.Series(
-        data=[eom_fff.loc[p,p] for p in eom_fff.columns if p in eom_fff.index],
-        index=[p for p in eom_fff.columns if p in eom_fff.index])
+# def accelerate_profile(func):
+#     @functools.wraps(func)
+#     def wrapper(*args, **kwargs):
+#         p = profiler.Profile()
+#         try:
+#             p.enable()
+#             ret = func(*args, **kwargs)
+#             p.disable()
+#             return ret
+#         finally:
+#             # filename = os.path.expanduser(
+#             #     os.path.join('~', func.__name__  '.pstat')
+#             # )
+#             # profiler.dump_stats(filename)
+#
+#             p.print_stats()
+#
+#             _refor_time = datetime.datetime.now().strftime("%Y%m%d_%Hh%Mm%Ss")
+#             fh = open(os.path.join('Z:\Projekte\GTAA\RootFolder\output_data\\' + func.__name__ +'_' + _refor_time +'_profiler_test.pkl'), 'wb')
+#             pickle.dump(p, fh)
+#             fh.close()
+#     return wrapper
 
-    fff_m.name = "fff"
+# def load_profile_data():
 
-    # concatenate
-    both = pd.concat((on_rate_m, 100-fff_m), axis=1)
-    both.diff(axis=1).plot()
+    # import pickle
+    # import os
+    # from accelerate import profiler
+    # fh = open(os.path.join('Z:\Projekte\GTAA\RootFolder\output_data\\retrieve_data_wrapper_20170213_18h11m06s_profiler_test.pkl'), 'rb')
+    # profile_data = pickle.load(fh)
+    # profiler.plot(profile_data)
 
-    desc = taf.descriptives(both.diff(axis=1).loc["2001":, ["fff"]] * 100, 1)
-
-    print(desc)
-    print(desc.loc["mean"] / desc.loc["se_mean"])
+    # pass

@@ -9,9 +9,12 @@ from foolbox.wp_tabs_figs.wp_settings import settings
 if __name__ == "__main__":
 
     # Test for combinations of these maturities. e.g. 1Y-6M, 1Y-1M, 6M-3M...
-    test_maturities = ["1M", "3M", "6M", "9M", "1Y"]
+    test_maturities = ["1W", "2W", "1M", "3M", "6M", "9M", "1Y"]
+
+    test_maturities = [x.lower() for x in test_maturities]
+
     test_currencies = ['aud', 'cad', 'chf', 'eur', 'gbp', 'jpy', 'nzd', 'sek']
-    test_currencies = ["sek"]
+    # test_currencaies = ["usd"]
     # Get all combinations of maturities
     maturity_combos = list(combinations_with_replacement(test_maturities, 2))
 
@@ -21,22 +24,24 @@ if __name__ == "__main__":
             maturity_combos.pop(position)
 
     # Lookback periods and smoothing parameter
-    signal_lag = np.arange(1, 10, 1)
+    signal_lag = np.arange(2, 22, 1)
     signal_smooth = 5  # take rolling mean of rates over this period
 
     # Import the data
     fx_data = pd.read_pickle(data_path+"daily_rx.p")
-    with open(data_path+"daily_rx.p", mode="rb") as hunger:
-        fx_data = pickle.load(hunger)
+    # with open(data_path+"daily_rx.p", mode="rb") as hunger:
+    #     fx_data = pickle.load(hunger)
 
-    ois_data = pd.read_pickle(data_path+"ois_bloomberg.p")
-    with open(data_path + "ois_bloomberg.p", mode="rb") as halupa:
-        ois_data = pickle.load(halupa)
+    ois_data = pd.read_pickle(data_path+"ois_bloomi_1w_30y.p")
+    # with open(data_path + "ois_bloomberg.p", mode="rb") as halupa:
+    #     ois_data = pickle.load(halupa)
 
     ois_data = align_and_fillna(ois_data, method="ffill")
 
-    with open(data_path+"data_dev_d.p", mode="rb") as fname:
-        stock_data = pickle.load(fname)["msci_ret"]
+    # with open(data_path+"data_dev_d.p", mode="rb") as fname:
+    #     stock_data = pickle.load(fname)["msci_ret"]
+
+    stock_data = pd.read_pickle(data_path+"data_dev_d.p")
 
     # Select currencies
     rx = fx_data["rx"]
@@ -80,9 +85,13 @@ if __name__ == "__main__":
 
         for curr in test_currencies:
             # For example 6-month minus 1 month OIS fixed rates
+            # signals[curr] = \
+            #     ois_data[curr][mat_high][ois_start_dates[curr]:end_date] - \
+            #     ois_data[curr][mat_low][ois_start_dates[curr]:end_date]
+
             signals[curr] = \
-                ois_data[curr][mat_high][ois_start_dates[curr]:end_date] - \
-                ois_data[curr][mat_low][ois_start_dates[curr]:end_date]
+                ois_data[mat_high.lower()][curr][ois_start_dates[curr]:end_date] - \
+                ois_data[mat_low.lower()][curr][ois_start_dates[curr]:end_date]
             # signals[curr] = signals[curr] - \
             #     (ois_data["usd"][mat_high][ois_start_dates[curr]:end_date] -
             #      ois_data["usd"][mat_low][ois_start_dates[curr]:end_date])
@@ -138,7 +147,7 @@ if __name__ == "__main__":
     # Plot the strategy
     fig = broomstick_plot(backtest.cumsum())
     ix = pd.IndexSlice
-    backtest.loc[:, ix["1M", "9M", 5]].cumsum().plot()
+    # backtest.loc[:, ix["1m", "9m", 5]].cumsum().plot()
 
     # Plot the cumulative return heatmap
     # Arrange mean return: maturity differential vs lookback

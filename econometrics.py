@@ -254,7 +254,7 @@ class GARCH:
         # all together
         data = pd.concat((h, eps, omega))
 
-        res = self.get_coef(fitted).dot(data)
+        res = self.get_coef(fitted).drop("mu", errors="ignore").dot(data)
 
         return res
 
@@ -390,7 +390,7 @@ def rOls(Y, X, const = False, HAC = False):
         se = np.sqrt(np.diag(vcv))
 
     else:
-        se = np.array(base.summary(f).rx2('coefficients'))[:,1]
+        se = np.array(base.summary(f).rx2('coefficients'))[:, 1]
 
     # Get the adjusted R-squared
     adj_r_sq = np.array(base.summary(f).rx2('adj.r.squared'))[0]
@@ -473,6 +473,7 @@ def pureOls(Y, X, const = False):
     # se = np.sqrt(np.diag(vcv))
 
     return coef.squeeze()
+
 
 def powerSet(iterable):
     "powerset([1,2,3]) --> () (1,) (2,) (3,) (1,2) (1,3) (2,3) (1,2,3)"
@@ -940,7 +941,6 @@ def rolling_ols2(y, X, window, min_periods=None, min_obs=None, custom_idx=None,
     return params, opt_out
 
 
-
 def expanding_ols(y, X, min_periods, constant=False):
     """
     Estimates expanding window OLS regression for each column in dataframe y on
@@ -1120,3 +1120,79 @@ def simple_se_diff_in_means(data1, data2):
     se = np.sqrt(data1.var()/data1.count() + data2.var()/data2.count())
 
     return se
+
+
+def deseasonalize(data, freq_str, deltat):
+    """
+
+    Parameters
+    ----------
+    data : pandas.Series or pandas.DataFrame
+    freq_str : str
+        pandas frequency, e.g. 'B'
+    deltat : float
+        number of observations per unit of time, e.g. 5 for daily data with
+        weekly seasonal pattern
+
+    Returns
+    -------
+    res : pandas.Series or pandas.DataFrame
+
+    """
+    if isinstance(data, pd.DataFrame):
+        res = dict()
+        for c, c_col in data.iteritems():
+            res[c] = deseasonalize(c_col, freq_str, deltat)
+
+        res = pd.concat(res, axis=1)
+
+        return res
+
+    # deal with na
+    data_resmp = data.dropna().resample(freq_str).interpolate(method="linear")
+
+    # R ---------------------------------------------------------------------
+    stats = importr("stats")
+
+    # series to R
+    rdata = pandas2ri.py2ri(data_resmp)
+
+    # to R's ts object with deltat
+    data_ts = stats.ts(data=rdata, deltat=deltat)
+
+    # stl
+    data_stl = stats.stl(data_ts, "periodic")
+
+    # wrap output in dataframe
+    res = pd.DataFrame(np.array(data_stl.rx2("time.series")),
+                       index=data_resmp.index,
+                       columns=["seasonal", "trend", "remainder"])
+
+    # get rid of the stuff that was not there at the start
+    res = res.reindex(index=data.index)
+
+    return res
+
+
+def main():
+    """
+
+    Returns
+    -------
+
+    """
+    path_data = "c:/Users/Igor/Documents/projects/swiss_franc_cap/data/"
+
+    data = pd.read_csv(path_data + "eurchf_ba_2011_2015_d.csv",
+                       index_col=0, parse_dates=True)
+
+    data = data.loc["2011-09-06":"2015-01-14", ["ask", "bid"]]
+    ba = data.diff(axis=1).iloc[:, -1] * 10000
+
+    res = deseasonalize(ba, freq_str='B', deltat=1/5)
+
+    res.plot()
+
+
+if __name__ == '__main__':
+    main()

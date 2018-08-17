@@ -1,13 +1,12 @@
 import pandas as pd
 from pandas.tseries.offsets import BDay
 import numpy as np
-import pickle
 from scipy.stats import norm
+from itertools import zip_longest
+from random import choice
 import matplotlib.pyplot as plt
-import warnings
 
 from foolbox.data_mgmt import set_credentials
-from foolbox.utils import resample_between_events
 from foolbox.wp_tabs_figs.wp_settings import *
 from foolbox.linear_models import PureOls
 
@@ -40,25 +39,30 @@ class EventStudy:
             "count_weighted" are supported
         """
         # indexes better be all of the same type
-        events.index = events.index.map(pd.to_datetime)
-        data.index = data.index.map(pd.to_datetime)
+        data_idx = isinstance(data.index, (pd.DatetimeIndex, pd.PeriodIndex))
+        evt_idx = isinstance(data.index, (pd.DatetimeIndex, pd.PeriodIndex))
 
-        data, events = EventStudyFactory().align_for_event_study(data, events)
+        if data_idx | evt_idx:
+            data.index = data.index.map(pd.to_datetime)
+            events.index = events.index.map(pd.to_datetime)
+
+        # align
+        data, events = EventStudyFactory.align_for_event_study(data, events)
 
         self.data = data
         self.events = events
 
-        # parameters --------------------------------------------------------
+        # parameters
         self.assets = self.data.columns
-        self._window = window
-        self._mean_type = mean_type
+        self.window = window
+        self.mean_type = mean_type
 
         # break down window, construct index of holding days
-        ta, tb, tc, td = self._window
+        ta, tb, tc, td = self.window
         self.event_index = np.concatenate((np.arange(ta, tb+1),
                                            np.arange(tc, td+1)))
 
-        # property-based ----------------------------------------------------
+        # property-based
         self._timeline = None
         self._ar = None
         self._car = None
@@ -74,8 +78,8 @@ class EventStudy:
     @property
     def timeline(self):
         if self._timeline is None:
-            self._timeline = EventStudyFactory().mark_timeline(
-                self.data, self.events, self._window)
+            self._timeline = EventStudyFactory.mark_timeline(
+                self.data, self.events, self.window)
 
         return self._timeline
 
@@ -88,38 +92,17 @@ class EventStudy:
     @property
     def car(self):
         if self._car is None:
-            self._car = self.get_car(self.get_ar(), self._window)
+            self._car = self.get_car(self.get_ar(), self.window)
 
         return self._car
 
     @property
     def the_mean(self):
         if self._the_mean is None:
-            fun = self.mean_fun(method=self._mean_type)
+            fun = self.mean_fun(method=self.mean_type)
             self._the_mean = fun(self.car)
 
         return self._the_mean
-
-    @property
-    def booted(self):
-        return self._booted
-
-    @booted.setter
-    def booted(self, value):
-        self._booted = value
-
-        # also, pickle
-        with open(path_out + "evt_study_booted_mean.p", mode="wb") as han:
-            pickle.dump(value, han)
-
-    @booted.getter
-    def booted(self):
-        if self._booted is None:
-            with open(path_out + "evt_study_booted_mean.p", mode="rb") as han:
-                res = pickle.load(han)
-            return res
-
-        return self._booted
 
     def reindex(self, freq, inplace=False, **kwargs):
         """Reindex by frequency.
@@ -146,8 +129,8 @@ class EventStudy:
         if inplace:
             self.data = new_data
         else:
-            return EventStudy(new_data, self.events, self._window,
-                              self._mean_type)
+            return EventStudy(new_data, self.events, self.window,
+                              self.mean_type)
 
     def exclude_overlapping_events(self, inplace=False):
         """
@@ -170,7 +153,7 @@ class EventStudy:
         for c_name, c_val in self.data.iteritems():
             # this will reindex events with c_val.index and exclude overlapping
             this_new_evt, this_x_evt = self.exclude_overlaps(
-                self.events[c_name].dropna(), c_val, self._window)
+                self.events[c_name].dropna(), c_val, self.window)
 
             # save
             new_evt[c_name] = this_new_evt
@@ -186,8 +169,8 @@ class EventStudy:
             return evt_diff
         else:
             print(evt_diff)
-            return EventStudy(self.data, new_evt, self._window,
-                              self._mean_type)
+            return EventStudy(self.data, new_evt, self.window,
+                              self.mean_type)
 
     def align_data_with_events(self, inplace=False):
         """Align data and events thus ensuring that all events are represented.
@@ -203,8 +186,8 @@ class EventStudy:
         if inplace:
             self.data = new_data
         else:
-            return EventStudy(new_data, self.events, self._window,
-                              self._mean_type)
+            return EventStudy(new_data, self.events, self.window,
+                              self.mean_type)
 
     def default_data_manipulation(self, inplace=False):
         """Align, exclude overlapping events.
@@ -315,7 +298,7 @@ class EventStudy:
         # concat
         both = pd.concat((data, timeline), axis=1).dropna(subset=["evt_no"])
         both = both.dropna(subset=["evt_wind_pre", "evt_wind_post"],
-            how="all")
+                           how="all")
 
         # # event window
         # data_to_pivot_pre = timeline.loc[:, ["evt_wind_pre", "evt_no"]]
@@ -382,7 +365,7 @@ class EventStudy:
         pass
 
     def get_ci(self, ps, method="simple", **kwargs):
-        """Calculate confidence bands for self.`the_mean`; wrapper.
+        """Calculate confidence bands for `self.the_mean`.
 
         Parameters
         ----------
@@ -409,10 +392,11 @@ class EventStudy:
                 raise ValueError("Specify variances for the confidence "
                                  "interval!")
             ci = self.simple_ci(ps=ps, **kwargs)
+
         elif method == "boot":
-            booted = self.boot_the_mean(**kwargs)
-            self.booted = booted
+            booted = self.collect_bootstrapped(**kwargs)
             ci = booted.quantile(ps, axis=1).T
+
         else:
             raise NotImplementedError("ci you asked for is not implemented")
 
@@ -429,7 +413,7 @@ class EventStudy:
             of same shape and form as self.`events`
         """
         # defenestrate
-        wa, wb, wc, wd = self._window
+        wa, wb, wc, wd = self.window
 
         # confidence interval levels
         if isinstance(ps, float):
@@ -455,7 +439,7 @@ class EventStudy:
         # var_car = var_car.where(self.car.notnull())
 
         # var of average CAR across events and assets
-        var_fun = self.var_fun(method=self._mean_type)
+        var_fun = self.var_fun(method=self.mean_type)
         var_car_x_evt_x_ast = var_fun(var_car)
         
         # confidence interval
@@ -495,9 +479,9 @@ class EventStudy:
         # daily_var = var_sums.loc[:, "var"] / var_sums.loc[:, "count"]**2
         #
         # # weighted
-        # if self._mean_type == "simple":
+        # if self.mean_type == "simple":
         #     wght = pd.Series(1/len(self.assets), index=self.assets)
-        # elif self._mean_type == "count_weighted":
+        # elif self.mean_type == "count_weighted":
         #     wght = var_sums.loc[:, "count"] / var_sums.loc[:, "count"].sum()
         #
         # avg_daily_var = (daily_var * wght**2).sum()
@@ -516,8 +500,8 @@ class EventStudy:
 
         return ci
 
-    def boot_the_mean(self, what="car", n_iter=500, n_blocks=None,
-                      fillna=False):
+    def collect_bootstrapped(self, what="car", n_iter=101, blocksize=None,
+                             exclude_from_data=None, fillna=False):
         """Block bootstrap.
 
         Returns
@@ -526,61 +510,53 @@ class EventStudy:
             what to take the mean of: 'ar' or 'car'
         n_iter : int
             number of iterations
-        n_blocks : int
+        blocksize : int
             size of blocks to use for resampling
+        exclude_from_data : pandas.DataFrame
+            boolean DataFrame specifying which `data` values are to be masked;
+            by default, event windows are excluded; provide an mempty
+            DataFrame to exclude nothing at all;
         fillna : bool
-            fill na in the data when bootstrapping
+            fill na in the data when bootstrapping (block bootstrapped is used)
 
         Returns
         -------
-        booted : pandas.DataFrame
+        res : pandas.DataFrame
         """
         # defenestrate
-        ta, tb, tc, td = self._window
+        ta, tb, tc, td = self.window
 
         # default for the no of blocks
-        if n_blocks is None:
-            n_blocks = td - ta + 1
+        if blocksize is None:
+            blocksize = td - ta + 1
 
         # boot from `data` without windows around events --------------------
-        # boot_from = dict()
-        # for k, v in self.timeline.groupby(axis=1, level=0):
-        #     idx = v[k].loc[:, "inter_evt"]
-        #     boot_from[k] = self.data.loc[idx, k]
-        #
-        # boot_from = pd.DataFrame.from_dict(boot_from)
-        boot_from = self.data.where(self.mask_between_events)
+        if exclude_from_data is None:
+            exclude_from_data = ~self.mask_between_events
+        elif isinstance(exclude_from_data, pd.DataFrame) & \
+                exclude_from_data.empty:
+            exclude_from_data = (self.data * np.nan).fillna(False)
+        else:
+            pass
 
-        # no of events for each asset ---------------------------------------
-        n_evts = {c: self.events[c].count() for c in self.assets}
+        boot_from = self.data.mask(exclude_from_data, np.nan)
 
         # loop over simulations ---------------------------------------------
         # space for df's of pivoted tables
-        booted = pd.DataFrame(columns=range(n_iter), index=self.event_index)
+        res = dict()
 
         for p in range(n_iter):
             print(p)
 
             # shuffle data
-            shuff_data = self.shuffle_data(boot_from, n_blocks, fillna)
-
-            # shuffle events
-            # make sure resampled events do not lie outside normal range
-            possible_dt = shuff_data.index.tolist()[(-ta+1):-(td+1)]
-
-            shuff_evts = dict()
-            for c in self.assets:
-                smpl = np.random.choice(possible_dt, n_evts[c], replace=False)
-                shuff_evts[c] = pd.Series(1, index=smpl)
-
-            shuff_evts = pd.DataFrame.from_dict(shuff_evts).sort_index(axis=0)
+            shuff_data = self.shuffle_data(boot_from, blocksize, fillna)
 
             # event study on simulated data
             this_evt_study = EventStudy(
                 data=shuff_data,
-                events=shuff_evts,
-                window=self._window,
-                mean_type=self._mean_type)
+                events=self.events,
+                window=self.window,
+                mean_type=self.mean_type)
 
             # calculate the mean based on the reshuffled dataframe
             if what == "car":
@@ -588,13 +564,14 @@ class EventStudy:
             else:
                 this_what = this_evt_study.ar
 
-            func = this_evt_study.mean_fun(self._mean_type)
-            booted.iloc[:, p] = func(this_what)
+            func = this_evt_study.mean_fun(self.mean_type)
+            res[p] = func(this_what)
 
-        return booted
+        res = pd.DataFrame.from_dict(res, orient="columns")
 
-    @staticmethod
-    def shuffle_data(data, n_blocks, fillna=False):
+        return res
+
+    def shuffle_data(self, data, blocksize, fillna=False):
         """Shuffle data in blocks.
 
         First, fill the na in `data` using randomly sampled observations in
@@ -603,7 +580,7 @@ class EventStudy:
         Parameters
         ----------
         data : pandas.DataFrame
-        n_blocks : int
+        blocksize : int
         fillna : bool
             fill na in the data when bootstrapping
         Returns
@@ -612,40 +589,54 @@ class EventStudy:
             of shuffled data
         """
         n_obs, n_cols = data.shape
+        n_blocks = n_obs // blocksize + 1
 
-        # fill na in `data` by botstrapping it ------------------------------
+        if n_cols is None:
+            res = self.shuffle_data(data[:, np.newaxis], blocksize, fillna)\
+                .squeeze()
+            return res
+
+        def shuffle_blocks(x):
+            """Shuffle `x` in blocks ensuring results has length `n_obs`"""
+            if x.ndim < 2:
+                return shuffle_blocks(x[:, np.newaxis]).squeeze()
+
+            # define random location of split in two subsamples
+            rand_split_loc = np.random.choice(np.arange(len(x)))
+
+            # split
+            x_split = np.vstack((x[rand_split_loc:], x[:rand_split_loc]))
+
+            # construct a sequence of blocks
+            shuffle_from = [
+                x[p:(p+blocksize)] for p in range(len(x_split)-blocksize)
+            ]
+
+            # boot
+            res = np.vstack([choice(shuffle_from) for _ in range(n_blocks)])
+
+            # trim excess
+            res = res[:n_obs]
+
+            return res
+
         if fillna:
-            # bootstrap `data`
-            arr_no_na = np.array([
-                np.random.choice(
-                    data[p].dropna().values, n_obs) for p in data.columns]).T
-
-            # to frame
-            old_df_no_na = pd.DataFrame(
-                data=arr_no_na,
-                index=data.index,
-                columns=data.columns)
-
-            # fill na
-            new_df_no_na = data.fillna(old_df_no_na).values
+            data_filled_na = pd.DataFrame.from_dict(
+                {c_name: shuffle_blocks(col.dropna().values)
+                 for c_name, col in data.iteritems()},
+                orient="columns")
+            data_filled_na.index = data.index
+            data_to_shuffle = data.fillna(data_filled_na)
 
         else:
-            new_df_no_na = data.values
+            data_to_shuffle = data
 
-        # make the number of rows be a multiple of the number of blocks (for
-        #   easier resampling)
-        new_df_no_na = np.concatenate((
-            new_df_no_na,
-            new_df_no_na[np.random.choice(range(n_obs),
-                                          n_blocks - n_obs % n_blocks)]))
-
-        # resample
-        M = new_df_no_na.shape[0] // n_blocks
-        res = new_df_no_na.reshape(M, -1, n_cols)
-        res = res[np.random.permutation(M)].reshape(-1, n_cols)
+        # bootstrap
+        bootstrapped = shuffle_blocks(data_to_shuffle.values)
 
         # to frame again
-        res = pd.DataFrame(data=res, columns=data.columns)
+        res = pd.DataFrame(data=bootstrapped, columns=data.columns,
+                           index=data.index)
 
         return res
 
@@ -664,7 +655,7 @@ class EventStudy:
 
         """
         # defenestrate
-        ta, tb, tc, td = self._window
+        ta, tb, tc, td = self.window
 
         # handles
         car = self.car
@@ -885,7 +876,7 @@ class EventStudyFactory:
 
     @staticmethod
     def align_for_event_study(data, events):
-        """
+        """Align and transform `data` and `events` to DataFrames.
 
         Parameters
         ----------
@@ -894,6 +885,8 @@ class EventStudyFactory:
 
         Returns
         -------
+        data : pandas.DataFrame
+        events : pandas.DataFrame
 
         """
         if isinstance(data, pd.Series):
@@ -970,7 +963,15 @@ class EventStudyFactory:
         any_event = any_event.notnull().reindex(index=data.index)
 
         # fill na values to mark window start and end
-        all_windows = any_event.bfill(limit=(-1*wa)).ffill(limit=wd)
+        bfilled = any_event.fillna(method=("bfill" if wa < 0 else "ffill"),
+                                   limit=abs(wa))
+        ffilled = any_event.fillna(method=("bfill" if wd < 0 else "ffill"),
+                                   limit=abs(wd))
+        all_windows = bfilled.fillna(ffilled)
+
+        # <deprecated>
+        # all_windows = any_event.bfill(limit=(-1*wa)).ffill(limit=wd)
+        # </deprecated>
 
         # if need outside widows, invert
         if outside:
@@ -1126,7 +1127,7 @@ class EventStudyFactory:
         res_vars = res_vars.reindex(index=data.index)
         res_vars = res_vars.bfill(limit=max(-1 * event_window[0], 0)) \
             .ffill(limit=max(event_window[-1], 0))
-        res_vars = res_vars.where(filler)
+        res_vars = res_vars.where(filler).where(events.notnull())
 
         return res_means, res_vars
 

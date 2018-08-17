@@ -10,7 +10,7 @@ if __name__ == "__main__":
     data_path = set_credentials.gdrive_path("research_data/fx_and_events/")
 
     # Event window
-    wind = (-10, -1, 1, 5)
+    wind = (-15, -1, 1, 5)
     wa, wb, wc, wd = wind
 
     drop_curs = ["jpy", "dkk", "nok"]
@@ -25,6 +25,7 @@ if __name__ == "__main__":
     # Compute difference in bond returns across these maturities
     mats = ["1-3y", "3-5y", "5-7y", "7-10y", "10+y"]
     # mats = ["1m", "3m", "6m", "12m", "1-3y", "3-5y", "5-7y", "7-10y", "10+y"]
+    mats = ["1m", "3m", "6m", "12m",]
     # Load bonds data ---------------------------------------------------------
     bond_index_data = pd.read_pickle(data_path + "bond_index_data.p")
     bond_index_data.pop("jpy")

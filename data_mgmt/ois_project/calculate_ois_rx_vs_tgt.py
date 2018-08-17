@@ -19,12 +19,10 @@ if __name__ == "__main__":
 
     # data ------------------------------------------------------------------
     # OIS data
-    with open(data_path + "ois_bloomberg.p", mode="rb") as hangar:
-        ois_data = pickle.load(hangar)
+    ois_data = pd.read_pickle(data_path + "ois_bloomberg.p")
 
     # Target rates data
-    with open(data_path + "ois_project_events.p", mode="rb") as hangar:
-        events_data = pickle.load(hangar)
+    events_data = pd.read_pickle(data_path + "ois_project_events.p")
 
     tgt_rates = events_data["joint_cbs_plus_unscheduled_lvl_eff"]
 

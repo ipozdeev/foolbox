@@ -448,13 +448,14 @@ def barplot_intraday_by_hour(data):
 if __name__ == "__main__":
     from foolbox.api import set_credentials, settings
     from pandas.tseries.offsets import BDay, Hour
+    from foolbox.utils import remove_outliers
 
     # Settings ================================================================
     s_dt = pd.to_datetime(settings["sample_start"])
     e_dt = pd.to_datetime(settings["sample_end"])
     data_path = set_credentials.gdrive_path("research_data/fx_and_events/")
 
-    data_frequency = "H1"
+    data_frequency = "m5"
     out_counter_usd_name = "fxcm_counter_usd_" + data_frequency + ".p"
 
     # Set up the event window
@@ -483,8 +484,20 @@ if __name__ == "__main__":
 
     tz = "Europe/London"
     # tz = "EST"
-    # data.index = [x.astimezone(tz) for x in data.index]
-    # data.index.name = "stamp"
+    data.index = [x.astimezone(tz) for x in data.index]
+    data.index.name = "stamp"
+
+    data = remove_outliers(data, 4)
+
+    tmp_str_hour_minute = [x.strftime("%H:%M") for x in data.index]
+    data["hm"] = tmp_str_hour_minute
+
+    # Get index, get valid 5-minut intraday stamps
+    tmp_idx = pd.DatetimeIndex(start="2018-01-01 13:00",
+                               end="2018-01-01 17:30", freq="5Min")
+    valid_stamps = [x.strftime("%H:%M") for x in tmp_idx]
+
+    data = data.where(data["hm"].isin(valid_stamps)).dropna(how="all")
 
     events_data = pd.read_pickle(data_path + settings["events_data"])
     if events_by == "local_cbs":
@@ -503,14 +516,19 @@ if __name__ == "__main__":
     # Estimate statistics, and plot the results
     eda = EventDataAggregator(events, data, pre, post)
     stacked = eda.stack_data()
-    diff = eda.compare_means_by_stamp_and_event(
-        stacked, event_type1, event_type2, lambda x: x.hour).reset_index()
-    # stacked["stamp"] = stacked["stamp"].apply(lambda x: x.strftime("%H:%M"))
-    # stacked.loc[stacked["stamp"] == "22:33", :] = np.nan
-    # stacked.dropna(how="all")
     # diff = eda.compare_means_by_stamp_and_event(
-    #     stacked, event_type1, event_type2,
-    #     ).reset_index()
+    #     stacked, event_type1, event_type2, lambda x: x.hour).reset_index()
+
+    stacked["stamp"] = stacked["stamp"].apply(lambda x: x.strftime("%H:%M"))
+    diff = eda.compare_means_by_stamp_and_event(
+        stacked, event_type1, event_type2,
+        ).reset_index()
+    diff = diff.sort_values("stamp").set_index("stamp")
+    diff.cumsum().plot()
+
+    fig, ax = plt.subplots(figsize=(15, 7))
+    ax.plot(diff.reset_index()["diff_means"].cumsum())
+    ax.set_xticklabels(diff.index)
 
     fig, ax = plt.subplots(figsize=(15, 7))
     ax = barplot_intraday_by_hour(diff)

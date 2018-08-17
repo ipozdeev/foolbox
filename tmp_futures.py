@@ -187,6 +187,13 @@ if __name__ == "__main__":
     #     pickle.dump(sp_data, hut)
     # #==========================================================================
 
+    # name_pattern = "MX/CGB"
+    # start_date = "Jan-1993"
+    # end_date = "Dec-2018"
+    # _data = load_quandl_futures_data(name_pattern, start_date, end_date)
+    # filename = data_path + "cgb10_futures_raw.p"
+    # with open(filename, mode="wb") as hut:
+    #     pickle.dump(_data, hut)
     # =========================================================================
     # EXAMPLE: get settlement prices of S&P500, construct continuous futures,
     # run an event study
@@ -195,22 +202,25 @@ if __name__ == "__main__":
     # LEAN HOGS
     filename = data_path + "sp_futures_raw.p"
     filename = data_path + "wti_futures_raw.p"
+    filename = data_path + "cgb10_futures_raw.p"
     # filename = data_path + "gold_futures_raw.p"
     # filename = data_path + "lean_hogs_futures_raw.p"
     # filename = data_path + "fed_funds_futures_raw.p"
     # filename = data_path + "nzd_futures_raw.p"
-    filename = data_path + "aud_futures_raw.p"
+    # filename = data_path + "aud_futures_raw.p"
     # filename = data_path + "ftse100_futures_raw.p"
     # filename = data_path + "vix_futures_raw.p"
     # filename = data_path + "nikkei_futures_raw.p"
     # filename = data_path + "coffee_futures_raw.p"
     # filename = data_path + "brent_futures_raw.p"
-    with open(filename, mode="rb") as hut:
-        sp_data = pickle.load(hut)
+    # with open(filename, mode="rb") as hut:
+    #     sp_data = pickle.load(hut)
+
+    sp_data = pd.read_pickle(filename)
 
     # Get the settlement prices
-    settle = get_futures_datatype(sp_data, "Settle")
-    volume = get_futures_datatype(sp_data, 'Prev. Day Open Interest')
+    settle = get_futures_datatype(sp_data, "Settlement Price")
+    volume = get_futures_datatype(sp_data, 'Volume')
 
     # Get the roll dates: roll contracts 10 days before the last trading day
     roll_dates = settle.apply(lambda x: x.dropna().index[-10])

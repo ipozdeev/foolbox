@@ -14,7 +14,7 @@ if __name__ == "__main__":
     out_name = "bond_index_data.p"
 
     # Parse the data, throw out the request table sheet
-    raw_data = pd.read_excel(path + file_name, sheetname=None, index_col=0,
+    raw_data = pd.read_excel(path + file_name, sheet_name=None, index_col=0,
                              parse_dates=True)
     raw_data.pop("REQUEST_TABLE")
 

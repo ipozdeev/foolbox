@@ -27,23 +27,25 @@ if __name__ == "__main__":
                 "event_hike", "event_cut", "event_no change",
 
                 # "fwd_disc",
-                # "libor_spread",
+                "libor_spread",
+                "lib_x_hike", "lib_x_cut", "lib_x_no_change",
+
 
                 # "long_bonds",
                 # "long_bonds_x_hike", "long_bonds_x_cut",
                 # "long_bonds_x_no change",
-                #
-                # "short_bonds",
-                # "short_bonds_x_hike", "short_bonds_x_cut",
-                # "short_bonds_x_no change",
 
-                "all_bonds",
-                "all_bonds_x_hike", "all_bonds_x_cut",
-                "all_bonds_x_no change",
+                "short_bonds",
+                "short_bonds_x_hike", "short_bonds_x_cut",
+                "short_bonds_x_no change",
+
+                # "all_bonds",
+                # "all_bonds_x_hike", "all_bonds_x_cut",
+                # "all_bonds_x_no change",
                 ]
         }
-    specification_order = ["(1)", "(2)", "(3)", "(4)"] #+ ["(5)"]
-    var_order = specifications["(4)"]
+    specification_order = ["(1)", "(2)", "(3)", "(4)"] + ["(5)"]
+    var_order = specifications["(5)"]
     # Fixed effects, and standard error estimation options
     xs_fe = True
     ts_fe = False
@@ -76,13 +78,13 @@ if __name__ == "__main__":
     ois_lag = 10
     ois_smooth = 1
 
-    return_smooth = 10
+    return_smooth = 1
 
     bond_lag = 0
-    bond_smooth = 22
+    bond_smooth = 1
 
-    libor_lag = 10
-    libor_smooth = 10
+    libor_lag = 0
+    libor_smooth = 1
 
     fwd_disc_lag = 10
     fwd_disc_smooth = 22

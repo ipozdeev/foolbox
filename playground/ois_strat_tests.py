@@ -13,14 +13,20 @@ test_currencies = ['aud', 'cad', 'chf', 'eur', 'gbp', 'nzd', 'sek']
 #test_currencies = ["usd"]
 
 # Load OIS and FX data
-with open(data_path + "ois_bloomberg.p", mode="rb") as halupa:
-    ois_data = pickle.load(halupa)
+# with open(data_path + "ois_bloomberg.p", mode="rb") as halupa:
+#     ois_data = pickle.load(halupa)
 
-with open(data_path+"daily_rx.p", mode="rb") as fname:
-    data_rx = pickle.load(fname)
+ois_data = pd.read_pickle(data_path+"ois_bloomi_1w_30y.p")
 
-with open(data_path+"data_dev_d.p", mode="rb") as fname:
-    stock_data = pickle.load(fname)["msci_ret"][test_currencies]
+# with open(data_path+"daily_rx.p", mode="rb") as fname:
+#     data_rx = pickle.load(fname)
+
+data_rx = pd.read_pickle(data_path+"daily_rx.p")
+
+# with open(data_path+"data_dev_d.p", mode="rb") as fname:
+#     stock_data = pickle.load(fname)["msci_ret"][test_currencies]
+
+stock_data = pd.read_pickle(data_path+"data_dev_d.p")
 
 rx = data_rx["rx"]
 rx["usd"] = rx.mean(axis=1)

@@ -87,6 +87,10 @@ def prepare_events_data(perfect_foresight=False):
 
         events = pd.concat(events_exp, axis=1)
 
+    # # denmark's events are ECB's events
+    # # TODO: delete this
+    # events.loc[:, "dkk"] = events.loc[:, "eur"]
+
     events = events.dropna(how="all")
 
     return events
@@ -121,11 +125,10 @@ def prepare_fx_data():
 
 
 def fig_event_study(events, ret, direction, mean_type="count_weighted",
-                    window=(-10, -1, 1, 5), ci_kwds=None, ci_exog=None):
+                    window=(-10, -1, 1, 5), ci_kwds=None):
     """
     """
-    if ci_kwds is None:
-        ci_kwds = {"ps": 0.95, "method": "boot", "n_iter": 100}
+    events_old = events.copy()
 
     # unpack window
     wa, wb, wc, wd = window
@@ -137,6 +140,8 @@ def fig_event_study(events, ret, direction, mean_type="count_weighted",
         events = events.copy().where(events > 0).dropna(how="all")
     elif direction == "no_changes":
         events = events.copy().where(events == 0).dropna(how="all")
+    elif direction == "all":
+        events = events.dropna(how="all")
     else:
         raise ValueError("Not implemented.")
 
@@ -144,18 +149,25 @@ def fig_event_study(events, ret, direction, mean_type="count_weighted",
     es = EventStudy(ret, events, window, mean_type=mean_type)
 
     # confidence interval
-    if (ci_kwds["method"] == "simple") & \
-            (ci_kwds.get("variances", None) is None):
-        variances = (es.data**2).where(es.mask_between_events).ewm(
-            alpha=0.4).mean()
-        variances = variances.where(es.events.notnull()).reindex(
-            index=es.events.index)
-        ci_kwds["variances"] = variances
-
-    if ci_exog is None:
-        _ = es.get_ci(**ci_kwds)
+    # simple
+    if ci_kwds["method"] == "simple":
+        if ci_kwds.get("variances", None) is None:
+            variances = (es.data**2).where(es.mask_between_events).ewm(
+                alpha=0.4).mean()
+            variances = variances.where(es.events.notnull()).reindex(
+                index=es.events.index)
+            ci_kwds["variances"] = variances
+            ci_kwds.pop("drop_events_from_boot")
     else:
-        es.ci = ci_exog
+        # exclude events or not
+        if ci_kwds.pop("drop_events_from_boot"):
+            tmp_es = EventStudy(ret, events_old.dropna(how="all"), window)
+            x_from_data = ~tmp_es.mask_between_events
+            ci_kwds.update({"exclude_from_data": x_from_data})
+        else:
+            ci_kwds.update({"exclude_from_data": pd.DataFrame()})
+
+    _ = es.get_ci(**ci_kwds)
 
     # car -------------------------------------------------------------------
     cumsums = es.car.mean(axis=1, level="assets")
@@ -460,16 +472,44 @@ def main0():
 def main1():
     """
     """
-    curs = ["aud", "cad", "chf", "eur", "gbp", "nzd", "nok", "sek"]
+    # curs = ["aud", "cad", "chf", "eur", "gbp", "nzd", "nok", "sek"]
+    #
+    # ds = prepare_fx_data().loc[:, curs]
+    # events = prepare_events_data(perfect_foresight=True).loc[:, curs]
+    #
+    # fig, ax = fig_event_study(events, ds, "cut", mean_type="count_weighted",
+    #                           window=(-10, -1, 1, 5),
+    #                           ci_kwds={"method": "boot", "ps": 0.99,
+    #                                    "n_iter": 125})
 
-    ds = prepare_fx_data().loc[:, curs]
-    events = prepare_events_data(perfect_foresight=True).loc[:, curs]
+    curs = ["aud", "cad", "eur", "gbp", "nok", "nzd", "sek", "chf"]
 
-    fig, ax = fig_event_study(events, ds, "cut", mean_type="count_weighted",
-                              window=(-10, -1, 1, 5),
-                              ci_kwds={"method": "boot", "ps": 0.99,
-                                       "n_iter": 125})
+    # fetch spot returns
+    ds = prepare_fx_data().loc["2000-11":, curs]
 
+    # fetch events
+    events = prepare_events_data(perfect_foresight=True).loc["2000-11":, curs]
+
+    # parameters for the confidence band
+    ci_kwds = {
+        "method": "boot",
+        "ps": 0.99997,
+        "n_iter": 500,
+        "fillna": True,
+        "drop_events_from_boot": True
+    }
+
+    indi, avg = fig_event_study(events, ds,
+                                direction="cut",
+                                mean_type="count_weighted",
+                                window=(-10, -1, 0, 5),
+                                ci_kwds=ci_kwds)
+
+    # out_path = data_path + settings["fig_folder"]
+    # avg.tight_layout()
+    # avg.savefig(out_path+"booted_ci_95_cut_m_500_drop_evt_false.pdf")
+
+    plt.show()
     return
 
 
