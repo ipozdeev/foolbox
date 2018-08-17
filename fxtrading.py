@@ -89,46 +89,6 @@ class StrategyFactory:
 
         return actions
 
-    @staticmethod
-    def raise_frequency(flags, freq):
-        """Upsample position flags prohibiting looking-ahead.
-
-        Basically, implements .resample(freq) broadcasting the monthly
-        signal backwards. It is assumed that `freq` is higher than the
-        frequency of observations in `flags`, e.g. the latter are
-        monthly and daily trading is the goal. In such case the actions are
-        asserted to happen on the first day of each month, when the
-        previous-month signal is surely available.
-
-        Parameters
-        ----------
-        flags : pandas.DataFrame
-            of flags
-        freq : str
-            pandas frequency, e.g. 'B'
-
-        Returns
-        -------
-        res : pandas.DataFrame
-            reindexed to have frequency `freq`
-
-        """
-        assert isinstance(freq, str) and (len(freq) < 2)
-
-        flags_resp = flags.resample(freq).bfill()
-
-        # kill first period, making sure that trading happens on the
-        # first day of the new month and NOT on the last day of the
-        # previous month, as info is unavailable then
-        res = flags_resp.shift(1)
-
-        # TODO: below is old implementation, do not erase unless certain
-        # flags = flags_resp.mask(
-        #     flags.shift(-1).resample(raise_freq).last().shift(1).notnull(),
-        #     flags_resp.shift(1))
-
-        return res
-
 
 class FXTradingStrategy:
     """
@@ -184,12 +144,22 @@ class FXTradingStrategy:
 
     @position_weights.getter
     def position_weights(self):
+        """Get position weights.
+
+        Fills missing values with 0.0: zero position weight. Eases
+        computation of statistics, but watch out for fully empty rows!
+
+        Returns
+        -------
+        pandas.DataFrame
+
+        """
         if self._position_weights is None:
             self._position_weights = \
                 StrategyFactory().position_flags_to_weights(
                     self.position_flags, self._leverage)
 
-        return self._position_weights
+        return self._position_weights.dropna(how="all").fillna(0.0)
 
     @position_weights.setter
     def position_weights(self, value):
@@ -245,7 +215,8 @@ class FXTradingStrategy:
 
         return cls(position_flags=position_flags, leverage=leverage)
 
-    def upsample(self, freq, **kwargs):
+    @classmethod
+    def upsample(cls, freq, **kwargs):
         """Change strategy to a higher frequency without changing the signals.
 
         Parameters
@@ -263,7 +234,7 @@ class FXTradingStrategy:
         assert isinstance(freq, str) and (len(freq) < 2)
 
         # operate on position flags
-        new_weights = self.position_weights.copy()
+        new_weights = cls.position_weights.copy()
 
         # resample
         new_weights = new_weights.resample(freq, **kwargs).bfill()
@@ -273,7 +244,7 @@ class FXTradingStrategy:
         # previous 'month', as info is still unavailable then
         new_weights = new_weights.shift(1)
 
-        new_strat = FXTradingStrategy(position_weights=new_weights)
+        new_strat = cls(position_weights=new_weights)
 
         return new_strat
 

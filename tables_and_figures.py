@@ -35,8 +35,8 @@ def fama_macbeth_first(Y, X):
         betas[:,c] = B
 
     # store alphas separately
-    a = betas[0,:]
-    b = betas[1:,:]
+    a = betas[0, :]
+    b = betas[1:, :]
 
     # construct panel whose slice along time axis (`y`.index) is `betas`
     b = pd.Panel(
@@ -46,6 +46,7 @@ def fama_macbeth_first(Y, X):
         minor_axis=x.columns[1:])
 
     return b, a
+
 
 def fama_macbeth_second(Y, betas):
     """ Perform second stage of Fama-MacBeth.
@@ -145,7 +146,7 @@ def descriptives(data, scale=12, use_statsmodels=False, **kwargs):
 
     # Names for rows in the output DataFrame
     rows = ["mean", "se_mean", "tstat", "median", "std", "q95",
-            "q05", "skewness", "kurtosis", "sharpe", "ac1", "se_ac1"]
+            "q05", "skewness", "kurtosis", "sharpe", "ac1", "se_ac1", "count"]
 
     # Generate the output DataFrame
     out = pd.DataFrame(index=rows, columns=data.columns, dtype=float)
@@ -159,6 +160,7 @@ def descriptives(data, scale=12, use_statsmodels=False, **kwargs):
     out.loc["skewness", :] = data.skew()
     out.loc["kurtosis", :] = data.kurtosis()
     out.loc["sharpe", :] = out.loc["mean"].div(out.loc["std"])
+    out.loc["count", :] = data.count()
 
     # Iterate over input's columns, computing statistics
     for c, c_col in data.iteritems():

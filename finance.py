@@ -289,8 +289,11 @@ class PolicyExpectation:
             e.g. 'usd'
         start_dt : str
         proxy_rate_pickle : str
+            path to pickle w/rates that are policy tgt rates or proxies thereof
         e_proxy_rate_pickle : str
+            path to pickle w/rates expected to prevail after the next event
         meetings_pickle : str
+            path to pickle w/events
         ffill : boolean
 
         Returns
@@ -298,6 +301,7 @@ class PolicyExpectation:
         PolicyExpectation
 
         """
+        # default values
         if proxy_rate_pickle is None:
             proxy_rate_pickle = "overnight_rates.p"
         if e_proxy_rate_pickle is None:
@@ -1094,20 +1098,26 @@ class PolicyExpectation:
 
 def into_currency(data, new_cur, counter_cur="usd"):
     """
+
     Parameters
     ----------
-    data :
-        expressed in USD per unit
+    data : pandas.DataFrame
+        expressed in USD
+    new_cur : str
+    counter_cur : str
+
+    Returns
+    -------
+
     """
     if new_cur == counter_cur:
         return data
 
     # re-express everything in units of new_cur
-    new_data = data.drop([new_cur], axis=1).subtract(
-        data[new_cur], axis="index")
+    new_data = data.sub(data[new_cur], axis="index").drop(new_cur, axis=1)
 
     # reinstall
-    new_data["usd"] = -1*data[new_cur]
+    new_data.loc[:, "usd"] = -1*data[new_cur]
 
     return new_data
 
@@ -1637,9 +1647,9 @@ def realized_variance(data, freq='M', n_in_day=None, r_vola=False):
 
     # realized variance
     if isinstance(freq, str):
-        rv = data.pow(2).resample(freq).mean() * n_in_day * 252
+        rv = data.pow(2).resample(freq).mean() * n_in_day * 254
     else:
-        rv = data.pow(2).rolling(freq).mean() * n_in_day * 252
+        rv = data.pow(2).rolling(freq).mean() * n_in_day * 254
 
     # take square root if asked
     if r_vola:
@@ -1709,7 +1719,7 @@ def realized_covariance(data, sample_freq='M', n_in_day=None, r_corr=False):
     res = pd.concat(res, axis=0)
 
     # annualize
-    res *= 252
+    res *= 254
 
     # level names: better when dates are named as 'date'
     res.index.levels.names = [data.index.name, data.columns.name]
