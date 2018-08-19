@@ -372,9 +372,9 @@ class DynamicOLS:
     def __init__(self, y0, x0):
         """
         """
-        assert isinstance(x0.squeeze(), pd.Series)
+        # assert isinstance(x0.squeeze(), pd.Series)
 
-        y, x = y0.align(x0.squeeze(), axis=0, join="inner")
+        y, x = y0.align(x0, axis=0, join="inner")
 
         if isinstance(y, pd.Series):
             if y.name is None:
@@ -382,8 +382,9 @@ class DynamicOLS:
             y = y.to_frame()
 
         # add name in case `y` does not have one
-        if x.name is None:
-            x.name = "regressor"
+        if isinstance(x, pd.Series):
+            x = x.to_frame(x.name if x.name is not None else "regressor")
+            self.x_colnames = x.columns
 
         self.x = x
         self.y = y
@@ -395,6 +396,7 @@ class DynamicOLS:
         method : str
             'simple', 'rolling', 'expanding', 'grouped_by';
             example with grouped_by: by=TimeGrouper(freq='M')
+        denom : bool
 
         Returns
         -------
@@ -418,52 +420,77 @@ class DynamicOLS:
     def fit_to_series(y, x, method, denom=False, **kwargs):
         """Calculate rolling one-factor (+constant) beta of a series."""
 
-        assert isinstance(y, pd.Series) & isinstance(x, pd.Series)
+        # assert isinstance(y, pd.Series) & isinstance(x, pd.Series)
+        assert isinstance(y, pd.Series)
+
+        # helper to compute inv(X'X)
+        def invert_pandas(df):
+            aux_res = pd.DataFrame(np.linalg.inv(df), index=df.index,
+                                   columns=df.columns)
+            return aux_res
 
         # align y and x, keep names (important because of name of `y` mostly)
-        yx = pd.concat((y, x), axis=1, ignore_index=False)
+        y_concat_x = pd.concat((y, x), axis=1, ignore_index=False)
+
+        # # dropna, demean
+        # yx = yx.dropna() - yx.dropna().mean()
+        y_concat_x = y_concat_x.dropna()
 
         # calculate covariance:
         #   items is time, major_axis and minor_axis are y.name + x.columns
-        if method == "rolling":
+        if method in ("rolling", "expanding"):
             # rolling covariance
-            roll_cov_yx = yx.rolling(**kwargs).cov()
+            atr = getattr(y_concat_x, method)
+            roll_cov_yx = atr(**kwargs).cov()
 
-            # calculate beta
-            b = roll_cov_yx.xs(y.name, level=1, axis=0, drop_level=True)\
-                .loc[:, x.name] /\
-                roll_cov_yx.xs(x.name, level=1, axis=0, drop_level=True)\
-                    .loc[:, x.name]
-            # b = roll_cov_yx.loc[idx[:, y.name], x.name]/\
-            #     roll_cov_yx.loc[idx[:, x.name], x.name]
+            # roll_cov_yx = y_concat_x.rolling(**kwargs).cov()
 
-            # calculate alpha
-            a = y.rolling(**kwargs).mean() - b*x.rolling(**kwargs).mean()
+            # fetch X'X
+            xx = roll_cov_yx.drop(y.name, axis=1).drop(y.name, axis=0, level=1)
 
-            if denom:
-                d = roll_cov_yx.loc[:, x.name, x.name]
+            # fetch X'Y
+            xy = roll_cov_yx[y.name].drop(y.name, axis=0, level=1)
 
-        elif method == "expanding":
-            # expanding covariance
-            roll_cov_yx = yx.expanding(**kwargs).cov()
+            # calculate beta: inv(X'X)(X'Y)
+            xx_inv = xx.groupby(axis=0, level=0).apply(invert_pandas)
+            b = xx_inv.mul(xy, axis=0).groupby(axis=0, level=0).sum()
 
-            # calculate beta
-            b = roll_cov_yx.xs(y.name, level=1, axis=0, drop_level=True)\
-                .loc[:, x.name] /\
-                roll_cov_yx.xs(x.name, level=1, axis=0, drop_level=True)\
-                    .loc[:, x.name]
-            # b = roll_cov_yx.loc[idx[:, y.name], x.name] /\
-            #     roll_cov_yx.loc[idx[:, x.name], x.name]
+            # b_old = roll_cov_yx.xs(y.name, level=1, axis=0, drop_level=True)\
+            #     .loc[:, x.name] /\
+            #     roll_cov_yx.xs(x.name, level=1, axis=0, drop_level=True)\
+            #     .loc[:, x.name]
 
-            # calculate alpha
-            a = y.expanding(**kwargs).mean() - b*x.expanding(**kwargs).mean()
+            # calculate alpha: a = mean(y) - mean(y_hat)
+            # a = y.rolling(**kwargs).mean() - \
+            #     x.rolling(**kwargs).mean().mul(b).sum(axis=1)
+            a = getattr(y, method)(**kwargs).mean() - \
+                getattr(x, method)(**kwargs).mean().mul(b).sum(axis=1)
 
             if denom:
-                d = roll_cov_yx.loc[:, x.name, x.name]
+                # d = roll_cov_yx.loc[:, x.name, x.name]
+                d = np.nan
+
+        # elif method == "expanding":
+        #     # expanding covariance
+        #     roll_cov_yx = y_concat_x.expanding(**kwargs).cov()
+        #
+        #     # calculate beta
+        #     b = roll_cov_yx.xs(y.name, level=1, axis=0, drop_level=True)\
+        #         .loc[:, x.name] /\
+        #         roll_cov_yx.xs(x.name, level=1, axis=0, drop_level=True)\
+        #             .loc[:, x.name]
+        #     # b = roll_cov_yx.loc[idx[:, y.name], x.name] /\
+        #     #     roll_cov_yx.loc[idx[:, x.name], x.name]
+        #
+        #     # calculate alpha
+        #     a = y.expanding(**kwargs).mean() - b*x.expanding(**kwargs).mean()
+        #
+        #     if denom:
+        #         d = roll_cov_yx.loc[:, x.name, x.name]
 
         elif method == "grouped_by":
             # grouped_by covariance
-            roll_cov_yx = yx.groupby(**kwargs).cov()
+            roll_cov_yx = y_concat_x.groupby(**kwargs).cov()
             if roll_cov_yx.index.nlevels > 2:
                 raise ValueError("Ensure the grouper returns two levels!")
 
@@ -479,10 +506,14 @@ class DynamicOLS:
                 d = roll_cov_yx.loc[idx[:, x.name], x.name].xs(
                     x.name, level=1, axis=0)
 
-        res = pd.concat((a.rename("const"), b.rename(x.name)), axis=1)
+        res = pd.concat((a.rename("const"), b), axis=1)
 
         if denom:
             res.loc[:, "denominator"] = d
+
+        res = res.reindex(index=y.index)
+        res.loc[y.first_valid_index():y.last_valid_index()] = \
+            res.loc[y.first_valid_index():y.last_valid_index()].ffill()
 
         return res
 
