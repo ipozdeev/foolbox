@@ -596,7 +596,7 @@ class PrincipalComponents:
         if not hasattr(self, "_loadings"):
             return None
 
-        return self._loadings.loc[:,:("pc_"+str(self.n_comps))]
+        return self._loadings.loc[:, :("pc_"+str(self.n_comps))]
 
     def estimate(self):
         """
@@ -614,9 +614,9 @@ class PrincipalComponents:
 
         # construct matrix of loadings
         loadings = pd.DataFrame(
-            data=eigvec[:,arg_sort],
+            data=eigvec[:, arg_sort],
             index=self.X_orig.columns,
-            columns=["pc_"+str(p) for p in range(1,len(eigval)+1)])
+            columns=["pc_"+str(p) for p in range(1, len(eigval)+1)])
 
         self._loadings = loadings
 
