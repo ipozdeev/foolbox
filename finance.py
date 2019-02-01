@@ -15,7 +15,7 @@ from foolbox.utils import *
 from foolbox.bankcalendars import *
 from foolbox.portfolio_construction import multiple_timing
 from foolbox.api import *
-from foolbox.trading import EventTradingStrategy
+from foolbox.landfill.trading import EventTradingStrategy
 
 my_red = "#ce3300"
 my_blue = "#2f649e"

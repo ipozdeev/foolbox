@@ -5,7 +5,7 @@ import pandas as pd
 import numpy as np
 import random
 
-from foolbox.EventStudy import EventStudy
+from foolbox.eventstudy import EventStudy
 
 class TestEventStudy(unittest.TestCase):
     """

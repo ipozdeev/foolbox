@@ -3,6 +3,7 @@ import numpy as np
 import statsmodels.api as sm
 from scipy import stats
 from foolbox import econometrics as ec
+from foolbox.econometrics._estimators import nw_cov
 import matplotlib
 import matplotlib.pyplot as plt
 plt.rc("font", family="serif", size=12)
@@ -560,10 +561,9 @@ def fmb_results(factors, lambdas, alphas, scale=12):
 
     # Compute Newey-West standard errors of risk-premia
     # TODO: check consistency with NW in ec.rOls, there are some discrepancies
-    se_nw = np.sqrt(np.diag(ec.nw_cov(lambdas.dropna())))  # get the Newey-West se's
+    se_nw = np.sqrt(np.diag(nw_cov(lambdas.dropna())))  # get the Newey-West se's
     se_nw = pd.DataFrame(se_nw, index=lambdas.columns, columns=["se_NW"],
                          dtype="float").T         # convert into a dataframe
-
 
     # Write standard errors of risk premia into output
     out.ix["lambdas"] = lambdas.mean() * scale  # average risk premia
@@ -578,7 +578,7 @@ def fmb_results(factors, lambdas, alphas, scale=12):
     * alphas.cov()
 
     # Second, compute Newey-West VCV matrix of alphas
-    vcv_alphas_nw = ec.nw_cov(alphas.dropna())
+    vcv_alphas_nw = nw_cov(alphas.dropna())
 
     # Third, compute test statistics along with corresponding p-values
     chi2_stat_sh = alphas.mean().dot(np.linalg.inv(vcv_alphas_sh))\
