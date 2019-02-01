@@ -641,7 +641,8 @@ class EventStudy:
         return res
 
     def plot(self, xs_level="assets", plot_ci=False):
-        """
+        """Plot the mean and possibly confidence interval around it.
+
         Parameters
         ----------
         xs_level : str

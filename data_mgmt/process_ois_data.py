@@ -87,7 +87,7 @@ def fetch_tr_ois_data(data_path=None):
     if data_path is None:
         data_path = set_credentials.set_path("research_data/fx_and_events/")
 
-    fname = data_path + "tr_ois_2000_2017_d.xlsx"
+    fname = data_path + "tr_ois_2000_2019_d.xlsx"
 
     curs = ["aud", "cad", "chf", "eur", "gbp", "jpy", "nzd", "sek", "usd"]
 
@@ -111,10 +111,8 @@ def fetch_tr_ois_data(data_path=None):
     on_pickle_name = "overnight_rates_tr.p"
     ois_pickle_name = "ois_tr_1w_30y.p"
 
-    with open(data_path + on_pickle_name, mode="wb") as fname:
-        pickle.dump(ois_data_dict.pop("on"), fname)
-    with open(data_path + ois_pickle_name, mode="wb") as fname:
-        pickle.dump(ois_data_dict, fname)
+    pd.to_pickle(ois_data_dict.pop("on"), data_path + on_pickle_name)
+    pd.to_pickle(ois_data_dict, data_path + ois_pickle_name)
 
 
 def merge_ois_data(*args):
@@ -143,6 +141,7 @@ def merge_ois_data(*args):
     # ois_ds_icap = ois_ds["icap"]
 
     data = args[0]
+    data_merged = dict()
 
     for mat, v in data.items():
 
@@ -152,7 +151,9 @@ def merge_ois_data(*args):
             v, _ = v.align(new_df, axis=0, join="outer")
             v.fillna(new_df, inplace=True)
 
-    # # loop over maturities
+        data_merged[mat] = v
+
+        # # loop over maturities
     # for m in ois_bloomi.keys():
     #
     #     # collect into dictionary to be able to prioritize
@@ -179,26 +180,27 @@ def merge_ois_data(*args):
     # pickle
     pickle_name = "ois_merged_{}.p".format(len(args))
 
-    with open(data_path + pickle_name, mode="wb") as fname:
-        pickle.dump(data, fname)
+    pd.to_pickle(data_merged, data_path + pickle_name)
 
-    return data
+    # return data
 
 
 if __name__ == "__main__":
 
     # fetch_datastream_ois_data(data_path=data_path)
-    fetch_bloomberg_ois_data(data_path=data_path)
+    # fetch_tr_ois_data()
+    # fetch_bloomberg_ois_data(data_path=set_credentials.set_path(
+    #     "option_implied_covs/data/raw/ir/", which="local"))
     # res = merge_ois_data(priority="bit")
     # fetch_tr_ois_data()
 
-    # ois_tr = pd.read_pickle(data_path + "ois_tr_1w_30y.p")
-    # ois_bl = pd.read_pickle(data_path + "ois_bloomi_1w_30y.p")
-    # ois_two = pd.read_pickle(data_path + "ois_tr_icap_1m_3m.p")
-    # ois_ic = ois_two["icap"]
-    # ois_tr_old = ois_two["tr"]
+    ois_tr = pd.read_pickle(data_path + "ois_tr_1w_30y.p")
+    ois_bl = pd.read_pickle(data_path + "ois_bloomi_1w_30y.p")
+    ois_two = pd.read_pickle(data_path + "ois_tr_icap_1m_3m.p")
+    ois_ic = ois_two["icap"]
+    ois_tr_old = ois_two["tr"]
 
-    # new_merged = merge_ois_data(ois_bl, ois_ic, ois_tr_old, ois_tr)
+    new_merged = merge_ois_data(ois_bl, ois_tr, ois_ic, ois_tr_old)
     # old_merged = pd.read_pickle(data_path + "ois_bloomi_1w_30y.p")
 
 

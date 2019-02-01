@@ -12,11 +12,76 @@ major_locator = mdates.YearLocator(2)
 
 out_path = data_path + settings["fig_folder"]
 
+def collect_data():
+    """
+
+    Returns
+    -------
+
+    """
+    # fx data
+    fx_pickle_name = "fx_data_tr_2000_2018_d.p"
+    # fx_pickle_name = "fx_by_tz_aligned_d.p"
+
+    fx = pd.read_pickle(data_path + fx_pickle_name)
+
+    # events
+    events_pickle_name = "events_reg_irreg_ann_eff.p"
+    events_data = pd.read_pickle(data_path + events_pickle_name)
+    events = events_data["scheduled"]["announced"]["joint_chg"]
+
+    # ir prob
+    irprob_pickle_name = "irprob_from_1m_ois_w_rp_subtracted.p"
+    irprob = pd.read_pickle(data_path + irprob_pickle_name)
+
+    # implied rates
+    irprob_pickle_name = "irprob_from_1m_ois_w_rp_subtracted.p"
+    irprob = pd.read_pickle(data_path + irprob_pickle_name)
+
+    # align
+    common_idx = pd.date_range(settings["sample_start"],
+                               settings["sample_end"],
+                               freq="B")
+
+    fx = fx.reindex(index=common_idx)
+    events = events.reindex(index=common_idx)
+    irprob = irprob.reindex(index=common_idx)
+
+    return fx, events, irprob
+
+
+def construct_signals_from_irprob(irprob_df, events_df, horizon, threshold):
+    """
+
+    Parameters
+    ----------
+    irprob_df : pandas.DataFrame
+        reindexed in a proper way (w/o large gaps, e.g. daily)
+    events_df :
+    pandas.DataFrame
+        reindexed in a proper way (w/o large gaps, e.g. daily)
+    horizon : int
+    threshold : float
+
+    Returns
+    -------
+    res : pandas.DataFrame
+
+    """
+    res = irprob_df\
+        .gt(threshold)\
+        .mul(np.sign(events_df.shift(-horizon))) \
+        .shift(horizon)
+
+    return res
+
+
 if __name__ == "__main__":
 
     # settings --------------------------------------------------------------
     start_date = pd.to_datetime(settings["sample_start"])
     end_date = pd.to_datetime(settings["sample_end"])
+    end_date = pd.to_datetime("2018-12-31")
     drop_curs = settings["drop_currencies"]
     avg_impl_over = settings["avg_impl_over"]
     avg_refrce_over = settings["avg_refrce_over"]
@@ -24,13 +89,7 @@ if __name__ == "__main__":
     base_th = settings["base_threshold"]
 
     # data ------------------------------------------------------------------
-    # spot and swap data
-    with open(data_path+"fx_by_tz_aligned_d.p", mode="rb") as fname:
-        data_merged_tz = pickle.load(fname)
-
-    # events
-    with open(data_path+"events.p", mode="rb") as fname:
-        data_events = pickle.load(fname)
+    fx_data, events_data, irprob = collect_data()
 
     # trading environment ---------------------------------------------------
     fx_tr_env = FXTradingEnvironment.from_scratch(
@@ -38,69 +97,77 @@ if __name__ == "__main__":
             "bid": data_merged_tz["spot_bid"],
             "ask": data_merged_tz["spot_ask"]},
         swap_points={
-            "bid": data_merged_tz["tnswap_bid"],
-            "ask": data_merged_tz["tnswap_ask"]}
+            "bid": data_merged_tz["fwd_tn_bid"] - data_merged_tz["spot_bid"],
+            "ask": data_merged_tz["fwd_tn_ask"] - data_merged_tz["spot_ask"]}
             )
 
     # tune trading environment
-    fx_tr_env.drop(labels=["dkk"], axis="minor_axis", errors="ignore")
+    fx_tr_env.drop("dkk", axis=1, level="currency", errors="ignore")
+    fx_tr_env.remove_bid_ask_violation()
     fx_tr_env.remove_swap_outliers()
     fx_tr_env.reindex_with_freq('B')
     fx_tr_env.align_spot_and_swap()
     fx_tr_env.fillna(which="both", method="ffill")
 
-    timeline = fx_tr_env.spot_prices.major_axis
-    curs_extend = fx_tr_env.spot_prices.minor_axis
-    curs = [p for p in  curs_extend if p not in ["nok", "jpy"]]
+    # timeline = fx_tr_env.spot_prices.index
+    curs_extend = fx_tr_env.currencies
+    curs = [p for p in curs_extend if p not in ["nok", "jpy"]]
 
     # signals ---------------------------------------------------------------
     # forecast
-    signals_fcast = get_pe_signals(curs, base_lag, base_th*100, data_path,
-        fomc=False,
-        avg_impl_over=avg_impl_over,
-        avg_refrce_over=avg_refrce_over,
-        bday_reindex=True)
+    # signals_fcast = get_pe_signals(curs, base_lag, base_th*100, data_path,
+    #     fomc=False,
+    #     avg_impl_over=avg_impl_over,
+    #     avg_refrce_over=avg_refrce_over,
+    #     bday_reindex=True)
     # signals = signals.replace(0.0, np.nan)
+    signals_fcast = irprob\
+        .reindex(index=timeline)\
+        .gt(0.33)\
+        .mul(np.sign(events.reindex(index=timeline).shift(-12)))\
+        .drop("usd", axis=1)\
+        .shift(12)
 
     signals_fcast.loc[:, "nok"] = np.nan
     signals_fcast.loc[:, "jpy"] = np.nan
 
-    signals_fomc = get_pe_signals(curs_extend, base_lag,
-        base_th*100, data_path,
-        fomc=True,
-        avg_impl_over=avg_impl_over,
-        avg_refrce_over=avg_refrce_over,
-        bday_reindex=True)
-    signals_fomc = signals_fomc.replace(0.0, np.nan)
+    # signals_fomc = get_pe_signals(curs_extend, base_lag,
+    #     base_th*100, data_path,
+    #     fomc=True,
+    #     avg_impl_over=avg_impl_over,
+    #     avg_refrce_over=avg_refrce_over,
+    #     bday_reindex=True)
+    # signals_fomc = signals_fomc.replace(0.0, np.nan)
 
-    signals_fcast = signals_fcast.reindex(index=timeline).replace(0.0, np.nan)\
-        .fillna(signals_fomc)
+    signals_fcast = signals_fcast.reindex(index=timeline).replace(0.0, np.nan)
+        # .fillna(signals_fomc)
 
     signals_fcast = signals_fcast.loc[start_date:end_date,:]
     # signals_perf.dropna(how="all")
 
     # perfect foresight
-    signals_perf = np.sign(data_events["joint_cbs"])
+    signals_perf = np.sign(events)
     signals_perf = signals_perf.loc[:, curs_extend]
     # signals_perf = signals_perf.replace(0.0, np.nan)
 
-    signals_perf_us = -1*pd.concat(
-        [np.sign(data_events["joint_cbs"].loc[:, "usd"]).rename(p) \
-            for p in curs_extend], axis=1)
+    # signals_perf_us = -1*pd.concat(
+    #     [np.sign(events.loc[:, "usd"]).rename(p) \
+    #         for p in curs_extend], axis=1)
 
     # signals_perf_us = signals_perf_us.replace(0.0, np.nan)
 
-    signals_perf = signals_perf.reindex(index=timeline).replace(0.0, np.nan)\
-        .fillna(signals_perf_us)
-
-    # make forecast consistent
-    signals_perf = signals_perf.where(signals_fcast)
+    # signals_perf = signals_perf.reindex(index=timeline).replace(0.0, np.nan)\
+    #     .fillna(signals_perf_us)
+    #
+    # # make forecast consistent
+    signals_perf = signals_perf.where(signals_fcast.notnull())
     # signals_perf.dropna(how="all")
 
-    signals_perf = signals_perf.loc[start_date:end_date,:]
+    signals_perf = signals_perf.reindex(index=timeline)\
+        .loc[start_date:end_date, :]
 
-    signals_fcast = signals_fcast.replace(0.0, np.nan)
     signals_perf = signals_perf.replace(0.0, np.nan)
+    # signals_fcast = signals_fcast.replace(0.0, np.nan)
 
     # trading strategy ------------------------------------------------------
     # forecast
@@ -112,9 +179,9 @@ if __name__ == "__main__":
     trading_fcast = FXTrading(environment=fx_tr_env, strategy=strategy_fcast)
 
     res_fcast = trading_fcast.backtest(method="unrealized_pnl")
-    # res_fcast.dropna().plot()
-    # taf.descriptives(np.log(res_fcast).diff().to_frame()*10000, scale=10)
-    # res_fcast.to_clipboard()
+    res_fcast.dropna().plot()
+    taf.descriptives(np.log(res_fcast).diff().to_frame()*10000, scale=10)
+    res_fcast.to_clipboard()
 
     # perfect
     strategy_perf = FXTradingStrategy.from_events(signals_perf,

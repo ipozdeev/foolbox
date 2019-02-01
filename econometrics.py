@@ -166,7 +166,8 @@ class GARCH:
                                         trace=False, include_mean=include_mean,
                                         **kwargs)
 
-        fitted.data_orig = data_clean
+        fitted.data_orig = data
+        fitted.data_clean = data_clean
 
         return fitted
 

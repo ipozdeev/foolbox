@@ -16,7 +16,7 @@ first_year = 1989
 last_year = 2018
 
 # Futures are available for each month
-months = ["F", "G", "H", "J", "K", "M", "N", "Q", "U", "V", "X", "Z"]
+months = ["F", "G", "H", "J", "K", "M", "N", "garch_lags", "U", "V", "X", "Z"]
 years = [str(year) for year in np.arange(first_year, last_year+1)]
 
 # Create a list to iterate requests over

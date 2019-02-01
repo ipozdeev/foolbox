@@ -1,46 +1,56 @@
 import pandas as pd
-import matplotlib.pyplot as plt
-from pandas.tseries.offsets import MonthEnd, QuarterEnd
-from foolbox.data_mgmt import set_credentials as setcred
+import numpy as np
+from foolbox.api import set_credentials as set_cred
+from foolbox.api import PolicyExpectation
 
-path_to_data = setcred.set_path("research_data/fx_and_events/")
+path_to_data = set_cred.set_path("research_data/fx_and_events/")
 
-def get_cpi():
+
+def get_data(path_to_data):
     """
+
+    Parameters
+    ----------
+    path
 
     Returns
     -------
 
     """
-    cpi_x = pd.read_excel(path_to_data + "fx_and_macro_data.xlsm",
-                          index_col=0, parse_dates=True, skiprows=4,
-                          header=None, sheet_name="CPI_sadj_x_aud_nzd")
+    events_data = pd.read_pickle(path_to_data + "events.p")
+    fomc_meetings = events_data["joint_cbs"].loc[:, "usd"].dropna()
+    policy_rate = events_data["joint_cbs_lvl"].loc[:, "usd"].dropna()
 
-    cols = ["USD", "GBP", "CHF", "JPY", "CAD", "SEK", "NOK", "DKK", "EUR",
-            "DEM"]
+    on_rates_data = pd.read_pickle(path_to_data + "overnight_rates.p")
+    ff_rate = on_rates_data.loc[:, "usd"]
 
-    cpi_x.columns = [p.lower() for p in cols]
-    cpi_x.index = cpi_x.index.map(lambda x: x + MonthEnd())
+    ff = pd.read_pickle(path_to_data + "fed_funds_futures_settle.p")
 
-    cpi_y = pd.read_excel(path_to_data + "fx_and_macro_data.xlsm",
-                          index_col=0, parse_dates=True, skiprows=4,
-                          header=None, sheet_name="CPI_sadj_aud_nzd")
-    cpi_y.columns = ["aud", "nzd"]
-    cpi_y.index = cpi_y.index.map(lambda x: x + QuarterEnd())
+    pe = PolicyExpectation.from_funds_futures(meetings=fomc_meetings,
+                                              policy_rate=policy_rate,
+                                              proxy_rate=ff_rate,
+                                              funds_futures=ff)
 
-    cpis = pd.concat((cpi_x, cpi_y), axis=1)
+    with pd.HDFStore(path_to_data + "fomc_expected_rate_1993_2017_d.h5",
+                     mode='w') as hangar:
+        hangar.put("e_rate", pe.expected_proxy_rate, format='fixed')
 
-    with pd.HDFStore(path_to_data + "cpi_1961_2017_m.h5") as hangar:
-        hangar.put("cpi", cpis)
-
-    return cpis
-
+    return pe.expected_proxy_rate
+    
+    
 if __name__ == "__main__":
-    with pd.HDFStore(path_to_data + "strategies_m.h5", mode='r') as hangar:
-        data = hangar.get("strats")
+    path = "c:/Users/Igor/Documents/HSG/hedge_funds_stock_pickers/data/new/"
+    eqt_fname = "pivoted.h5"
 
-    data["vrp"].plot()
-    plt.show()
+    # data = get_data(path + eqt_fname)
 
-    # res = get_cpi()
+    with pd.HDFStore(path + eqt_fname, mode='r') as hangar:
+        # print(hangar.keys())
+        idx = hangar.get("retx").index
 
+    print(idx)
+    # print(stock_r.index)
+
+    res = get_data(path_to_data)
+
+    print(res)

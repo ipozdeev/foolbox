@@ -109,6 +109,95 @@ def calculate_ois_implied_rates(ois_df, overnight_df, events_df, maturity,
     return ir
 
 
+def calculate_ois_implied_rates_stoch(rate_ois, rate_on, events, maturity):
+    """
+
+    Parameters
+    ----------
+    rate_ois
+    rate_on
+    events
+    maturity
+
+    Returns
+    -------
+
+    """
+    if isinstance(rate_ois, pd.DataFrame):
+        res = {
+            col_name: calculate_ois_implied_rates_stoch(
+                col, rate_on[col_name], events[col_name], maturity)
+            for col_name, col in rate_ois.iteritems()
+        }
+        return pd.concat(res, axis=1)
+
+    # from possible strings to pandas.DateOffset ----------------------------
+    maturity_map = {
+        "1w": DateOffset(weeks=1),
+        "2w": DateOffset(weeks=2),
+        "1m": DateOffset(months=1),
+        "2m": DateOffset(months=2),
+    }
+
+    if isinstance(maturity, str):
+        maturity = maturity_map[maturity.lower()]
+
+    # calculate implied rates -----------------------------------------------
+    ois_object = OIS.from_iso(rate_ois.name, maturity=maturity)
+
+    # align
+    _, rate_on = rate_ois.align(rate_on, axis=0, join="outer")
+
+    # this event, to frame + rename
+    this_evt = events.dropna().to_frame("rate_change").loc[rate_ois.index[0]:]
+
+    # reindex by corresponding business day + forward-fill
+    rate_ois = ois_object.reindex_series(rate_ois, method="ffill").dropna()
+    rate_on = ois_object.reindex_series(rate_on, method="ffill")
+
+    # rates expected to prevail before meetings
+    proxy_rate = apply_between_events(
+        rate_on,
+        this_evt,
+        func=lambda x: x.rolling(22, min_periods=1).median(),
+        lag=ois_object.fixing_lag)
+    proxy_rate_var = apply_between_events(
+        rate_on,
+        this_evt,
+        func=lambda x: x.rolling(22, min_periods=1).var(),
+        lag=ois_object.fixing_lag)
+
+    # shift by the lag at which the rates are published
+    proxy_rate = proxy_rate.shift(ois_object.new_rate_lag)
+
+    # for t, t_rate_ois in rate_ois.iteritems():
+    #     ois_object.quote_dt = t
+    #     implied_rates.append(ois_object.get_implied_rate_stoch(
+    #         event_dt=this_evt.loc[t:].iloc[1],
+    #         ois_rate=t_rate_ois,
+    #         rate_mu_pre=proxy_rate.loc[t],
+    #         rate_var=proxy_rate_var.loc[t]
+    #     ))
+
+    pe = PolicyExpectation.from_ois(
+        meetings=this_evt,
+        ois_object=ois_object,
+        ois_rate=rate_ois,
+        rate_on_const=proxy_rate,
+        rate_var=proxy_rate_var,
+        stoch=True)
+
+    # rename + store
+    this_ir = pe.copy().rename(rate_ois.name).astype(float)
+    # implied_rates.append(this_ir)
+    #
+    # # concat, to float (just in case), sort
+    # ir = pd.concat(implied_rates, axis=1)
+    # ir = ir.astype(float).loc[:, sorted(ir.columns)]
+
+    return this_ir
+
+
 def calculate_libor_implied_rates(libor_1m, libor_on, events_data):
     """
     """
@@ -227,17 +316,23 @@ if __name__ == "__main__":
 
     # fetch data ------------------------------------------------------------
     # ois data
-    maturity = "1m"
+    maturity = "2m"
     ois_pkl = "ois_merged_4.p"
 
-    ois_out_pkl = "implied_rates_from_" + maturity + "_ois_4_since.p"
+    ois_out_pkl = "implied_rates_stoch_2_from_" + maturity + "_ois_4_since.p"
     on_pkl = "overnight_rates.p"
-    map_proxy_rate = lambda x: x.rolling(5).mean()
+    # map_proxy_rate = lambda x: x.rolling(5).mean()
 
     ois_data = pd.read_pickle(data_path + ois_pkl)
 
     ois_rate = ois_data[maturity].drop(["jpy", "nok", "dkk"],
         axis=1, errors="ignore")
+
+    # # add risk premium
+    # rp = pd.read_pickle(data_path + "ois_rx_w_day_count.p")
+    # rp = pd.concat(rp, axis=1).xs("2m", axis=1, level=1)
+    # rp = rp.ewm(alpha=0.025).mean().shift(1)
+    # rp = rp.reindex(index=ois_rate.index, method="ffill").drop("jpy", axis=1)
 
     # overnight rates data
     on_rate = pd.read_pickle(data_path + on_pkl)
@@ -247,19 +342,34 @@ if __name__ == "__main__":
     events_data = pd.read_pickle(data_path + events_pickle)
     events = events_data["joint_cbs"]
 
+    ir = calculate_ois_implied_rates_stoch(
+        ois_rate,
+        on_rate, events, maturity)
+
+    ir.to_pickle(data_path + ois_out_pkl)
+
+    aud = pd.read_pickle(data_path + ois_out_pkl)
+    ir = pd.concat((ir, aud), axis=1)
+    ir.to_pickle(data_path + ois_out_pkl)
+
+    # new = pd.read_pickle(data_path + ois_out_pkl)
+    # evt_aud = events["aud"].reindex(index=new.index).fillna(method="bfill",
+    #                                                         limit=12)
+    # new.where(evt_aud.notnull())
+
     # # libor
     # libor_pickle = "libor_spliced_2000_2007_d.p"
     # libor_data = pd.read_pickle(data_path + libor_pickle)
     # libor_1m = libor_data["1m"]
     # libor_on = libor_data["on"]
 
-    # from ois --------------------------------------------------------------
-    ir = calculate_ois_implied_rates(ois_rate, on_rate, events,
-        maturity=maturity,
-        map_proxy_rate="expanding_since_previous", window=5)
-
-    with open(data_path + ois_out_pkl, mode="wb") as hangar:
-        pickle.dump(ir, hangar)
+    # # from ois --------------------------------------------------------------
+    # ir = calculate_ois_implied_rates(ois_rate, on_rate, events,
+    #     maturity=maturity,
+    #     map_proxy_rate="expanding_since_previous", window=5)
+    #
+    # with open(data_path + ois_out_pkl, mode="wb") as hangar:
+    #     pickle.dump(ir, hangar)
 
     # ir = pd.read_pickle(data_path + "implied_rates_from_1m_ois.p")
 

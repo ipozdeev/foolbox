@@ -176,7 +176,7 @@ if __name__ == "__main__":
             loc="upper left")
         ax[p].grid(axis="both", which="major", alpha=0.33, color='k',
             linestyle="--", linewidth=0.5)
-        ax[p].set_title("Q"+str(p) if p > 0 else "event")
+        ax[p].set_title("garch_lags"+str(p) if p > 0 else "event")
 
     # plt.xticks(ticks, labels=new_s_d_rest.loc[ticks].values)
     plt.setp(ax[-1].xaxis.get_majorticklabels(), rotation="horizontal",

@@ -1,42 +1,48 @@
 import pandas as pd
 from foolbox.api import *
+from foolbox.fixed_income import OIS
 from foolbox.wp_tabs_figs.wp_settings import *
 
 
 if __name__ == "__main__":
 
     maturity_to_offset = {
-        "1w": DateOffset(weeks=1),
-        "2w": DateOffset(weeks=2),
-        "1m": DateOffset(months=1),
+        # "1w": DateOffset(weeks=1),
+        # "2w": DateOffset(weeks=2),
+        # "1m": DateOffset(months=1),
+        # "2m": DateOffset(months=2),
         "3m": DateOffset(months=3),
-        "6m": DateOffset(months=6),
-        "9m": DateOffset(months=9),
-        "1y": DateOffset(years=1)
+        # "6m": DateOffset(months=6),
+        # "9m": DateOffset(months=9),
+        # "1y": DateOffset(years=1)
         }
 
-    order = ["1w", "2w", "1m", "3m", "6m", "9m", "1y"]
+    # order = ["1w", "2w", "1m", "2m", "3m", "6m", "9m", "1y"]
+    order = ["3m", ]
+
+    rp_old = pd.read_pickle(data_path + "ois_rp.p")
 
     # data ------------------------------------------------------------------
     # ois data
-    with open(data_path + "ois_all_maturities_bloomberg.p", mode="rb") as hut:
-        ois_data = pickle.load(hut)
+    # with open(data_path + "ois_all_maturities_bloomberg.p", mode="rb") as hut:
+    #     ois_data = pickle.load(hut)
+    ois_data = pd.read_pickle(data_path + "ois_merged_4.p")
 
     # overnight rates
-    on_rates = pd.concat(
-        [p.loc[:, "on"].to_frame(c) for c, p in ois_data.items()],
-        axis=1).astype(float)
+    # on_rates = pd.concat(
+    #     [p.loc[:, "on"].to_frame(c) for c, p in ois_data.items()],
+    #     axis=1).astype(float)
+    on_rates = pd.read_pickle(data_path + "overnight_rates.p")
+    on_rates = on_rates.resample("B").last().ffill()
 
     risk_premium_all = dict()
 
     # loop over currencies
-    for c in on_rates.columns:
+    for c, this_on_rate in on_rates.iteritems():
         print(c)
         # if c == "usd":
         #     continue
         # c = "usd"
-        this_ois_data = ois_data[c].astype(float)
-        this_on_rate = on_rates[c]
 
         # space for implied rates
         this_rp = dict()
@@ -44,8 +50,7 @@ if __name__ == "__main__":
         for m, m_offset in maturity_to_offset.items():
             # m = "3M"
             print(m)
-
-            this_ois_quotes = this_ois_data[m]
+            this_ois_quotes = ois_data[m][c].astype(float)
 
             # OIS
             ois = OIS.from_iso(c, maturity=m_offset)
@@ -53,23 +58,29 @@ if __name__ == "__main__":
             # space for data
             rx = this_ois_quotes.dropna() * np.nan
 
-            for t in rx.index:
+            for t, t_ois_rate in this_ois_quotes.dropna().iteritems():
                 ois.quote_dt = t
 
                 # calculate return
                 fwd_ret = ois.get_return_of_floating(this_on_rate)
-                fwd_ret *= (ois.day_cnt_fix / ois.lifetime * 100)
+                fwd_ret *= (ois.day_count_fix_dnm / ois.lifetime * 100)
 
-                rx.loc[t] = this_ois_quotes.loc[t] - fwd_ret
+                rx.loc[t] = t_ois_rate - fwd_ret
 
             this_rp[m] = rx
 
         risk_premium_all[c] = pd.DataFrame.from_dict(this_rp).loc[:, order]
+        risk_premium_all[c] = pd.concat((risk_premium_all[c], rp_old[c]),
+                                        axis=1).sort_index(axis=1)
 
         # taf.descriptives(risk_premium_all[c].loc["2009-06":]*100, 1)
 
-    with open(data_path + "ois_rx_w_day_count.p", mode="wb") as fname:
-        pickle.dump(risk_premium_all, fname)
+    # with open(data_path + "ois_rx_w_day_count.p", mode="wb") as fname:
+    #     pickle.dump(risk_premium_all, fname)
+
+    # rp_old = pd.read_pickle(data_path + "ois_rp.p")
+
+    pd.to_pickle(risk_premium_all, data_path + "ois_rp.p")
 
 
     # old -------------------------------------------------------------------

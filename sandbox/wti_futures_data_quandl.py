@@ -41,7 +41,7 @@ def load_ff_futures_data(filename, start_date, end_date):
     # Define the map from month's number to futures contract letter code
     name_map = {
         "1": "F", "2": "G", "3": "H", "4": "J", "5": "K", "6": "M", "7": "N",
-        "8": "Q", "9": "U", "10": "V", "11": "X", "12": "Z"
+        "8": "garch_lags", "9": "U", "10": "V", "11": "X", "12": "Z"
                }
 
     # Get the months' numbers and years

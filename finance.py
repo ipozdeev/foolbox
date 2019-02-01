@@ -2,8 +2,8 @@ import pandas as pd
 import numpy as np
 import itertools as itools
 from sklearn.metrics import confusion_matrix
-from pandas.tseries.offsets import DateOffset, MonthBegin, MonthEnd, \
-    relativedelta, BDay
+from pandas.tseries.offsets import DateOffset, MonthBegin, MonthEnd, BDay
+from dateutil import relativedelta
 import pickle
 
 import matplotlib.pyplot as plt
@@ -16,8 +16,6 @@ from foolbox.bankcalendars import *
 from foolbox.portfolio_construction import multiple_timing
 from foolbox.api import *
 from foolbox.trading import EventTradingStrategy
-
-# import ipdb
 
 my_red = "#ce3300"
 my_blue = "#2f649e"
@@ -67,7 +65,7 @@ class PolicyExpectation:
 
         # loop over time
         for t in expected_proxy_rate.index:
-            # t = "2015-01-23"
+            # t = "2014-02-06 "
             # set quote date to this t
             rate_object.quote_dt = t
 
@@ -111,7 +109,8 @@ class PolicyExpectation:
         return pe
 
     @classmethod
-    def from_ois(cls, meetings, ois_object, ois_rate, rate_on_const, **kwargs):
+    def from_ois(cls, meetings, ois_object, ois_rate, rate_on_const,
+                 stoch=False, rate_var=None, **kwargs):
         """Construct PolicyExpectation from ois rates.
 
         Parameters
@@ -123,25 +122,30 @@ class PolicyExpectation:
             e.g. 1-month ois rates
         rate_on_const : pandas.Series
             rate to prevail from value date to meeting date
+        stoch : bool
+            True to use stochastic rates assumption
+        rate_var : pandas.Series
+            only valid for `stoch=True`
         kwargs : dict
             arguments to PolicyExpectation.__init__ such as
             policy_rate and proxy_rate
 
         Returns
         -------
-        pe : PolicyExpectation instance
+        pe : PolicyExpectation
 
         """
         # allocate space
         expected_proxy_rate = ois_rate.copy() * np.nan
 
         # loop over time
-        for t in expected_proxy_rate.index:
+        for t, t_ois_rate in ois_rate.iteritems():
             # if t > pd.Timestamp("2009-02-15"):
             #     print("ololo")
             # else:
             #     continue
-
+            # t = "2011-09-07"
+            # t_ois_rate = ois_rate.loc[t]
             # set quote date to this t
             ois_object.quote_dt = t
 
@@ -158,10 +162,20 @@ class PolicyExpectation:
             nx_meet = meetings.index[
                 meetings.index.get_loc(ois_object.value_dt, method="bfill")]
 
-            # # sometimes there is a meeting between quote and value dates
+            # are there two meetings within one ois period?
+            nx2_meet = meetings.index[
+                meetings.index.get_loc(ois_object.end_dt, method="ffill")]
+
+            # case with two meetings within one ois period
+            if nx2_meet > nx_meet:
+                # if too large an exceedence, skip
+                if ois_object.end_dt > nx2_meet + 2*ois_object.b_day:
+                    continue
+
+            # sometimes there is a meeting between quote and value dates
             if very_nx_meet < nx_meet:
                 if ois_object.end_dt < nx_meet:
-                    expected_proxy_rate.loc[t] = ois_rate.loc[t]
+                    expected_proxy_rate.loc[t] = t_ois_rate
                 else:
                     continue
             else:
@@ -170,17 +184,24 @@ class PolicyExpectation:
                     continue
 
             # extract implied rate
-            expected_proxy_rate.loc[t] = ois_object.get_implied_rate(
-                event_dt=nx_meet,
-                swap_rate=ois_rate.loc[t],
-                rate_until=rate_on_const.loc[t])
+            if stoch:
+                expected_proxy_rate.loc[t] = ois_object.get_implied_rate_stoch(
+                    event_dt=nx_meet,
+                    ois_rate=t_ois_rate,
+                    rate_mu_pre=rate_on_const.loc[t],
+                    rate_var=rate_var.loc[t])
+            else:
+                expected_proxy_rate.loc[t] = ois_object.get_implied_rate(
+                    event_dt=nx_meet,
+                    swap_rate=t_ois_rate,
+                    rate_until=rate_on_const.loc[t])
 
-        pe = PolicyExpectation(
-            meetings=meetings,
-            expected_proxy_rate=expected_proxy_rate,
-            **kwargs)
+        # pe = PolicyExpectation(
+        #     meetings=meetings,
+        #     expected_proxy_rate=expected_proxy_rate,
+        #     **kwargs)
 
-        return pe
+        return expected_proxy_rate.squeeze()
 
     @classmethod
     def from_funds_futures(cls, meetings, funds_futures, **kwargs):
@@ -1096,7 +1117,7 @@ class PolicyExpectation:
         return
 
 
-def into_currency(data, new_cur, counter_cur="usd"):
+def into_currency(data, new_cur, counter_cur):
     """
 
     Parameters
@@ -1117,7 +1138,10 @@ def into_currency(data, new_cur, counter_cur="usd"):
     new_data = data.sub(data[new_cur], axis="index").drop(new_cur, axis=1)
 
     # reinstall
-    new_data.loc[:, "usd"] = -1*data[new_cur]
+    # new_data.loc[:, "usd"] = -1*data[new_cur]
+    new_data = pd.concat(
+        (new_data, -1*data[[new_cur]].rename(columns={new_cur: counter_cur})),
+        axis=1)
 
     return new_data
 

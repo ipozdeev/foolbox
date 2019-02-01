@@ -265,11 +265,12 @@ def get_fcxm_data(fx_pairs, frequency, start_date, end_date, num_periods=None):
 
 if __name__ == "__main__":
     # Define the currency pairs of interest, data frequency and request period
-    fxcm_currs = ["AUD/USD", "USD/CAD", "USD/CHF", "EUR/USD", "GBP/USD",
-                  "USD/JPY", "USD/NOK", "NZD/USD", "USD/SEK"]
-    data_frequency = "m15"
-    s_dt = "1999-12-31"
-    e_dt = "2018-03-31"
+    # fxcm_currs = ["AUD/USD", "USD/CAD", "USD/CHF", "EUR/USD", "GBP/USD",
+    #               "USD/JPY", "USD/NOK", "NZD/USD", "USD/SEK"]
+    fxcm_currs = ["EUR/USD"]
+    data_frequency = "s5"
+    s_dt = "2015-01-14"
+    e_dt = "2015-01-15"
 
     # Set output path and output names
     out_path = set_cred.gdrive_path("research_data/fx_and_events/")

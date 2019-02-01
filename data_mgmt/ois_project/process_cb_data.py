@@ -3,7 +3,7 @@ import numpy as np
 import pickle
 
 # Import central banks' effective date offsets
-from wp_ois.wp_settings import cb_effective_date_offset, end_date
+from foolbox.wp_ois.wp_settings import cb_effective_date_offset, end_date
 from pandas.tseries.offsets import BDay
 
 # Set the user contingent path

@@ -91,7 +91,7 @@ def main():
 
     # event study based on it
     es = EventStudy(rv_abnormal, events, (-10, -1, 0, 5), "count_weighted")
-    booted = es.boot_the_mean(what="ar", n_iter=50, fillna=True)
+    booted = es.collect_bootstrapped(what="ar", n_iter=50, fillna=True)
 
     # plot a bit
     fig, ax = plt.subplots(2, figsize=(8, 8))

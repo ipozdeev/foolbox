@@ -297,13 +297,14 @@ def interevent_qcut(data_to_slice, events, n_quantiles):
 
 
 def parse_bloomberg_excel(filename, colnames_sheet, data_sheets, space=1,
-                          **kwargs):
-    """Parse .xlsx frile constructed with Bloomberg Excel API.
+                          colnames=None, **kwargs):
+    """Parse .xlsx file constructed with Bloomberg Excel API.
 
     Parameters
     ----------
     data_sheets : list or string or None
         if None, all sheets are loaded
+    colnames : list-like
     space : int
         number of empty columns between neighboring data series
 
@@ -322,29 +323,33 @@ def parse_bloomberg_excel(filename, colnames_sheet, data_sheets, space=1,
     def converter(x):
         try:
             res = pd.to_datetime(x)
-        except:
+        except Exception:
             res = pd.NaT
         return res
 
     # colnames_sheet
-    colnames = pd.read_excel(filename, sheet_name=colnames_sheet, header=0)
-    colnames = colnames.columns
+    if colnames is None:
+        colnames = pd.read_excel(filename, sheet_name=colnames_sheet, header=0)
+        colnames = colnames.columns
 
     # float converters
-    float_conv = {k: float
-                  for k in list(range(1, len(colnames)*(2+space), 2+space))}
+    float_conv = {
+        k: float for k in list(range(1, len(colnames)*(2+space), 2+space))
+    }
 
     # if data_sheets is None, read in all sheets
     if data_sheets is None:
-        data_dict_full = pd.read_excel(filename,
-            sheet_name=None, dtype=float_conv, **kwargs)
+        data_dict_full = pd.read_excel(filename, sheet_name=None,
+                                       converters=float_conv, verbose=True,
+                                       **kwargs)
 
         # remove the sheet with colnames from this dict
-        data_dict_full.pop(colnames_sheet)
+        data_dict_full.pop(colnames_sheet, None)
 
     else:
-        data_dict_full = pd.read_excel(filename,
-            sheet_name=data_sheets, converters=float_conv, **kwargs)
+        data_dict_full = pd.read_excel(filename, sheet_name=data_sheets,
+                                       converters=float_conv, verbose=True,
+                                       **kwargs)
 
     # loop over sheetnames
     all_data = dict()

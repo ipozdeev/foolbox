@@ -2,10 +2,10 @@
 currency data set"""
 
 settings = {
-    "drop_currencies": ["dkk",],
+    "drop_currencies": ["dkk"],
     "no_ois_currencies": ["jpy", "nok"],
     "sample_start": "2000-11-01",
-    "sample_end": "2017-03-31",
+    "sample_end": "2019-01-01",
     "fx_data": "fx_by_tz_aligned_d.p",
     "fx_data_fixed": "fx_by_tz_sp_fixed.p",
     "events_data": "events.p",
@@ -36,7 +36,7 @@ font_settings = {
     "family": "serif",
     "size": 12}
 fig_settings = {
-    "figsize": (8.27,11.3/3)}
+    "figsize": (8.27, 11.3/3)}
 tick_settings = {
     "labelsize": 12}
 axes_settings = {

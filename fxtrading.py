@@ -159,7 +159,7 @@ class FXTradingStrategy:
                 StrategyFactory().position_flags_to_weights(
                     self.position_flags, self._leverage)
 
-        return self._position_weights.dropna(how="all").fillna(0.0)
+        return self._position_weights.fillna(0.0)
 
     @position_weights.setter
     def position_weights(self, value):
@@ -259,6 +259,7 @@ class FXTradingStrategy:
             of values to sort, ALREADY SHIFTED AS DESIRED
         n_portfolios : int
             the number of portfolios in portfolio_construction.rank_sort()
+        legsize : int
         leverage : str
             'net', 'unlimited' or 'zero'
         kwargs : dict
@@ -328,13 +329,19 @@ class FXTradingEnvironment:
         """
         Parameters
         ----------
-        spot_prices : pd.Panel
-            with assets along the minor axis, time on major_axis
-        swap_points : pd.Panel
-            with assets along the minor axis, time on major_axis
+        spot_prices : pandas.DataFrame
+            in units of a common counter currency, which is then becomes the
+            denomination currency
+            indexed by time, columned by a `MultiIndex` of (bid/ask, currency)
+        swap_points : pandas.DataFrame
+            of swap points, such that swap_points + spot = forward;
+            indexed by time, columned by a `MultiIndex` of (bid/ask, currency)
         """
         self.spot_prices = spot_prices
         self.swap_points = swap_points
+
+        self.spot_prices.columns.names = ["bid_or_ask", "currency"]
+        self.swap_points.columns.names = ["bid_or_ask", "currency"]
 
     @property
     def mid_spot_prices(self):
@@ -346,20 +353,29 @@ class FXTradingEnvironment:
 
     @property
     def currencies(self):
-        return self.spot_prices.minor_axis
+        return self.spot_prices.columns.get_level_values("currency").unique()
 
     @classmethod
     def from_scratch(cls, spot_prices, swap_points=None):
         """
+
+        Parameters
+        ----------
+        spot_prices : dict or pandas.DataFrame
+            see FXTradingEnvironment
+        swap_points : dict or pandas.DataFrame
+            see FXTradingEnvironment
+
+        Returns
+        -------
+        res : FXTradingEnvironment
+
         """
         if isinstance(spot_prices, dict):
             if not all([p in ["bid", "ask"] for p in spot_prices.keys()]):
                 raise ValueError("When providing a dictionary, it must " +
                                  "include 'bid' and 'ask' dataframes!")
-        elif isinstance(spot_prices, pd.DataFrame):
-            spot_prices = {
-                "bid": spot_prices,
-                "ask": spot_prices}
+            spot_prices = pd.concat(spot_prices, axis=1)
         else:
             raise ValueError(
                 "class of spot_prices: " +
@@ -367,47 +383,63 @@ class FXTradingEnvironment:
                 " not implemented!")
 
         if swap_points is None:
-            swap_points = {
-                "bid": spot_prices["bid"]*0.0,
-                "ask": spot_prices["bid"]*0.0}
+            swap_points = spot_prices * 0.0
         elif isinstance(swap_points, dict):
             if not all([p in ["bid", "ask"] for p in swap_points.keys()]):
                 raise ValueError("When providing a dictionary, it must " +
                                  "include 'bid' and 'ask' dataframes!")
-        elif isinstance(swap_points, pd.DataFrame):
-            swap_points = {
-                "bid": swap_points,
-                "ask": swap_points}
+            swap_points = pd.concat(swap_points, axis=1)
         else:
             raise ValueError(
                 "class of swap_points: " +
                 str(swap_points.__class__) +
                 " not implemented!")
 
-        spot_prices = pd.Panel.from_dict(spot_prices, orient="items")
-        swap_points = pd.Panel.from_dict(swap_points, orient="items")
-
         res = cls(spot_prices, swap_points)
+
+        return res
+
+    def with_mid_quotes(self):
+        """Get a version of `self` with spot prices and swap points set to mid.
+
+        Returns
+        -------
+        res : FXTradingEnvironment
+
+        """
+        mid_spot = pd.concat({k: self.mid_spot_prices for k in ["bid", "ask"]},
+                             axis=1)
+        mid_swap = pd.concat({k: self.mid_swap_points for k in ["bid", "ask"]},
+                             axis=1)
+        res = FXTradingEnvironment(spot_prices=mid_spot, swap_points=mid_swap)
 
         return res
 
     def remove_swap_outliers(self):
         """
         """
-        res = {}
-        for k, v in dict(self.swap_points).items():
-            res[k] = v.where(np.abs(v) < v.std()*25)
+        res = self.swap_points.where(
+            np.abs(self.swap_points) < self.swap_points.std()*25
+        )
 
-        self.swap_points = pd.Panel.from_dict(res, orient="items")
+        self.swap_points = res
+
+    def remove_bid_ask_violation(self):
+        """
+        """
+        violations = pd.concat(
+            {c: (self.spot_prices["ask"] - self.spot_prices["bid"]) < 0
+             for c in ["bid", "ask"]},
+            axis=1, names=self.spot_prices.columns.names
+        )
+        self.spot_prices = self.spot_prices.where(~violations)
+        self.swap_points = self.swap_points.where(~violations)
 
     def align_spot_and_swap(self):
         """
         """
-        common_idx = self.swap_points.major_axis.union(
-            self.spot_prices.major_axis)
-
-        self.swap_points = self.swap_points.reindex(major_axis=common_idx)
-        self.spot_prices = self.spot_prices.reindex(major_axis=common_idx)
+        self.swap_points, self.spot_prices = \
+            self.swap_points.align(self.spot_prices, axis=0, join="inner")
 
     def fillna(self, which="swap_points", **kwargs):
         """
@@ -433,23 +465,23 @@ class FXTradingEnvironment:
             arguments to .fillna()
 
         """
-        swap_points_idx = self.swap_points.major_axis
-        new_idx = pd.date_range(swap_points_idx[0], swap_points_idx[-1],
+        new_idx = pd.date_range(self.swap_points.index[0],
+                                self.swap_points.index[-1],
                                 freq=reindex_freq)
 
-        self.swap_points = self.swap_points.reindex(major_axis=new_idx)
+        self.swap_points = self.swap_points.reindex(index=new_idx)
 
-        spot_prices_idx = self.spot_prices.major_axis
-        new_idx = pd.date_range(spot_prices_idx[0], spot_prices_idx[-1],
+        new_idx = pd.date_range(self.spot_prices.index[0],
+                                self.spot_prices.index[-1],
                                 freq=reindex_freq)
 
-        self.spot_prices = self.spot_prices.reindex(major_axis=new_idx)
+        self.spot_prices = self.spot_prices.reindex(index=new_idx)
 
-    def drop(self, **kwargs):
+    def drop(self, *args, **kwargs):
         """
         """
-        self.spot_prices = self.spot_prices.drop(**kwargs)
-        self.swap_points = self.swap_points.drop(**kwargs)
+        self.spot_prices = self.spot_prices.drop(*args, **kwargs)
+        self.swap_points = self.swap_points.drop(*args, **kwargs)
 
 
 class FXTrading:
@@ -481,7 +513,7 @@ class FXTrading:
 
         Parameters
         ----------
-        prices : pandas.Panel
+        prices : pandas.DataFrame
         actions : pandas.DataFrame
 
         Returns
@@ -492,11 +524,16 @@ class FXTrading:
         act_no_zeros = actions.replace(0.0, np.nan).dropna(how="all")
 
         # reindex to have prices of same dimensions as actions
-        prc_reix = prices.reindex(major_axis=act_no_zeros.index,
-                                  minor_axis=act_no_zeros.columns)
+        prc_reix = prices.reindex(
+            index=act_no_zeros.index,
+            columns=pd.MultiIndex.from_product(
+                [prices.columns.get_level_values(0).unique(),
+                 act_no_zeros.columns]
+            )
+        )
 
         # need ask quotes where actions are positive
-        ask_prc = prc_reix.loc["ask", :, :].where(act_no_zeros > 0)
+        ask_prc = prc_reix["ask"].where(act_no_zeros > 0)
         buy_sig = act_no_zeros.where(act_no_zeros > 0)
 
         # assert
@@ -505,7 +542,7 @@ class FXTrading:
                              "missing!")
 
         # need bid quotes where actions are negative
-        bid_prc = prc_reix.loc["bid", :, :].where(act_no_zeros < 0)
+        bid_prc = prc_reix["bid"].where(act_no_zeros < 0)
         sell_sig = act_no_zeros.where(act_no_zeros < 0)
 
         # assert
@@ -540,15 +577,15 @@ class FXTrading:
 
             # if t < self.prices.major_axis[0]:
             #     continue
-            if t > self.prices.major_axis[-1]:
+            if t > self.prices.index[-1]:
                 return payoff
 
             # if t > pd.Timestamp("2005-06-08"):
             #     print("Stop right there! Criminal scum!")
 
             # fetch prices and swap points ----------------------------------
-            these_prices = self.prices.loc[:, t, :].T
-            these_swap_points = self.swap_points.loc[:, t, :].T
+            these_prices = self.prices.loc[t, :].unstack(level=0)
+            these_swap_points = self.swap_points.loc[t, :].unstack(level=0)
 
             # rebalance -----------------------------------------------------
             self.portfolio.rebalance_from_dpw(row, these_prices)
@@ -680,13 +717,13 @@ class FXPortfolio:
         """
         # 1) from each position, get unrealized p&l
         # concat positions and prices (index by currency names)
-        both = pd.concat((self.positions.to_frame().T, bid_ask_prices), axis=0)
+        both = pd.concat((self.positions, bid_ask_prices), axis=1)
 
         # function to apply over rows
         func = lambda x: x["positions"].get_unrealized_pnl(x.drop("positions"))
 
         # for all positions, apply the func to get unrealized p&l
-        res = both.apply(func=func, axis=0).sum()
+        res = both.apply(func=func, axis=1).sum()
         # pf = FXPortfolio(positions=positions)
         # pf.positions.apply(func=func).sum()
         # both = pd.concat((positions, prices), axis=1)
@@ -697,12 +734,23 @@ class FXPortfolio:
         return res
 
     def rebalance_from_dpw(self, dpw, bid_ask_prices):
-        """ Rebalance from change in position weights.
+        """Rebalance from change in position weights.
         0. skip if changes in position weights are all zero
         i. close positions to be closed, drain realized p&l onto balance
         ii. determine liquidation value: this much can be reallocated
         iii. determine how much is to be bought/sold, in units of base currency
         iv. transact in each position accordingly
+
+        Parameters
+        ----------
+        dpw : pandas.Series
+            indexed by currencies
+        bid_ask_prices : pandas.DataFrame
+            indexed by currency names, columned with ['bid', 'ask']
+
+        Returns
+        -------
+
         """
         # if no change is necessary, skip
         if (dpw == 0.0).all():
@@ -710,9 +758,13 @@ class FXPortfolio:
 
         # get margin closeout value
         # TODO: mid price is suggested by OANDA
-        prices_mid = pd.concat([bid_ask_prices.mean(axis=0).to_frame().T, ]*2,
-                               axis=0)
-        prices_mid.index = bid_ask_prices.index
+        # prices_mid = pd.concat([bid_ask_prices.mean(axis=0).to_frame().T, ]*2,
+        #                        axis=0)
+        # prices_mid.index = bid_ask_prices.index
+
+        prices_mid = pd.concat({"bid": bid_ask_prices.mean(axis=1),
+                                "ask": bid_ask_prices.mean(axis=1)},
+                               axis=1)
         marg_closeout = self.get_margin_closeout_value(prices_mid)
 
         # new position weights
@@ -720,7 +772,7 @@ class FXPortfolio:
 
         # determine dp
         # TODO: mid price?
-        new_p = (new_pw * marg_closeout).divide(prices_mid.iloc[0, :], axis=0)
+        new_p = (new_pw * marg_closeout).divide(prices_mid.mean(axis=1))
         dp = new_p - self.get_position_quantities()
 
         dp = dp.mask(dpw == 0, 0)
@@ -736,13 +788,13 @@ class FXPortfolio:
         Parameters
         ----------
         dp : pandas.Series
-            indexed with currency names, e.g. "aud"
+            indexed with currency names, e.g. 'aud'
         bid_ask_prices : pandas.DataFrame
-            with assets for columns
+            indexed with currency names
         """
         # loop over names of dp, transact in respective currency
         for cur, p in dp.iteritems():
-            new_r = self.positions[cur].transact(p, bid_ask_prices.loc[:, cur])
+            new_r = self.positions[cur].transact(p, bid_ask_prices.loc[cur])
 
             if new_r is not None:
                 self.balance += new_r
@@ -758,7 +810,7 @@ class FXPortfolio:
             indexed by ['bid', 'ask'], columned by position names
         """
         for cur, p in self.positions.iteritems():
-            p.roll_over(bid_ask_points.loc[:, cur])
+            p.roll_over(bid_ask_points.loc[cur])
 
     def get_position_quantities(self):
         """
