@@ -1,10 +1,49 @@
 import pandas as pd
+from seaborn import color_palette
 
 import matplotlib.pyplot as plt
+from matplotlib import colors
 import matplotlib.lines as mlines
 
-plt.rc("font", family="serif", size=12)
-new_gray = "#8c8c8c"
+# colors
+palette = color_palette("deep", 8)
+color_gray = "#afafaf"
+color_blue = colors.to_hex(palette[0])
+color_red = colors.to_hex(palette[1])
+
+# figsizes
+figsize_single = (8.27-2, (11.69-2) / 3)
+figsize_double = (8.27-2, (11.69-2) / 2)
+figsize_full = (8.27-2, (11.69-2) / 1.25)
+
+
+def set_style_paper():
+    """
+    """
+    # settings
+    font_settings = {
+        "family": "serif",
+        "size": 10}
+    fig_settings = {
+        "figsize": figsize_single}
+    tick_settings = {
+        "labelsize": 10}
+    axes_settings = {
+        "grid": True}
+    grid_settings = {
+        "linestyle": '-',
+        "alpha": 0.75}
+    legend_settings = {
+        "fontsize": 10}
+
+    # apply all
+    plt.rc("xtick", **tick_settings)
+    plt.rc("ytick", **tick_settings)
+    plt.rc("figure", **fig_settings)
+    plt.rc("font", **font_settings)
+    plt.rc("axes", **axes_settings)
+    plt.rc("grid", **grid_settings)
+    plt.rc("legend", **legend_settings)
 
 
 def broomstick_plot(data, ci=(0.1, 0.9)):
@@ -64,3 +103,7 @@ def broomstick_plot(data, ci=(0.1, 0.9)):
     ax.set_ylabel("cumulative return, in percent", visible=True)
 
     return fig
+
+
+if __name__ == '__main__':
+    pass
