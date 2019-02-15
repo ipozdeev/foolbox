@@ -1,44 +1,58 @@
 import pandas as pd
-from pandas.tseries.offsets import BDay
 import numpy as np
 from scipy.stats import norm
-from itertools import zip_longest
 from random import choice
+import warnings
 import matplotlib.pyplot as plt
+import matplotlib.patches as mpatches
+import matplotlib.lines as mlines
 
-from foolbox.data_mgmt import set_credentials
-from foolbox.wp_tabs_figs.wp_settings import *
-from foolbox.linear_models import PureOls
-
-path_out = set_credentials.set_path("research_data/fx_and_events/",
-                                    which="gdrive")
+from foolbox.econometrics.linear_models import OLS
+from foolbox.visuals import *
 
 
 class EventStudy:
+    """Event study machinery.
+
+    Event studies with N assets and M(n) asset-specific events for each
+    (trivially generalized to one asset or the same events for each asset).
+
+    Window (-5,-1,1,5) means that one starts to look at returns 5
+    periods before each event, ends 1 day before, starts again 1 day
+    after and stops 5 days after.
+
     """
-    """
-    def __init__(self, data, events, window, mean_type="simple"):
+
+    def __init__(self, data, events, window, cross_asset_weights="equal"):
         """
         Parameters
         ----------
-        data : pandas.DataFrame/pandas.Series
+        data : pandas.DataFrame or pandas.Series
             of returns (need to be summable)
-        events : list/pandas.DataFrame/pandas.Series
+        events : list or pandas.DataFrame or pandas.Series
             of events (if a pandas object, must be indexed with dates)
-        window : tuple of int
-            [a,b,c,d] where each element is relative (in periods) date of
-            a - start of cumulating `data` before event (usually an int < 0);
-            b - stop of cumulating `data` before event (usually an int < 0),
-            c - start of cumulating `data` after event,
-            d - stop of cumulating `data` before event;
-            for example, [-5,-1,1,5] means that one starts to look at returns 5
-            periods before each event, ends 1 day before, starts again 1 day
-            after and stops 5 days after
-        mean_type : str
-            method for calculating cross-sectional average; "simple" or
-            "count_weighted" are supported
+        window : tuple
+            of int (a,b,c,d) or (a,d) where each element is a relative (in
+            periods) date to explore patterns in `data` either (for the case
+            of a 4-tuple) from a to b and c to d or (for the case of a
+            2-tuple) from a to d.
+        cross_asset_weights : str
+            method for calculating the average across assets; "equal" or
+            "by_event" are supported
         """
-        # indexes better be all of the same type
+        # window is either a 4-tuple covering zero or a 2-tuple
+        assert ((len(window) == 4) & (window[0] < 0 < window[-1])) | \
+               (len(window) == 2)
+
+        # property-based stuff
+        self._timeline = None
+
+        # always a 4-tuple will be returned here, even if a 2-tuple is supplied
+        self._window = window
+        self._the_mean = None
+
+        # indexes better be all of the same type (PeriodIndexes are fine and
+        #   need not be converted)
         data_idx = isinstance(data.index, (pd.DatetimeIndex, pd.PeriodIndex))
         evt_idx = isinstance(data.index, (pd.DatetimeIndex, pd.PeriodIndex))
 
@@ -46,7 +60,10 @@ class EventStudy:
             data.index = data.index.map(pd.to_datetime)
             events.index = events.index.map(pd.to_datetime)
 
-        # align
+        # data types better be float
+        data = data.astype(float)
+
+        # rename, align
         data, events = EventStudyFactory.align_for_event_study(data, events)
 
         self.data = data
@@ -54,20 +71,22 @@ class EventStudy:
 
         # parameters
         self.assets = self.data.columns
-        self.window = window
-        self.mean_type = mean_type
+        self.cross_asset_weights = cross_asset_weights
 
-        # break down window, construct index of holding days
+        # construct index of holding days, e.g. [-3, -2, -1, 1, 2] for
+        #   window = (-3, 2)
         ta, tb, tc, td = self.window
-        self.event_index = np.concatenate((np.arange(ta, tb+1),
-                                           np.arange(tc, td+1)))
+        self.event_index = np.unique(
+            np.concatenate((np.arange(ta, tb + 1), np.arange(tc, td + 1)))
+        )
 
-        # property-based
-        self._timeline = None
-        self._ar = None
-        self._car = None
-        self._the_mean = None
-        self._booted = None
+    @property
+    def window(self):
+        """Return a 4-tuple, broadcast if necessary."""
+        if len(self._window) == 4:
+            return self._window
+        else:
+            return self._window * 2
 
     @property
     def mask_between_events(self):
@@ -84,35 +103,42 @@ class EventStudy:
         return self._timeline
 
     @property
-    def ar(self):
-        if self._ar is None:
-            self._ar = self.get_ar()
-        return self._ar
-
-    @property
-    def car(self):
-        if self._car is None:
-            self._car = self.get_car(self.get_ar(), self.window)
-
-        return self._car
-
-    @property
     def the_mean(self):
         if self._the_mean is None:
-            fun = self.mean_fun(method=self.mean_type)
-            self._the_mean = fun(self.car)
+            self._the_mean = self.cs_mean(self.get_car())
 
         return self._the_mean
+
+    def cs_mean(self, df):
+        """Calculate cross-sectional mean.
+
+        Weighting is different based on `self.cross_asset_weights`.
+
+        Parameters
+        ----------
+        df : pandas.DataFrame
+            with (asset, event) for columns
+
+        Returns
+        -------
+        res : pandas.Series
+
+        """
+        func = self.mean_fun(method=self.cross_asset_weights)
+
+        res = func(df)
+
+        return res
 
     def reindex(self, freq, inplace=False, **kwargs):
         """Reindex by frequency.
 
-        Worth doing if one suspects the datais not evenly indexed.
+        Worth doing if one suspects the data is not evenly indexed.
 
         Parameters
         ----------
         freq : str
-            e.g. 'B'
+            valid pandas frequency e.g. 'B'
         inplace : bool
             False to return a new EventStudy instance
         kwargs : dict
@@ -129,80 +155,8 @@ class EventStudy:
         if inplace:
             self.data = new_data
         else:
-            return EventStudy(new_data, self.events, self.window,
-                              self.mean_type)
-
-    def exclude_overlapping_events(self, inplace=False):
-        """
-
-        Parameters
-        ----------
-        inplace : bool
-            False to return a new EvetnStudy instance
-
-        Returns
-        -------
-        if inplace is True, nothing (sets a new value on self.events),
-        else a new EventStudy instance
-
-        """
-        new_evt = dict()
-        evt_diff = dict()
-
-        # loop over columns of data
-        for c_name, c_val in self.data.iteritems():
-            # this will reindex events with c_val.index and exclude overlapping
-            this_new_evt, this_x_evt = self.exclude_overlaps(
-                self.events[c_name].dropna(), c_val, self.window)
-
-            # save
-            new_evt[c_name] = this_new_evt
-            evt_diff[c_name] = pd.Series('x', index=this_x_evt)
-
-        # dicts to DataFrames
-        new_evt = pd.DataFrame.from_dict(new_evt)
-        evt_diff = pd.DataFrame.from_dict(evt_diff)
-
-        # return, based on inplace
-        if inplace:
-            self.events = new_evt
-            return evt_diff
-        else:
-            print(evt_diff)
-            return EventStudy(self.data, new_evt, self.window,
-                              self.mean_type)
-
-    def align_data_with_events(self, inplace=False):
-        """Align data and events thus ensuring that all events are represented.
-
-        Makes sure all data points from `events` are in data too.
-
-        Returns
-        -------
-
-        """
-        new_data, _ = self.data.align(self.events, axis=0, join="outer")
-
-        if inplace:
-            self.data = new_data
-        else:
-            return EventStudy(new_data, self.events, self.window,
-                              self.mean_type)
-
-    def default_data_manipulation(self, inplace=False):
-        """Align, exclude overlapping events.
-        """
-        # align
-        if inplace:
-            self.align_data_with_events(inplace=True)
-            self.reindex(freq='B', inplace=True)
-            # self.exclude_overlapping_events(inplace=True)
-        else:
-            new_evt_study = self.align_data_with_events(inplace=False)
-            new_evt_study.reindex(freq='B', inplace=False)
-            # new_evt_study.exclude_overlapping_events(inplace=False)
-
-            return new_evt_study
+            return EventStudy(new_data, self.events, self._window,
+                              self.cross_asset_weights)
 
     @staticmethod
     def exclude_overlaps(events, data, window):
@@ -251,85 +205,70 @@ class EventStudy:
         return new_evt, evt_diff
 
     def get_ar(self):
-        """Wrapper for pivot_with_timeline for every column in self.`data`.
+        """Calculate abnormal returns.
 
         Returns
         -------
         res : pandas.DataFrame
-            of abnormal retuns, indexed by window, column'ed by
-            a MultiIndex of [0] asset names, [1] event ids (dates)
+
         """
-        res = dict()
+        res = self._get_ar(self.data, self.timeline)
 
-        # loop over columns in `data`
-        for c_name, c_val in self.data.iteritems():
-            # pivot
-            res[c_name] = self.pivot_with_timeline(
-                data=c_val, timeline=self.timeline[c_name])
+        return res
 
-        # concat all assets to a df with MultiIndex
-        res = pd.concat(res, axis=1)
+    def get_car(self):
+        """Calculate cumulative abnormal returns.
 
-        # name the MultiIndex
-        res.columns.names = ["assets", "events"]
+        Returns
+        -------
+        res : pandas.DataFrame
+
+        """
+        # get abnormal returns first
+        ar = self.get_ar()
+
+        # cumulate
+        res = self._get_car(ar, self.window)
 
         return res
 
     @staticmethod
-    def pivot_with_timeline(data, timeline):
-        """Pivot `data` to center it on events, using a timeline.
-
-        Parameters
-        ----------
-        data : pandas.Series
-        timeline : pandas.DataFrame
-            output of mark_timeline
+    def _get_ar(data, timeline):
+        """Pivot data based on timeline to arrive at abnormal returns.
 
         Returns
         -------
-        data_pivoted : pandas.DataFrame
-            indexed by window, columned by event ids (dates)
+        ar : pandas.DataFrame
+            of abnormal returns, indexed by window, column'ed by
+            a MultiIndex of [0] asset names, [1] event ids (dates)
         """
-        assert isinstance(data, pd.Series)
+        ar = dict()
 
-        if data.name is None:
-            data.name = "data"
+        # loop over columns in `data`, pivot for each
+        for c_name, c_val in data.iteritems():
+            ar[c_name] = EventStudyFactory.pivot_with_timeline(
+                data=c_val, timeline=timeline[c_name])
 
-        # concat
-        both = pd.concat((data, timeline), axis=1).dropna(subset=["evt_no"])
-        both = both.dropna(subset=["evt_wind_pre", "evt_wind_post"],
-                           how="all")
+        # concat all assets to a df with MultiIndex
+        ar = pd.concat(ar, axis=1)
 
-        # # event window
-        # data_to_pivot_pre = timeline.loc[:, ["evt_wind_pre", "evt_no"]]
-        # data_to_pivot_post = timeline.loc[:, ["evt_wind_post", "evt_no"]]
+        # name the MultiIndex
+        ar.columns.names = ["assets", "events"]
 
-        data_pivoted_pre = both.dropna(subset=["evt_wind_pre"]).pivot(
-            index="evt_wind_pre",
-            columns="evt_no",
-            values=data.name)
-        data_pivoted_post = both.dropna(subset=["evt_wind_post"]).pivot(
-            index="evt_wind_post",
-            columns="evt_no",
-            values=data.name)
-
-        # main data
-        data_pivoted = pd.concat((data_pivoted_pre, data_pivoted_post), axis=0)
-
-        return data_pivoted
+        return ar
 
     @staticmethod
-    def get_car(data, window):
+    def _get_car(ar, window):
         """Calculate cumulative abnormal return from abnormal returns.
 
-        As the indexing is from very negative (up) to very positive (down),
-        say, from period -10 to period +2, the cumulative return is taken
-        'upwards' from -1 to -10 and 'downwards' from +1 to +2.
+        `window` can be of the form (-10, -1, 1, 5) - standard case - or of
+        the form (-10, -1, -10, -1) - transformed version of window (-10, -1)
 
         Parameters
         ----------
-        data : pandas.DataFrame
+        ar : pandas.DataFrame
         window : tuple
+            of 4 elements
 
         Returns
         -------
@@ -340,36 +279,27 @@ class EventStudy:
         """
         ta, tb, tc, td = window
 
+        car_before = None
+        car_after = None
+
         # 'upwards'
-        car_before = data.loc[:tb, :].iloc[::-1, :].cumsum().iloc[::-1, :]
-        # 'downwards'
-        car_after = data.loc[tc:, :].cumsum()
+        if ta < 0:
+            car_before = ar.loc[:tb, :].iloc[::-1, :].cumsum().iloc[::-1, :]
+        if td > 0:
+            # 'downwards'
+            car_after = ar.loc[tc:, :].cumsum()
 
         # concat both
         car = pd.concat((car_before, car_after), axis=0)
 
         return car
 
-    def boot_ci(self, ps, M=10):
-        """
-
-        Parameters
-        ----------
-        ps
-        M
-
-        Returns
-        -------
-
-        """
-        pass
-
     def get_ci(self, ps, method="simple", **kwargs):
-        """Calculate confidence bands for `self.the_mean`.
+        """Calculate confidence bands for the average CAR.
 
         Parameters
         ----------
-        ps : float / tuple of floats
+        ps : float or tuple
             interval width or tuple of (lower bound, upper bound)
         method : str
             "simple" or "boot"
@@ -384,7 +314,7 @@ class EventStudy:
         """
         # if `ps` was provided as single float
         if isinstance(ps, float):
-            ps = ((1-ps)/2, ps/2+1/2)
+            ps = ((1 - ps) / 2, ps / 2 + 1 / 2)
 
         # calculate confidence band
         if method == "simple":
@@ -394,13 +324,56 @@ class EventStudy:
             ci = self.simple_ci(ps=ps, **kwargs)
 
         elif method == "boot":
-            booted = self.collect_bootstrapped(**kwargs)
+            booted = self.bootstrap_sample(**kwargs)
             ci = booted.quantile(ps, axis=1).T
 
         else:
             raise NotImplementedError("ci you asked for is not implemented")
 
         self.ci = ci
+
+        return ci
+
+    def boot_ci(self, boot_from=None, prob=0.9, n_sim=101, blocksize=None,
+                fill_missing=False, use_ar=False):
+        """Construct a bootstrapped confidence interval for the average CAR.
+
+        Parameters
+        ----------
+        boot_from : pandas.DataFrame
+            to use for bootstrapping; by default, `self.data` is used,
+            with event windows taken out
+        prob : float or tuple
+            size of the confidence interval or the bands thereof
+        n_sim : int
+            number of simulations
+        blocksize : int
+            size of blocks to resample by
+        fill_missing : bool
+            True to fill NA in data
+        use_ar : bool
+            True to construct the interval for abnormal returns rather than
+            for cumulative abnormal returns
+
+        Returns
+        -------
+        ci : pandas.DataFrame
+            columned by interval bands, indexed by `event_index`
+
+        """
+        if boot_from is None:
+            boot_from = self.data.where(self.mask_between_events)
+
+        if isinstance(prob, float):
+            ps = ((1 - prob) / 2, prob / 2 + 1 / 2)
+
+        # bootstrap
+        booted = self.bootstrap_sample(
+            smpl=boot_from, what=("ar" if use_ar else "car"),
+            n_iter=n_sim, blocksize=blocksize, fillna=fill_missing
+        )
+
+        ci = booted.quantile(prob, axis=1).T
 
         return ci
 
@@ -412,12 +385,13 @@ class EventStudy:
         variances : pandas.DataFrame
             of same shape and form as self.`events`
         """
+        raise NotImplementedError
         # defenestrate
         wa, wb, wc, wd = self.window
 
         # confidence interval levels
         if isinstance(ps, float):
-            ps = ((1-ps)/2, ps/2+1/2)
+            ps = ((1 - ps) / 2, ps / 2 + 1 / 2)
 
         # construct time index to scale variance
         time_idx = np.hstack((np.arange(-wa + wb + 1, 0, -1),
@@ -425,7 +399,7 @@ class EventStudy:
 
         # convert variances to the same shape as ar
         var_ar = variances.unstack().dropna().to_frame().T
-        var_ar.columns.names = self.ar.columns.names
+        var_ar.columns.names = self.get_ar().columns.names
 
         # broadcast + multiply with wa:wd; this is a column (scale factors)
         # times row (variances for each event) multiplication bound to
@@ -441,7 +415,7 @@ class EventStudy:
         # var of average CAR across events and assets
         var_fun = self.var_fun(method=self.mean_type)
         var_car_x_evt_x_ast = var_fun(var_car)
-        
+
         # confidence interval
         ci = pd.concat((
             np.sqrt(var_car_x_evt_x_ast).rename(ps[0]) * norm.ppf(ps[0]),
@@ -479,9 +453,9 @@ class EventStudy:
         # daily_var = var_sums.loc[:, "var"] / var_sums.loc[:, "count"]**2
         #
         # # weighted
-        # if self.mean_type == "simple":
+        # if self.cross_asset_weights == "simple":
         #     wght = pd.Series(1/len(self.assets), index=self.assets)
-        # elif self.mean_type == "count_weighted":
+        # elif self.cross_asset_weights == "count_weighted":
         #     wght = var_sums.loc[:, "count"] / var_sums.loc[:, "count"].sum()
         #
         # avg_daily_var = (daily_var * wght**2).sum()
@@ -500,46 +474,29 @@ class EventStudy:
 
         return ci
 
-    def collect_bootstrapped(self, what="car", n_iter=101, blocksize=None,
-                             exclude_from_data=None, fillna=False):
+    def bootstrap_sample(self, smpl, what="car", n_iter=101,
+                         blocksize=None, fillna=False):
         """Block bootstrap.
 
         Returns
         -------
+        smpl : pandas.DataFrame
+            to bootstrap from
         what : str
             what to take the mean of: 'ar' or 'car'
         n_iter : int
             number of iterations
         blocksize : int
             size of blocks to use for resampling
-        exclude_from_data : pandas.DataFrame
-            boolean DataFrame specifying which `data` values are to be masked;
-            by default, event windows are excluded; provide an mempty
-            DataFrame to exclude nothing at all;
         fillna : bool
-            fill na in the data when bootstrapping (block bootstrapped is used)
+            True to fill na in `smpl`
 
         Returns
         -------
         res : pandas.DataFrame
         """
-        # defenestrate
-        ta, tb, tc, td = self.window
-
-        # default for the no of blocks
         if blocksize is None:
-            blocksize = td - ta + 1
-
-        # boot from `data` without windows around events --------------------
-        if exclude_from_data is None:
-            exclude_from_data = ~self.mask_between_events
-        elif isinstance(exclude_from_data, pd.DataFrame) & \
-                exclude_from_data.empty:
-            exclude_from_data = (self.data * np.nan).fillna(False)
-        else:
-            pass
-
-        boot_from = self.data.mask(exclude_from_data, np.nan)
+            blocksize = self.window[-1] - self.window[0] + 1
 
         # loop over simulations ---------------------------------------------
         # space for df's of pivoted tables
@@ -549,22 +506,22 @@ class EventStudy:
             print(p)
 
             # shuffle data
-            shuff_data = self.shuffle_data(boot_from, blocksize, fillna)
+            shuff_data = self.shuffle_data(smpl, blocksize, fillna)
 
             # event study on simulated data
             this_evt_study = EventStudy(
                 data=shuff_data,
                 events=self.events,
-                window=self.window,
-                mean_type=self.mean_type)
+                window=self._window,
+                cross_asset_weights=self.cross_asset_weights)
 
             # calculate the mean based on the reshuffled dataframe
             if what == "car":
-                this_what = this_evt_study.car
+                this_what = this_evt_study.get_car()
             else:
-                this_what = this_evt_study.ar
+                this_what = this_evt_study.get_ar()
 
-            func = this_evt_study.mean_fun(self.mean_type)
+            func = this_evt_study.mean_fun(self.cross_asset_weights)
             res[p] = func(this_what)
 
         res = pd.DataFrame.from_dict(res, orient="columns")
@@ -592,7 +549,7 @@ class EventStudy:
         n_blocks = n_obs // blocksize + 1
 
         if n_cols is None:
-            res = self.shuffle_data(data[:, np.newaxis], blocksize, fillna)\
+            res = self.shuffle_data(data[:, np.newaxis], blocksize, fillna) \
                 .squeeze()
             return res
 
@@ -609,7 +566,7 @@ class EventStudy:
 
             # construct a sequence of blocks
             shuffle_from = [
-                x[p:(p+blocksize)] for p in range(len(x_split)-blocksize)
+                x[p:(p + blocksize)] for p in range(len(x_split) - blocksize)
             ]
 
             # boot
@@ -640,7 +597,7 @@ class EventStudy:
 
         return res
 
-    def plot(self, xs_level="assets", plot_ci=False):
+    def plot(self, xs_level="assets", plot_ci=False, annotate="none", ax=None):
         """Plot the mean and possibly confidence interval around it.
 
         Parameters
@@ -648,6 +605,9 @@ class EventStudy:
         xs_level : str
             'assets' or 'events'
         plot_ci : bool
+        annotate : str
+            'left', 'right', 'both' or 'none'
+        ax : matplotlib.Axes
 
         Returns
         -------
@@ -658,67 +618,136 @@ class EventStudy:
         # defenestrate
         ta, tb, tc, td = self.window
 
-        # handles
-        car = self.car
+        # plot elements
+        car = self.get_car()
         cs_car = self.the_mean
 
         # figure
-        fig, ax = plt.subplots(2, figsize=(8.4, 11.7/2), sharex=True)
+        if ax is None:
+            fig, ax = plt.subplots(figsize=figsize_single)
+        else:
+            fig = ax.figure
 
         # plot cumulative sums ----------------------------------------------
         to_plot = car.mean(axis=1, level=xs_level)
 
         # lower part
-        to_plot.loc[:tb, :].plot(ax=ax[0], color=new_gray)
+        to_plot.loc[:tb, :].plot(
+            ax=ax, color=color_blue, linewidth=1.0, alpha=0.8,
+            # marker='o', markerfacecolor='w', markersize=4
+        )
 
         # upper part
-        to_plot.loc[tc:, :].plot(ax=ax[0], color=new_gray)
+        to_plot.loc[tc:, :].plot(
+            ax=ax, color=color_blue, linewidth=1.0, alpha=0.8,
+            # marker='o', markerfacecolor='w', markersize=4
+        )
 
         # add points at initiation
-        ax[0].plot(x=[tb]*to_plot.shape[1],
-                   y=to_plot.loc[tb, :],
-                   color='k', linestyle="none", marker=".",
-                   markerfacecolor='k')
+        pd.Series(index=[tb] * to_plot.shape[1],
+                  data=to_plot.loc[[tb], :].iloc[0].values) \
+            .plot(ax=ax, linestyle="none", marker='o', markersize=4,
+                  markerfacecolor=color_blue, markeredgecolor=color_blue)
+        cs_car.loc[[tb]].iloc[[0]] \
+            .plot(ax=ax, linestyle="none", marker='o', markersize=4,
+                  markerfacecolor=color_red, markeredgecolor=color_red)
 
-        ax[0].plot(x=[tc]*to_plot.shape[1],
-                   y=to_plot.loc[tc, :],
-                   color='k', linestyle="none", marker=".",
-                   markerfacecolor='k')
+        if tc != ta:
+            pd.Series(index=[tc] * to_plot.shape[1],
+                      data=to_plot.loc[[tc], :].iloc[0].values) \
+                .plot(ax=ax, linestyle="none", marker='o', markersize=4,
+                      markerfacecolor=color_blue, markeredgecolor=color_blue)
+            cs_car.loc[[tc]].iloc[[0]] \
+                .plot(ax=ax, linestyle="none", marker='o', markersize=4,
+                      markerfacecolor=color_red, markeredgecolor=color_red)
 
         # mean in black
-        cs_car.plot(ax=ax[0], color='k', linewidth=1.5)
-        ax[0].set_title(xs_level)
-
-        # plot ci around avg cumsum -----------------------------------------
-        cs_car.loc[:tb].plot(ax=ax[1], color='k', linewidth=1.5)
-        cs_car.loc[tc:].plot(ax=ax[1], color='k', linewidth=1.5)
+        cs_car.loc[:tb].plot(ax=ax, color=color_red, linewidth=2)
+        cs_car.loc[tc:].plot(ax=ax, color=color_red, linewidth=2)
+        # pd.Series(index=[tb, tc], data=cs_car.loc[[tb, tc]].values) \
+        #     .plot(ax=ax[0], linestyle="none",
+        #           marker='o', markerfacecolor='k', markeredgecolor='k',
+        #           markersize=3
+        #           )
+        ax.set_title(xs_level)
 
         # furbish plot ------------------------------------------------------
-        for x in range(len(ax)):
-            # lost tickos
-            ax[x].xaxis.set_ticks(self.event_index)
-            # la linea de zero
-            ax[x].axhline(y=0, color='k', linestyle='--', linewidth=1.0)
-            # la grida
-            ax[x].grid(axis="both", alpha=0.33, linestyle=":")
-            # la legenda
-            legend = ax[x].legend()
-            legend.remove()
+        ax.set_xlim(ta - 1.5, td + 1.5)
+
+        # lost tickos
+        ax.xaxis.set_ticks(self.event_index)
+        # la linea de zero
+        ax.axhline(y=0, color='k', linestyle='--', linewidth=1.0)
+        # la grida
+        ax.grid(axis="both", alpha=0.33, linestyle=":")
+        # la legenda
+        ax.legend_.remove()
+
+        if plot_ci:
+            ax.fill_between(self.ci.index,
+                            self.ci.iloc[:, 0].values,
+                            self.ci.iloc[:, 1].values,
+                            color=color_gray, alpha=0.5,
+                            label="conf. interval")
+
+        # ax.set_title("cumulative average", fontsize=10)
+
+        # annotate?
+        def annotater(labels, x_acnhor, position):
+            cnt = 0
+            x_margin = (0.1 + 0.6) * (-1 if position == "left" else 1)
+            horizontalalignment = ("right" if position == "left" else "left")
+
+            for c, p in labels.iteritems():
+                this_x_pos = x_acnhor + \
+                    0.1 * (-1 if position == "left" else 1) +\
+                    x_margin * (cnt % 2)
+                ax.annotate(
+                    c, xy=(this_x_pos, p),
+                    horizontalalignment=horizontalalignment,
+                    verticalalignment='center',
+                    fontsize=10)
+
+                cnt += 1
+
+        labels_l = to_plot.iloc[0, :].sort_values(ascending=False)
+        labels_r = to_plot.iloc[-1, :].sort_values(ascending=False)
+
+        if annotate == "left":
+            # sort in descending order
+            annotater(labels_l, ta, annotate)
+
+        elif annotate == "right":
+            annotater(labels_r, ta, annotate)
+
+        elif annotate == "both":
+            annotater(labels_l, ta, "left")
+            annotater(labels_r, ta, "right")
+
+        # legend
+        lines = [
+            mlines.Line2D([], [], linewidth=1.5, color=color_blue,
+                          label="individual CAR"),
+            mlines.Line2D([], [], linewidth=2, color=color_red,
+                          label="cross-currency CAR"),
+            mlines.Line2D([], [], linestyle="none", color="k", marker='o',
+                          markersize=4, markerfacecolor="k",
+                          markeredgecolor="k",
+                          label="1-day AR")
+        ]
+        if plot_ci:
+            ci_patch = mpatches.Patch(color=color_gray, label='conf. int.')
+            lines += [ci_patch, ]
+
+        labels = [line.get_label() for line in lines]
+        ax.legend(lines, labels, loc="upper right")
 
         # los lables
-        ax[1].set_xlabel("periods after event")
+        ax.set_xlabel("periods after event")
 
-        if not plot_ci:
-            return fig, ax
+        self.legend_lines = ax.get_legend().legendHandles
 
-        ax[1].fill_between(self.event_index,
-                           self.ci.iloc[:, 0].values,
-                           self.ci.iloc[:, 1].values,
-                           color=new_gray, alpha=0.33, label="conf. interval")
-        ax[1].set_title("cumulative average")
-
-        # # super title
-        # fig.suptitle(self.data.name, fontsize=14)
+        # ax.get_legend().legendHandles
 
         return fig, ax
 
@@ -751,7 +780,7 @@ class EventStudy:
                 x.count(axis=1, level="assets") ** 2)
 
             # var of average average CAR accross assets, weighted
-            var_x_evt_x_ast = (var_x_evt * wght**2).sum(axis=1)
+            var_x_evt_x_ast = (var_x_evt * wght ** 2).sum(axis=1)
 
             return var_x_evt_x_ast
 
@@ -768,6 +797,7 @@ class EventStudy:
         method : str
             'simple' or 'count_weighted'
         """
+
         def simple_avg(x):
             res = x.mean(axis=1)
             return res
@@ -777,7 +807,7 @@ class EventStudy:
             #  by the no of events for that asset
             evt_count = x.count(axis=1, level="assets")
             wght = evt_count.divide(evt_count.sum(axis=1), axis=0)
-            res = (x.mean(axis=1, level="assets")*wght).sum(axis=1)
+            res = (x.mean(axis=1, level="assets") * wght).sum(axis=1)
             return res
 
         if method == "simple":
@@ -791,10 +821,56 @@ class EventStudy:
 class EventStudyFactory:
     """
     """
+
     def __init__(self):
         """
         """
         pass
+
+    @staticmethod
+    def pivot_with_timeline(data, timeline):
+        """Pivot `data` to center it on events, using a timeline.
+
+        Parameters
+        ----------
+        data : pandas.Series
+        timeline : pandas.DataFrame
+            output of mark_timeline
+
+        Returns
+        -------
+        data_pivoted : pandas.DataFrame
+            indexed by window, columned by event ids (dates)
+        """
+        assert isinstance(data, pd.Series)
+
+        if data.name is None:
+            data.name = "data"
+
+        # concat
+        both = pd.concat((data, timeline), axis=1).dropna(subset=["evt_no"])
+        both = both.dropna(subset=["evt_wind"])
+
+        # # event window
+        # data_to_pivot_pre = timeline.loc[:, ["evt_wind_pre", "evt_no"]]
+        # data_to_pivot_post = timeline.loc[:, ["evt_wind_post", "evt_no"]]
+
+        # data_pivoted_pre = both.dropna(subset=["evt_wind_pre"]).pivot(
+        #     index="evt_wind_pre",
+        #     columns="evt_no",
+        #     values=data.name)
+        # data_pivoted_post = both.dropna(subset=["evt_wind_post"]).pivot(
+        #     index="evt_wind_post",
+        #     columns="evt_no",
+        #     values=data.name)
+
+        # # main data
+        # data_pivoted = pd.concat((data_pivoted_pre, data_pivoted_post), axis=0)
+
+        data_pivoted = both.pivot(index="evt_wind", columns="evt_no",
+                                  values=data.name)
+
+        return data_pivoted
 
     @staticmethod
     def mark_timeline(data, events, window):
@@ -811,40 +887,57 @@ class EventStudyFactory:
 
         """
         # defenestrate
-        ta, tb, tc, td = window
-        window_pre = np.arange(ta, 0)
-        window_post = np.arange(1, td + 1)
+        # ta, tb, tc, td = window
+        ta, td = window[0], window[-1]
+        if len(window) == 4:
+            tb, tc = window[1:3]
+            event_index = np.concatenate((np.arange(ta, tb + 1),
+                                          np.arange(tc, td + 1)))
+        else:
+            tb, tc = (0, 0)
+            event_index = np.arange(ta, td + 1)
 
         # pre- and post-event indices, by window ----------------------------
         # reindex events, create df with 1 where an event took place
-        evt_notnull = events.reindex_like(data).notnull()
-        evt = evt_notnull.where(evt_notnull)
+        evt = events.reindex_like(data).mul(0.0)
+        evt_c = evt.copy()
 
-        # replace 1 with 0 to have day-zero events
-        evt_pre = evt.copy().replace(1, 0)
-        evt_post = evt.copy().replace(1, 0)
+        for t in range(ta, td + 1):
+            evt_c.fillna((evt + t).shift(t), inplace=True)
 
-        # pre-event
-        for p in window_pre[::-1]:
-            evt_pre.fillna((evt * p).bfill(limit=np.abs(p)), inplace=True)
+        # # delete events (why?)
+        # evt_c = evt_c.where(evt.isnull())
 
-        # kill day-0 events
-        evt_pre = evt_pre.where(evt.isnull())
+        # window_pre = np.arange(ta, 0)
+        # window_post = np.arange(1, td + 1)
 
-        # post-event
-        for p in window_post:
-            evt_post.fillna((evt * p).ffill(limit=np.abs(p)), inplace=True)
+        # # replace 1 with 0 to have day-zero events TODO: mask?
+        # evt_pre = evt.copy().replace(1, 0)
+        # evt_post = evt.copy().replace(1, 0)
 
-        # exclude values not in (ta, tb) and (tc, td)
-        idx_correct_window = (evt_pre <= tb) | (evt_post >= tc)
-        idx_between_evt = ~((evt_pre >= ta) | (evt_post <= td))
+        # # pre-event
+        # for p in window_pre[::-1]:
+        #     evt_pre.fillna((evt * p).bfill(limit=np.abs(p)), inplace=True)
+        #
+        # # kill day-0 events
+        # evt_pre = evt_pre.where(evt.isnull())
+        #
+        # # post-event
+        # for p in window_post:
+        #     evt_post.fillna((evt * p).ffill(limit=np.abs(p)), inplace=True)
 
-        # exclude overlaps
-        idx_overlap = (evt_pre <= tb) & (evt_post >= tc)
-        idx_correct_window = idx_correct_window & (~idx_overlap)
+        # # exclude values not in (ta, tb) and (tc, td)
+        # idx_correct_window = (evt_pre <= tb) | (evt_post >= tc)
+        idx_between_evt = evt_c.isnull() & evt.isnull()
 
-        evt_pre = evt_pre.where(idx_correct_window)
-        evt_post = evt_post.where(idx_correct_window)
+        # # exclude overlaps
+        # idx_overlap = (evt_pre <= tb) & (evt_post >= tc)
+        # idx_correct_window = idx_correct_window & (~idx_overlap)
+        #
+        # evt_pre = evt_pre.where(idx_correct_window)
+        # evt_post = evt_post.where(idx_correct_window)
+        evt_c = evt_c.where((evt_c <= tb) | (evt_c >= tc))
+        evt_c = evt_c.where(evt_c.isin(event_index))
 
         # event id (date), gets repeated over the whole window --------------
         # repeat series of dates as many times as there are assets
@@ -852,22 +945,26 @@ class EventStudyFactory:
         dt_df = pd.concat([dt_series.rename(c) for c in data.columns], axis=1)
 
         # leave only cells where there are events
-        dt_df = dt_df.where(evt_notnull)
+        dt_df = dt_df.where(evt.notnull())
 
         # next event number is the number of event immediately following date
         next_evt_no = dt_df.fillna(method="bfill")
 
         # fill with dates
-        dt_df.bfill(limit=-ta, inplace=True)
-        dt_df.ffill(limit=td, inplace=True)
-        dt_df = dt_df.where(idx_correct_window)
+        if ta < 0:
+            dt_df.bfill(limit=-ta, inplace=True)
+        if td > 0:
+            dt_df.ffill(limit=td, inplace=True)
+
+        dt_df = dt_df.where(evt_c.notnull())
 
         # concat to a df with MultiIndex; swaplevel needed to have level [0]
         #  to keep asset names
         timeline = pd.concat({
             "evt_no": dt_df,
-            "evt_wind_pre": evt_pre,
-            "evt_wind_post": evt_post,
+            # "evt_wind_pre": evt_pre,
+            # "evt_wind_post": evt_post,
+            "evt_wind": evt_c,
             "inter_evt": idx_between_evt,
             "next_evt_no": next_evt_no}, axis=1).swaplevel(axis=1)
 
@@ -877,7 +974,10 @@ class EventStudyFactory:
 
     @staticmethod
     def align_for_event_study(data, events):
-        """Align and transform `data` and `events` to DataFrames.
+        """Rename, align and transform `data` and `events` to DataFrames.
+
+        Returns two DataFrames of equal column names; broadcasts `events` if
+        `events` is a Series but `data` is not.
 
         Parameters
         ----------
@@ -891,20 +991,28 @@ class EventStudyFactory:
 
         """
         if isinstance(data, pd.Series):
-            n = "data" if data.name is None else data.name
+            # rename if needed
+            n = getattr(data, "name", "data")
 
+            # to a DataFrame
             data = data.to_frame(n)
 
             if isinstance(events, pd.Series):
+                # events must be an equally-named frame
                 events = events.to_frame(n)
             else:
                 events.columns = [n, ]
         else:
             n = data.columns
             if isinstance(events, pd.Series):
+                # the same events for all data columns
                 events = pd.DataFrame.from_dict({k: events for k in n})
             else:
-                events, data = events.align(data, axis=1, join="outer")
+                if data.shape[1] > events.shape[1]:
+                    warnings.warn("Some data columns do not have "
+                                  "corresponding columns in `events` and "
+                                  "will be removed.")
+                events, data = events.align(data, axis=1, join="inner")
 
         return data, events
 
@@ -924,6 +1032,7 @@ class EventStudyFactory:
         -------
 
         """
+
         def broadcast_fun(arg):
             if isinstance(arg, pd.Series):
                 # concat series into a df
@@ -1023,12 +1132,12 @@ class EventStudyFactory:
             for t in this_evt.index:
                 # it is ensured by outside_windows that .loc[:t, ] also
                 # excludes the window around t
-                mod = PureOls(this_y, this_x_est.loc[:t],
-                              add_constant=add_constant)
+                mod = OLS(y=this_y, x=this_x_est.loc[:t],
+                          add_constant=add_constant)
 
                 # get x around t to make a forecast; +1 needed since day 0
                 # is the event day
-                x_fcast_right = this_x_fcast.loc[t:].head(wd+1)
+                x_fcast_right = this_x_fcast.loc[t:].head(wd + 1)
                 # x_fcast_left = this_x_fcast.loc[:t].tail(-wa+1)
                 x_fcast_left = this_x_fcast.loc[:t]
 
@@ -1039,7 +1148,7 @@ class EventStudyFactory:
 
                 # forecast, fill na in `norm_data`
                 norm_data.fillna(
-                    (this_y-mod.get_yhat(newdata=t_x_fcast)).to_frame(col),
+                    (this_y - mod.get_yhat(newdata=t_x_fcast)).to_frame(col),
                     inplace=True)
 
                 # residual variance
@@ -1119,7 +1228,7 @@ class EventStudyFactory:
         # means
         res_means = pd.concat(res_means, axis=1)
         res_means = res_means.reindex(index=data.index)
-        res_means = res_means.bfill(limit=max(-1*event_window[0], 0))\
+        res_means = res_means.bfill(limit=max(-1 * event_window[0], 0)) \
             .ffill(limit=max(event_window[-1], 0))
         res_means = res_means.where(filler)
 
@@ -1133,107 +1242,5 @@ class EventStudyFactory:
         return res_means, res_vars
 
 
-def main():
-    """
-
-    Returns
-    -------
-
-    """
-    # currency to drop
-    drop_curs = ["jpy", "dkk", "nok", ]
-
-    # window
-    wind = (-10, -1, 0, 5)
-    wa, wb, wc, wd = wind
-
-    # start, end dates
-    s_dt = pd.to_datetime(settings["sample_start"])
-    e_dt = pd.to_datetime(settings["sample_end"])
-
-    # data ------------------------------------------------------------------
-    data_path = set_credentials.gdrive_path("research_data/fx_and_events/")
-    out_path = set_credentials.gdrive_path("opec_meetings/tex/figs/")
-
-    # spot returns + drop currencies ----------------------------------------
-    # with open(data_path + settings["fx_data"], mode='rb') as fname:
-    #     fx = pickle.load(fname)
-    fx = pd.read_pickle(data_path + settings["fx_data"])
-
-    fx = pd.read_pickle(data_path + "bond_index_data.p")
-    mat = "10+y"
-    data = list()
-    currs = list()
-    for key, df in fx.items():
-        data.append(np.log(df[mat]).diff() - np.log(df["5-7y"]).diff())
-        currs.append(key)
-    data = pd.concat(data, axis=1)
-    data.columns = currs
-
-    data = data.drop(["jpy", "usd"], axis=1)
-    ret = data
-
-    # ret = np.log(data).diff()
-    ret = ret.loc[(s_dt - BDay(22)):, :]
-
-    # events + drop currencies ----------------------------------------------
-    # with open(data_path + settings["events_data"], mode='rb') as fname:
-    #     events_data = pickle.load(fname)
-    events_data = pd.read_pickle(data_path + settings["events_data"])
-
-    events = events_data["joint_cbs"].drop(drop_curs + ["usd"],
-                                           axis=1, errors="ignore")
-    events = events.loc[s_dt:e_dt]
-
-    # reindex with business day ---------------------------------------------
-    data = ret.reindex(
-        index=pd.date_range(ret.index[0], ret.index[-1], freq='B'))
-
-    # data_frequency = "H1"
-    #
-    # out_counter_usd_name = "fxcm_counter_usd_" + data_frequency + ".p"
-    #
-    # data = pd.read_pickle(data_path + out_counter_usd_name)
-    # data = data["ask_close"].loc[s_dt:e_dt, events.columns].dropna(how="all")
-    # data = data.pct_change()
-    # data = data.loc[(s_dt - BDay(22)):, :]
-    #
-    # events.index = [ix.tz_localize("UTC") for ix in events.index]
-    # events = events.loc[data.index[0]:data.index[-1], :]
-    # events = events.dropna(how="all")
-
-    # window
-    # wind = (-240, -5, 0, 100)
-    wa, wb, wc, wd = wind
-
-    # exog = pd.DataFrame(1, index=data.index, columns=currs)
-    #
-    # exog_normal, exog_res = \
-    #     EventStudyFactory().get_normal_data_exog(data, events, exog, wind)
-
-    # normal data, all events sample ----------------------------------------
-    es = EventStudy(data=(data) * 100,
-                    events=events,
-                    mean_type="count_weighted",
-                    window=wind)
-
-    esh = EventStudy(data=(data) * 100,
-                     events=events.where(events > 0).dropna(how="all"),
-                     mean_type="count_weighted",
-                     window=wind)
-    esl = EventStudy(data=(data) * 100,
-                     events=events.where(events < 0).dropna(how="all"),
-                     mean_type="count_weighted",
-                     window=wind)
-    esn = EventStudy(data=(data) * 100,
-                     events=events.where(events == 0).dropna(how="all"),
-                     mean_type="count_weighted",
-                     window=wind)
-
-
 if __name__ == "__main__":
-
-    main()
-
-
-
+    pass
