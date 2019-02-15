@@ -124,7 +124,7 @@ class TestEventStudy2D(TestEventStudy):
             data=self.data_2d,
             events=self.events_2d,
             normal_data=0.0,
-            mean_type="count_weighted",
+            cross_asset_weights="count_weighted",
             window=[-randint,-1,0,randint],
             x_overlaps=True)
 

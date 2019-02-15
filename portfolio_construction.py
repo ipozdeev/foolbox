@@ -1,7 +1,6 @@
 import pandas as pd
 from pandas.tseries.offsets import DateOffset
 import numpy as np
-from foolbox.data_mgmt import set_credentials as setc
 import pickle
 
 
