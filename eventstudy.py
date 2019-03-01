@@ -891,8 +891,9 @@ class EventStudyFactory:
         ta, td = window[0], window[-1]
         if len(window) == 4:
             tb, tc = window[1:3]
-            event_index = np.concatenate((np.arange(ta, tb + 1),
-                                          np.arange(tc, td + 1)))
+            event_index = np.unique(
+                np.concatenate((np.arange(ta, tb + 1),np.arange(tc, td + 1)))
+            )
         else:
             tb, tc = (0, 0)
             event_index = np.arange(ta, td + 1)
@@ -902,40 +903,29 @@ class EventStudyFactory:
         evt = events.reindex_like(data).mul(0.0)
         evt_c = evt.copy()
 
-        for t in range(ta, td + 1):
-            evt_c.fillna((evt + t).shift(t), inplace=True)
+        window_neg_part = event_index[event_index < 0][::-1]
+        window_pos_part = event_index[event_index >= 0]
 
-        # # delete events (why?)
-        # evt_c = evt_c.where(evt.isnull())
+        both_parts = pd.concat({
+            "neg": pd.Series(window_neg_part, index=np.abs(window_neg_part)),
+            "pos": pd.Series(window_pos_part, index=np.abs(window_pos_part))
+        }, axis=1)
 
-        # window_pre = np.arange(ta, 0)
-        # window_post = np.arange(1, td + 1)
+        for t, row in both_parts.iterrows():
+            try:
+                evt_c.fillna((evt + row["neg"]).bfill(limit=-int(row["neg"])),
+                             inplace=True)
+            except ValueError:
+                pass
+            try:
+                evt_c.fillna((evt + row["pos"]).ffill(limit=int(row["pos"])),
+                             inplace=True)
+            except ValueError:
+                pass
 
-        # # replace 1 with 0 to have day-zero events TODO: mask?
-        # evt_pre = evt.copy().replace(1, 0)
-        # evt_post = evt.copy().replace(1, 0)
-
-        # # pre-event
-        # for p in window_pre[::-1]:
-        #     evt_pre.fillna((evt * p).bfill(limit=np.abs(p)), inplace=True)
-        #
-        # # kill day-0 events
-        # evt_pre = evt_pre.where(evt.isnull())
-        #
-        # # post-event
-        # for p in window_post:
-        #     evt_post.fillna((evt * p).ffill(limit=np.abs(p)), inplace=True)
-
-        # # exclude values not in (ta, tb) and (tc, td)
-        # idx_correct_window = (evt_pre <= tb) | (evt_post >= tc)
         idx_between_evt = evt_c.isnull() & evt.isnull()
 
-        # # exclude overlaps
-        # idx_overlap = (evt_pre <= tb) & (evt_post >= tc)
-        # idx_correct_window = idx_correct_window & (~idx_overlap)
-        #
-        # evt_pre = evt_pre.where(idx_correct_window)
-        # evt_post = evt_post.where(idx_correct_window)
+        # exclude overlaps
         evt_c = evt_c.where((evt_c <= tb) | (evt_c >= tc))
         evt_c = evt_c.where(evt_c.isin(event_index))
 
@@ -951,10 +941,20 @@ class EventStudyFactory:
         next_evt_no = dt_df.fillna(method="bfill")
 
         # fill with dates
-        if ta < 0:
-            dt_df.bfill(limit=-ta, inplace=True)
-        if td > 0:
-            dt_df.ffill(limit=td, inplace=True)
+        for t, row in both_parts.iterrows():
+            try:
+                dt_df.bfill(limit=-int(row["neg"]), inplace=True)
+            except ValueError:
+                pass
+            try:
+                dt_df.ffill(limit=int(row["pos"]), inplace=True)
+            except ValueError:
+                pass
+
+        # if ta < 0:
+        #     dt_df.bfill(limit=-ta, inplace=True)
+        # if td > 0:
+        #     dt_df.ffill(limit=td, inplace=True)
 
         dt_df = dt_df.where(evt_c.notnull())
 
@@ -971,6 +971,47 @@ class EventStudyFactory:
         timeline.columns.names = ["data", "element"]
 
         return timeline
+
+    @staticmethod
+    def fill_in_turns(sparse_df, bfill_values, ffill_values):
+        """Fill a sparse dataframe forwards and backwards in turns.
+
+        Avoids nasty one-sided overlaps.
+
+        Parameters
+        ----------
+        sparse_df : pandas.DataFrame
+        bfill_values : list-like
+            of negative values
+        ffill_values : list-like
+            of positive values
+
+        Returns
+        -------
+
+        """
+        res = sparse_df.copy()
+
+        both_parts = pd.concat({
+            "neg": pd.Series(np.sort(bfill_values)[::-1],
+                             index=np.sort(np.abs(bfill_values))),
+            "pos": pd.Series(np.sort(ffill_values),
+                             index=np.abs(ffill_values))
+        }, axis=1)
+
+        for t, row in both_parts.iterrows():
+            try:
+                res.fillna((sparse_df + row["neg"]).bfill(limit=t),
+                                 inplace=True)
+            except ValueError:
+                pass
+            try:
+                res.fillna((sparse_df + row["pos"]).ffill(limit=t),
+                                 inplace=True)
+            except ValueError:
+                pass
+
+        return res
 
     @staticmethod
     def align_for_event_study(data, events):
