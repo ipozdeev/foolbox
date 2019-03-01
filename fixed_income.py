@@ -103,20 +103,22 @@ class FixedIncome:
         self.value_dt = self._quote_dt + self.b_day * self.value_dt_lag
 
     @property
+    def lifetime_period(self):
+        res = pd.date_range(self._value_dt, self._end_dt, freq=self.b_day)
+
+        return res
+
+    @property
     def calculation_period(self):
         """range of business days from start to end dates"""
-        calculation_period = pd.date_range(
-            self._value_dt,
-            self._end_dt,
-            freq=self.b_day)
 
         # exclude the last day from calculation period
-        return calculation_period[:-1]
+        return self.lifetime_period[:-1]
 
     @property
     def lengths_of_overnight(self):
         """number of days to multiply rate with: uses function from utils.py"""
-        return self.get_lengths_of_overnight(self.calculation_period)
+        return self.get_lengths_of_overnight(self.lifetime_period)
 
     @property
     def lifetime(self):
@@ -900,7 +902,7 @@ class OIS(FixedIncome):
                     "fixing_lag": -1,
                     "day_count_float": "act/360",
                     "day_roll": "modified following",
-                    "new_rate_lag": 1},
+                    "new_rate_lag": 5},
 
             "usd": {"value_dt_lag": 2,
                     "fixing_lag": 1,
