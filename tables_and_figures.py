@@ -8,6 +8,7 @@ import matplotlib
 import matplotlib.pyplot as plt
 plt.rc("font", family="serif", size=12)
 
+
 def fama_macbeth_first(Y, X):
     """ First stage of Fama-MacBeth
     """
@@ -147,7 +148,7 @@ def descriptives(data, scale=12, use_statsmodels=False, **kwargs):
 
     # Names for rows in the output DataFrame
     rows = ["mean", "se_mean", "tstat", "median", "std", "q95",
-            "q05", "skewness", "kurtosis", "sharpe", "ac1", "se_ac1", "count"]
+            "q05", "skewness", "kurtosis", "sharpe", "ac1", "count"]
 
     # Generate the output DataFrame
     out = pd.DataFrame(index=rows, columns=data.columns, dtype=float)
@@ -165,22 +166,24 @@ def descriptives(data, scale=12, use_statsmodels=False, **kwargs):
 
     # Iterate over input's columns, computing statistics
     for c, c_col in data.iteritems():
+        endog = c_col.dropna().values
+        exog = np.ones(shape=(len(endog),))
         if use_statsmodels:
-            endog = c_col.dropna().values
-            exog = np.ones(shape=(len(endog),))
             mod = sm.OLS(endog, exog)
             mod_fit = mod.fit(cov_type='HAC', **kwargs)
             se_mean = mod_fit.bse
         else:
-            _, se_mean, _ = ec.rOls(c_col.dropna(), None, const=True, HAC=True)
+            mod = ec.linear_models.OLS(y=endog, x=exog, add_constant=False)
+            se_mean = mod.get_diagnostics(hac=True).loc["se", "const"]
 
         out.loc["se_mean", c] = se_mean[0] * scale
         out.loc["tstat", c] = out.loc["mean", c] / out.loc["se_mean", c]
 
         # autocorrelation with HAC-adjusted standard error, suppress inntercept
-        ac, se_ac, _ = ec.rOls(c_col, c_col.shift(1), const=False, HAC=True)
-        out.loc["ac1", c] = ac[0]
-        out.loc["se_ac1", c] = se_ac[0]
+
+        ac = c_col.corr(c_col.shift(1))
+        out.loc["ac1", c] = ac
+        # out.loc["se_ac1", c] = se_ac[0]
 
     return out
 
