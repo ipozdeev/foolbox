@@ -509,7 +509,8 @@ class OIS(FixedIncome):
         elif isinstance(on_rate, pd.core.generic.NDFrame):
             # for the series case, need to ffill if missing and shift by the
             #   fixing lag
-            on_rate_series = on_rate.shift(self.fixing_lag).ffill()
+            on_rate_series = on_rate.shift(self.fixing_lag)\
+                .ffill(limit=np.abs(self.fixing_lag))
         else:
             return np.nan
 
@@ -528,12 +529,8 @@ class OIS(FixedIncome):
         tmp_ret /= (100 * self.day_count_float_dnm)
 
         # Compute the cumulative floating leg return over the period
-        # res = self.cumprod_with_mult(tmp_ret / self.day_count_float_dnm / 100)
         ret_mult = (1 + tmp_ret * self.lengths_of_overnight)
-        res = ret_mult.loc[dt_since:dt_until].prod() - 1
-
-        # # annualize etc.
-        # res *= (100 * self.day_count_float_dnm / self.lifetime)
+        res = ret_mult.loc[dt_since:dt_until].prod(skipna=False) - 1
 
         return res
 
@@ -999,8 +996,16 @@ class OIS(FixedIncome):
         -------
 
         """
+        if any([np.isnan(arg) for arg in (r_ois, r_pre, r_suggested)]):
+            return np.nan
+
         # rate when the new rate becomes effective
         new_rate_dt = event_dt + self.b_day * self.new_rate_lag
+
+        # if there is no chance the new rate enters the calculation of return
+        if (new_rate_dt + self.b_day * self.fixing_lag) >= \
+                self.calculation_period[-1]:
+            return np.nan
 
         # rates without and with possible change
         # extended calculation period, to comply with all the fixing lags
