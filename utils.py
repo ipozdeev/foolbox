@@ -528,7 +528,7 @@ def apply_between_events(data, events, func, lag=None, **kwargs):
         if lag is None:
             lag = Day(1)
 
-        if isinstance(lag, (int, np.int)):
+        if isinstance(lag, (int, np.integer)):
             add_lag = Day(1)*lag
         elif isinstance(lag, DateOffset):
             add_lag = lag*1
@@ -553,10 +553,11 @@ def apply_between_events(data, events, func, lag=None, **kwargs):
         assert data.columns.equals(events.columns)
         assert isinstance(lag, (dict, pd.Series))
         res = {
-            apply_between_events(data.loc[:, c], events.loc[:, c],
+            c: apply_between_events(data.loc[:, c], events.loc[:, c],
                                  func, lag[c])
             for c in data.columns
         }
+        res = pd.concat(res, axis=1)
 
     else:
         res = None
