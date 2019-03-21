@@ -1,15 +1,21 @@
 import pandas as pd
-from seaborn import color_palette
+from seaborn import color_palette, diverging_palette
 
 import matplotlib.pyplot as plt
 from matplotlib import colors
 import matplotlib.lines as mlines
+
 
 # colors
 palette = color_palette("deep", 8)
 color_gray = "#afafaf"
 color_blue = colors.to_hex(palette[0])
 color_red = colors.to_hex(palette[1])
+
+new_blue_hsluv = 248.2
+new_red_hsluv = 26.8
+heatmap_cmap = diverging_palette(new_blue_hsluv, new_red_hsluv, 85, 54,
+                                 n=15, as_cmap=True)
 
 # figsizes
 figsize_single = (8.27-2, (11.69-2) / 3)

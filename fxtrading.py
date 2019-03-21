@@ -26,7 +26,7 @@ class StrategyFactory:
             'unlimited' for unlimited leverage.
         """
         # weights are understood to be fractions of portfolio value
-        if leverage == "zero":
+        if leverage.startswith("zero"):
             # NB: dangerous, because meaningless whenever there are long/sort
             #   positions only
             # make sure that pandas does not sum all nan's to zero
@@ -35,7 +35,7 @@ class StrategyFactory:
             # divide by leverage
             pos_weights = weights.divide(row_lev, axis=0)
 
-        elif leverage == "net":
+        elif leverage.startswith("net"):
             # deleverage positive and negative positions separately
             row_lev_pos = weights.where(weights > 0)\
                 .apply(axis=1, func=np.nansum)
@@ -49,7 +49,7 @@ class StrategyFactory:
                         weights.where(weights > 0).divide(
                             row_lev_pos, axis=0))
 
-        elif leverage == "unlimited":
+        elif leverage.startswith("unlim"):
             pos_weights = np.sign(weights)
 
         else:
