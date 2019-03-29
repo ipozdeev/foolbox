@@ -92,7 +92,7 @@ def broomstick_plot(data, ci=(0.1, 0.9)):
     plt.setp(ax.get_xticklabels(), rotation=0, ha="center")
     # Grid
     ax.grid(which="both", alpha=0.33, linestyle=":")
-    ax.plot(data, color=new_gray, lw=0.75, alpha=0.25)
+    ax.plot(data, color=color_gray, lw=0.75, alpha=0.25)
 
     ax.plot(stats["mean"], color="k", lw=2)
     ax.plot(stats[["cb_l", "cb_u"]], color="k", lw=2, linestyle="--")
