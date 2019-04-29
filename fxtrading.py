@@ -399,19 +399,33 @@ class FXTradingEnvironment:
 
         return res
 
-    def with_mid_quotes(self):
-        """Get a version of `self` with spot prices and swap points set to mid.
+    def with_scaled_costs(self, scale=1.0):
+        """Get a version of `self` with scaled bid-ask spread.
 
         Returns
         -------
         res : FXTradingEnvironment
 
         """
-        mid_spot = pd.concat({k: self.mid_spot_prices for k in ["bid", "ask"]},
-                             axis=1)
-        mid_swap = pd.concat({k: self.mid_swap_points for k in ["bid", "ask"]},
-                             axis=1)
-        res = FXTradingEnvironment(spot_prices=mid_spot, swap_points=mid_swap)
+        def spread_scaler(df_ba, df_mid):
+            # calculate spread
+            ba_spread = pd.concat(
+                {p: df_ba[p] - df_mid for p in ["bid", "ask"]},
+                axis=1
+            )
+
+            # scale spread
+            ba_spread_scaled = ba_spread * scale
+
+            # reinstall
+            df_new = df_mid + ba_spread_scaled
+
+            return df_new
+
+        res = FXTradingEnvironment(
+            spot_prices=spread_scaler(self.spot_prices, self.mid_spot_prices),
+            swap_points=spread_scaler(self.swap_points, self.mid_swap_points)
+        )
 
         return res
 
@@ -480,8 +494,12 @@ class FXTradingEnvironment:
     def drop(self, *args, **kwargs):
         """
         """
-        self.spot_prices = self.spot_prices.drop(*args, **kwargs)
-        self.swap_points = self.swap_points.drop(*args, **kwargs)
+        self.spot_prices = self.spot_prices.drop(*args, axis=1,
+                                                 level="currency",
+                                                 **kwargs)
+        self.swap_points = self.swap_points.drop(*args, axis=1,
+                                                 level="currency",
+                                                 **kwargs)
 
 
 class FXTrading:

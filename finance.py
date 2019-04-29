@@ -110,7 +110,7 @@ class PolicyExpectation:
 
     @classmethod
     def from_ois(cls, meetings, ois_object, ois_rate, rate_on_const,
-                 stoch=False, rate_var=None, **kwargs):
+                 stoch=False, rate_var=None, allowed_exceedence=0.0):
         """Construct PolicyExpectation from ois rates.
 
         Parameters
@@ -149,50 +149,49 @@ class PolicyExpectation:
             # set quote date to this t
             ois_object.quote_dt = t
 
-            # break if out of range
-            if ois_object.value_dt >= meetings.last_valid_index():
+            if ois_object.end_dt >= meetings.index[-1] + \
+                    int(allowed_exceedence*ois_object.lifetime) * \
+                    ois_object.b_day:
                 break
 
             # meetings ------------------------------------------------------
             # next closest to the quote date
-            very_nx_meet = meetings.index[
-                meetings.index.get_loc(ois_object.quote_dt, method="bfill")]
+            # next_meet_1st = meetings.index[
+            #     meetings.index.get_loc(ois.quote_dt, method="bfill")]
+            next_meet_1st = meetings.loc[ois_object.quote_dt:].index[0]
 
             # next closest to the value date
-            nx_meet = meetings.index[
-                meetings.index.get_loc(ois_object.value_dt, method="bfill")]
+            # next_meet_2nd = meetings.index[
+            #     meetings.index.get_loc(ois.value_dt, method="bfill")]
+            try:
+                next_meet_2nd = meetings.loc[ois_object.quote_dt:]\
+                    .drop(next_meet_1st).index[0]
+            except IndexError:
+                break
 
-            # are there two meetings within one ois period?
-            nx2_meet = meetings.index[
-                meetings.index.get_loc(ois_object.end_dt, method="ffill")]
+            # by how much ois lifetime exceeds two meetings in a row
+            crit_t = next_meet_2nd + \
+                (ois_object.fixing_lag + ois_object.new_rate_lag) * \
+                DateOffset(days=1)
+            ois_past_second = \
+                ois_object.lengths_of_overnight.loc[crit_t:].sum()
 
-            # case with two meetings within one ois period
-            if nx2_meet > nx_meet:
-                # if too large an exceedence, skip
-                if ois_object.end_dt > nx2_meet + 2*ois_object.b_day:
-                    continue
+            x1 = (ois_past_second / ois_object.lifetime) > allowed_exceedence
+            x2 = ois_object.end_dt < next_meet_1st
 
-            # sometimes there is a meeting between quote and value dates
-            if very_nx_meet < nx_meet:
-                if ois_object.end_dt < nx_meet:
-                    expected_proxy_rate.loc[t] = t_ois_rate
-                else:
-                    continue
-            else:
-                # end_dt < next meeting, cannot tell anything
-                if ois_object.end_dt < nx_meet:
-                    continue
+            if x1 | x2:
+                continue
 
             # extract implied rate
             if stoch:
                 expected_proxy_rate.loc[t] = ois_object.get_implied_rate_stoch(
-                    event_dt=nx_meet,
+                    event_dt=next_meet_1st,
                     ois_rate=t_ois_rate,
                     rate_mu_pre=rate_on_const.loc[t],
                     rate_var=rate_var.loc[t])
             else:
                 expected_proxy_rate.loc[t] = ois_object.get_implied_rate(
-                    event_dt=nx_meet,
+                    event_dt=next_meet_1st,
                     swap_rate=t_ois_rate,
                     rate_until=rate_on_const.loc[t])
 
@@ -322,18 +321,11 @@ class PolicyExpectation:
         PolicyExpectation
 
         """
-        # default values
-        if proxy_rate_pickle is None:
-            proxy_rate_pickle = "overnight_rates.p"
-        if e_proxy_rate_pickle is None:
-            e_proxy_rate_pickle = "implied_rates_from_1m_ois_since.p"
-        if meetings_pickle is None:
-            meetings_pickle = "events.p"
-
         # meetings
         meetings_data = pd.read_pickle(data_path + meetings_pickle)
-        meetings = meetings_data["joint_cbs"].loc[start_dt:, currency]
-        policy_rate = meetings_data["joint_cbs_lvl"].loc[start_dt:, currency]
+        meetings_data = meetings_data["scheduled"]["announced"]
+        meetings = meetings_data["joint_chg"].loc[start_dt:, currency]
+        policy_rate = meetings_data["joint_lvl"].loc[start_dt:, currency]
 
         # drop nans from policy rates
         meetings = meetings.dropna()
@@ -842,7 +834,7 @@ class PolicyExpectation:
 
         # concat to be able to drop NAs
         both = pd.concat((policy_dir_actual, policy_dir_fcast), axis=1)
-        both = both.dropna(how="any")
+        both = both.dropna(how="any").astype(int)
 
         # percentage of correct guesses
         # rho = (both.loc[:,"fcast"] == both.loc[:,"actual"]).mean()
@@ -860,7 +852,7 @@ class PolicyExpectation:
 
         # # TODO: why?
         # cmx = cmx.reindex(index=[-1, 0, 1], columns=[-1, 0, 1]).fillna(0)
-        cmx = cmx.astype(np.int8)
+        cmx = cmx.astype(np.int)
 
         return cmx
 
@@ -1765,9 +1757,11 @@ def realized_covariance(data, sample_freq='M', n_in_day=None, r_corr=False):
 
 if __name__ == "__main__":
 
-    pe = PolicyExpectation.from_pickles(
-        data_path, currency="usd",
-        meetings_pickle="ois_project_events.p", start_dt="2001-12",
-        e_proxy_rate_pickle="implied_rates_1m_ois.p")
+    # pe = PolicyExpectation.from_pickles(
+    #     data_path, currency="usd",
+    #     meetings_pickle="ois_project_events.p", start_dt="2001-12",
+    #     e_proxy_rate_pickle="implied_rates_1m_ois.p")
+    #
+    # pe.get_vus(10, lambda x: x.rolling(5, min_periods=1).mean().shift(1))
+    pass
 
-    pe.get_vus(10, lambda x: x.rolling(5, min_periods=1).mean().shift(1))
