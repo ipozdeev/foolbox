@@ -2,7 +2,7 @@ import pandas as pd
 import numpy as np
 import statsmodels.api as sm
 from scipy import stats
-from foolbox import econometrics as ec
+from foolbox.econometrics.linear_models import OLS
 from foolbox.econometrics._estimators import nw_cov
 import matplotlib
 import matplotlib.pyplot as plt
@@ -114,7 +114,7 @@ def fama_macbeth_second(Y, betas):
     return lambdas, alphas
 
 
-def descriptives(data, scale=12, use_statsmodels=False, **kwargs):
+def descriptives(data, scale=12, use_statsmodels=False, cov_lags=1):
     """Estimates frequency-adjusted descriptive statistics for each series in
     the input DataFrame, by default assumes monthly inputs and annualized
     output.
@@ -132,9 +132,8 @@ def descriptives(data, scale=12, use_statsmodels=False, **kwargs):
         scale=12 (default)
     use_statsmodels : bool
         True to use statsmodels (faster)
-    kwargs: dict
-        arguments to mod.fit of when use_statsmodels=True, e.g.
-        cov_kwds={"maxlags":1}
+    cov_lags : int
+        max lags for robust covariance estimation
 
     Returns
     -------
@@ -170,7 +169,7 @@ def descriptives(data, scale=12, use_statsmodels=False, **kwargs):
         exog = np.ones(shape=(len(endog),))
         if use_statsmodels:
             mod = sm.OLS(endog, exog)
-            mod_fit = mod.fit(cov_type='HAC', **kwargs)
+            mod_fit = mod.fit(cov_type='HAC', cov_kwds={"maxlags": cov_lags})
             se_mean = mod_fit.bse
         else:
             mod = ec.linear_models.OLS(y=endog, x=exog, add_constant=False)
@@ -188,7 +187,7 @@ def descriptives(data, scale=12, use_statsmodels=False, **kwargs):
     return out
 
 
-def ts_ap_tests(y, X, scale=12):
+def ts_ap_tests(y, X, scale=12, cov_lags=1):
     """Runs time-series asset pricing tests by regressing returns of test
     assets on factor returns. That is, given a single factor model with factor
     F, and two test assets y1, y2, and estimates two regressions:
@@ -233,7 +232,11 @@ def ts_ap_tests(y, X, scale=12):
 
     # Run OLS regressing each test asset in y on a set of factors in X
     for column in y.columns:
-        coef, se, adj_r_sq = ec.rOls(y[column], X, const=True, HAC=True)
+        mod = sm.OLS(y[column], sm.add_constant(X), missing="drop")
+        mod_fit = mod.fit(cov_type='HAC', cov_kwds={"maxlags": cov_lags})
+        coef = mod_fit.params
+        se = mod_fit.bse
+        adj_r_sq = mod_fit.rsquared_adj
 
         # Get the output in desired format, iterating over a list of tuples
         # (column_name, column_index)
