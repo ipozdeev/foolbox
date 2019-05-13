@@ -23,24 +23,24 @@ figsize_double = (8.27-2, (11.69-2) / 2)
 figsize_full = (8.27-2, (11.69-2) / 1.25)
 
 
-def set_style_paper():
+def set_style_paper(fontsize=10):
     """
     """
     # settings
     font_settings = {
         "family": "serif",
-        "size": 10}
+        "size": fontsize}
     fig_settings = {
         "figsize": figsize_single}
     tick_settings = {
-        "labelsize": 10}
+        "labelsize": fontsize}
     axes_settings = {
         "grid": True}
     grid_settings = {
         "linestyle": '-',
         "alpha": 0.75}
     legend_settings = {
-        "fontsize": 10}
+        "fontsize": fontsize}
 
     # apply all
     plt.rc("xtick", **tick_settings)

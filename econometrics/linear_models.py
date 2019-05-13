@@ -1,16 +1,9 @@
 import pandas as pd
 import numpy as np
 import statsmodels.api as sm
+import matplotlib.pyplot as plt
+import seaborn as sns
 
-import rpy2.robjects as robj
-from rpy2.robjects.packages import importr
-from rpy2.robjects import Formula
-
-from rpy2.robjects import pandas2ri
-pandas2ri.activate()
-
-from rpy2.robjects import numpy2ri
-numpy2ri.activate()
 from scipy.stats import chi2
 
 
@@ -143,196 +136,196 @@ class OLS(Regression):
 
         return coef
 
-    def get_diagnostics(self, hac=True):
-        """
-        """
-        if hac:
-            rdata = pandas2ri.py2ri(pd.concat((self.y, self.x), axis=1))
-
-            # import lm and base
-            lm = robj.r['lm']
-
-            # write down formula: y ~ x
-            fmla = Formula(self.y_name[0] + " ~ . - 1")
-
-            env = fmla.environment
-            env["rdata"] = rdata
-
-            # fit model
-            f = lm(fmla, data = rdata)
-
-            # extract coefficients
-            coef = pd.Series(f.rx2('coefficients'), index=self.x_names)
-
-            # implementation of Newey-West (1997)
-            nw = importr("sandwich")
-
-            # errors
-            vcv = nw.NeweyWest(f)
-
-            # fetch coefficients from model output
-            se = pd.Series(np.sqrt(np.diag(vcv)), index=self.x_names)
-
-            # tstat
-            tstat = coef / se
-
-            # R-squared
-            rsq = sm.OLS(endog=self.y, exog=self.x).fit().rsquared_adj
-
-            # concat and transpose
-            res = pd.DataFrame.from_dict({"coef": coef,
-                                          "se": se,
-                                          "tstat": tstat})
-            res = res.T
-
-            # add r-squared
-            res.loc["adj r2", res.columns[0]] = rsq
-
-            # add nobs
-            res.loc["nobs", res.columns[0]] = len(self.y)
-
-            return res
-
-        if not hasattr(self, "eps"):
-            eps = self.get_residuals()
-
-        eps_var = eps.var().values
-        xx = self.x.T.dot(self.x)
-        vcv = eps_var*np.linalg.inv(xx)
-        se = (np.diag(vcv) ** 0.5).squeeze()
-        se = pd.DataFrame(se, index=self.coef.index, columns=self.coef.columns)
-        tstat = self.coef/se
-
-        res = pd.concat([self.coef, se, tstat], axis=1).T
-        res.columns = self.x_names
-        res.index = ["coef", "se", "tstat"]
-
-        return res
-    
-    def linear_restrictions_test(self, R, r, HAC=True):
-        """Tests linear constraints on the coeficients in the following form:
-
-                            R * theta_hat = r
-
-        Parameters
-        ----------
-        R: pd.DataFrame
-            with columns named according parameters combinations of which are
-            to be tested (K) less or equal the total number of estimated
-            parameters, and number of rows equal to the number of linear
-            constraints (q)
-        r: pd.Series
-            of size q, containing the null hypothesis value for each linear
-            restriction. Index is same as in R
-        HAC: bool
-            whether a robust VCV should be used. Default is True
-
-        Returns
-        -------
-        res: pd.Series
-            with chi-squared - statistic with dof = q, and the corresponding
-            p-value
-
-        """
-        # Only HAC, only hardcore
-        # TODO: refactor, so the estimation doesn't duplicate get_diagnostics()
-        if HAC:
-            # R-part
-            rdata = pandas2ri.py2ri(pd.concat((self.y, self.x), axis=1))
-
-            # import lm and base
-            lm = robj.r['lm']
-            base = importr('base')
-
-            # write down formula: y ~ x
-            fmla = Formula(self.Y_names[0] + " ~ . - 1")
-
-            env = fmla.environment
-            env["rdata"] = rdata
-
-            # fit model
-            f = lm(fmla, data = rdata)
-
-            # extract coefficients
-            coef = pd.Series(f.rx2('coefficients'), index=self.x_names)
-
-            # implementation of Newey-West (1997)
-            nw = importr("sandwich")
-
-            # errors
-            vcv = nw.NeweyWest(f)
-
-            # vcv
-            vcv = pd.DataFrame(np.array(vcv), index=self.x_names,
-                               columns=self.x_names)
-
-            # Select the subset with parameters involved in test
-            vcv = vcv.loc[R.columns, R.columns]
-            coef = coef.loc[R.columns]
-
-            # Compute the Wald statistic
-            W = (R.dot(coef) - r).T \
-                .dot(np.linalg.inv(R.dot(vcv).dot(R.T))) \
-                .dot(R.dot(coef) - r)
-
-            # Degrees of freedom equals the number of restrictions
-            q = R.shape[0]
-
-            # Compute p-value
-            p_val = 1 - chi2.cdf(W, q)
-
-            # Organize output
-            out = pd.Series([W, p_val], index=["chi_sq", "p_val"])
-
-        return out
-
-    def hodrick_vcv(self, forecast_horizon):
-        """Computes Hodrick (1992) variance-covariance matrix uder the null
-        hypothesis of no predictability for a regression of the following type:
-
-                    y(t -> t+H) = X(t) * beta + epsilon(t -> t+H),
-
-        where t -> t+H, means that y is forecast H-steps ahead
-
-        Parameters
-        ----------
-        forecast_horizon: int
-            specifying forecast horizon H in the example above
-
-        Returns
-        -------
-        hodrick_vcv: pd.DataFrame
-            with Hodrick (1992) VCV estimate
-
-        """
-        # Dimensionality of regressors' matrix
-        (T, N) = self.x.shape
-
-        # Get demeaned residuals from OLS on a constant
-        resids = self.y - self.y.mean()
-
-        # Compute Hodrick's spectral density
-        spectral_density = pd.DataFrame(np.zeros((N, N)), index=self.x.columns,
-                                        columns=self.x.columns)
-
-        # Spectral density for each point in time
-        sd = self.x.rolling(forecast_horizon).sum().shift(1)\
-            .mul(resids.squeeze(), axis=0).dropna()
-
-        # Get the time average
-        spectral_density = (1 / T) * sd.T.dot(sd)
-
-        # Get the 'sandwich' part of vcv, i.e. E[xx']
-        Z = (1 / T) * self.x.T.dot(self.x)
-
-        # Get the output
-        hodrick_vcv = \
-            np.linalg.inv(Z).dot(spectral_density).dot(np.linalg.inv(Z)) / T
-
-        hodrick_vcv = pd.DataFrame(hodrick_vcv, index=self.x.columns,
-                                   columns=self.x.columns)
-
-        return hodrick_vcv
+    # def get_diagnostics(self, hac=True):
+    #     """
+    #     """
+    #     if hac:
+    #         rdata = pandas2ri.py2ri(pd.concat((self.y, self.x), axis=1))
+    #
+    #         # import lm and base
+    #         lm = robj.r['lm']
+    #
+    #         # write down formula: y ~ x
+    #         fmla = Formula(self.y_name[0] + " ~ . - 1")
+    #
+    #         env = fmla.environment
+    #         env["rdata"] = rdata
+    #
+    #         # fit model
+    #         f = lm(fmla, data = rdata)
+    #
+    #         # extract coefficients
+    #         coef = pd.Series(f.rx2('coefficients'), index=self.x_names)
+    #
+    #         # implementation of Newey-West (1997)
+    #         nw = importr("sandwich")
+    #
+    #         # errors
+    #         vcv = nw.NeweyWest(f)
+    #
+    #         # fetch coefficients from model output
+    #         se = pd.Series(np.sqrt(np.diag(vcv)), index=self.x_names)
+    #
+    #         # tstat
+    #         tstat = coef / se
+    #
+    #         # R-squared
+    #         rsq = sm.OLS(endog=self.y, exog=self.x).fit().rsquared_adj
+    #
+    #         # concat and transpose
+    #         res = pd.DataFrame.from_dict({"coef": coef,
+    #                                       "se": se,
+    #                                       "tstat": tstat})
+    #         res = res.T
+    #
+    #         # add r-squared
+    #         res.loc["adj r2", res.columns[0]] = rsq
+    #
+    #         # add nobs
+    #         res.loc["nobs", res.columns[0]] = len(self.y)
+    #
+    #         return res
+    #
+    #     if not hasattr(self, "eps"):
+    #         eps = self.get_residuals()
+    #
+    #     eps_var = eps.var().values
+    #     xx = self.x.T.dot(self.x)
+    #     vcv = eps_var*np.linalg.inv(xx)
+    #     se = (np.diag(vcv) ** 0.5).squeeze()
+    #     se = pd.DataFrame(se, index=self.coef.index, columns=self.coef.columns)
+    #     tstat = self.coef/se
+    #
+    #     res = pd.concat([self.coef, se, tstat], axis=1).T
+    #     res.columns = self.x_names
+    #     res.index = ["coef", "se", "tstat"]
+    #
+    #     return res
+    #
+    # def linear_restrictions_test(self, R, r, HAC=True):
+    #     """Tests linear constraints on the coeficients in the following form:
+    #
+    #                         R * theta_hat = r
+    #
+    #     Parameters
+    #     ----------
+    #     R: pd.DataFrame
+    #         with columns named according parameters combinations of which are
+    #         to be tested (K) less or equal the total number of estimated
+    #         parameters, and number of rows equal to the number of linear
+    #         constraints (q)
+    #     r: pd.Series
+    #         of size q, containing the null hypothesis value for each linear
+    #         restriction. Index is same as in R
+    #     HAC: bool
+    #         whether a robust VCV should be used. Default is True
+    #
+    #     Returns
+    #     -------
+    #     res: pd.Series
+    #         with chi-squared - statistic with dof = q, and the corresponding
+    #         p-value
+    #
+    #     """
+    #     # Only HAC, only hardcore
+    #     # TODO: refactor, so the estimation doesn't duplicate get_diagnostics()
+    #     if HAC:
+    #         # R-part
+    #         rdata = pandas2ri.py2ri(pd.concat((self.y, self.x), axis=1))
+    #
+    #         # import lm and base
+    #         lm = robj.r['lm']
+    #         base = importr('base')
+    #
+    #         # write down formula: y ~ x
+    #         fmla = Formula(self.Y_names[0] + " ~ . - 1")
+    #
+    #         env = fmla.environment
+    #         env["rdata"] = rdata
+    #
+    #         # fit model
+    #         f = lm(fmla, data = rdata)
+    #
+    #         # extract coefficients
+    #         coef = pd.Series(f.rx2('coefficients'), index=self.x_names)
+    #
+    #         # implementation of Newey-West (1997)
+    #         nw = importr("sandwich")
+    #
+    #         # errors
+    #         vcv = nw.NeweyWest(f)
+    #
+    #         # vcv
+    #         vcv = pd.DataFrame(np.array(vcv), index=self.x_names,
+    #                            columns=self.x_names)
+    #
+    #         # Select the subset with parameters involved in test
+    #         vcv = vcv.loc[R.columns, R.columns]
+    #         coef = coef.loc[R.columns]
+    #
+    #         # Compute the Wald statistic
+    #         W = (R.dot(coef) - r).T \
+    #             .dot(np.linalg.inv(R.dot(vcv).dot(R.T))) \
+    #             .dot(R.dot(coef) - r)
+    #
+    #         # Degrees of freedom equals the number of restrictions
+    #         q = R.shape[0]
+    #
+    #         # Compute p-value
+    #         p_val = 1 - chi2.cdf(W, q)
+    #
+    #         # Organize output
+    #         out = pd.Series([W, p_val], index=["chi_sq", "p_val"])
+    #
+    #     return out
+    #
+    # def hodrick_vcv(self, forecast_horizon):
+    #     """Computes Hodrick (1992) variance-covariance matrix uder the null
+    #     hypothesis of no predictability for a regression of the following type:
+    #
+    #                 y(t -> t+H) = X(t) * beta + epsilon(t -> t+H),
+    #
+    #     where t -> t+H, means that y is forecast H-steps ahead
+    #
+    #     Parameters
+    #     ----------
+    #     forecast_horizon: int
+    #         specifying forecast horizon H in the example above
+    #
+    #     Returns
+    #     -------
+    #     hodrick_vcv: pd.DataFrame
+    #         with Hodrick (1992) VCV estimate
+    #
+    #     """
+    #     # Dimensionality of regressors' matrix
+    #     (T, N) = self.x.shape
+    #
+    #     # Get demeaned residuals from OLS on a constant
+    #     resids = self.y - self.y.mean()
+    #
+    #     # Compute Hodrick's spectral density
+    #     spectral_density = pd.DataFrame(np.zeros((N, N)), index=self.x.columns,
+    #                                     columns=self.x.columns)
+    #
+    #     # Spectral density for each point in time
+    #     sd = self.x.rolling(forecast_horizon).sum().shift(1)\
+    #         .mul(resids.squeeze(), axis=0).dropna()
+    #
+    #     # Get the time average
+    #     spectral_density = (1 / T) * sd.T.dot(sd)
+    #
+    #     # Get the 'sandwich' part of vcv, i.e. E[xx']
+    #     Z = (1 / T) * self.x.T.dot(self.x)
+    #
+    #     # Get the output
+    #     hodrick_vcv = \
+    #         np.linalg.inv(Z).dot(spectral_density).dot(np.linalg.inv(Z)) / T
+    #
+    #     hodrick_vcv = pd.DataFrame(hodrick_vcv, index=self.x.columns,
+    #                                columns=self.x.columns)
+    #
+    #     return hodrick_vcv
 
     def to_latex(self, inference="se", fmt_coef="{:.4f}",
                  fmt_inference="({:.2f})", **kwargs):

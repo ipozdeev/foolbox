@@ -1110,7 +1110,7 @@ class PolicyExpectation:
 
 
 def into_currency(data, new_cur, counter_cur):
-    """
+    """Convert spot returns or log-fdiscounts to another counter currency.
 
     Parameters
     ----------
