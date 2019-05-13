@@ -2,6 +2,7 @@ import pandas as pd
 import numpy as np
 import warnings
 from foolbox import portfolio_construction as poco
+from foolbox.finance import into_currency
 
 
 class StrategyFactory:
@@ -303,13 +304,13 @@ class FXTradingStrategy:
 
     def __add__(self, other):
         """Combine two strategies.
-        A + B means strategy A is taken as the base strategy and 'enhanced'
-        with strategy B.
+        A + B means strategy A is traded unless strategy B disagrees.
 
         Not commutative!
         """
         # fill position weights with those of `other`
-        new_pos_weights = other.position_weights.fillna(self.position_weights)
+        new_pos_weights = other.position_weights\
+            .replace(0.0, np.nan).fillna(self.position_weights)
 
         # the new strategy is a strategy with the above position weights and
         #  net leverage
@@ -325,7 +326,7 @@ class FXTradingStrategy:
 class FXTradingEnvironment:
     """
     """
-    def __init__(self, spot_prices, swap_points):
+    def __init__(self, spot_prices, swap_points, counter_currency="usd"):
         """
         Parameters
         ----------
@@ -336,12 +337,15 @@ class FXTradingEnvironment:
         swap_points : pandas.DataFrame
             of swap points, such that swap_points + spot = forward;
             indexed by time, columned by a `MultiIndex` of (bid/ask, currency)
+        counter_currency : str
         """
         self.spot_prices = spot_prices
         self.swap_points = swap_points
 
         self.spot_prices.columns.names = ["bid_or_ask", "currency"]
         self.swap_points.columns.names = ["bid_or_ask", "currency"]
+
+        self.counter_currency = counter_currency.lower()
 
     @property
     def mid_spot_prices(self):
@@ -356,7 +360,7 @@ class FXTradingEnvironment:
         return self.spot_prices.columns.get_level_values("currency").unique()
 
     @classmethod
-    def from_scratch(cls, spot_prices, swap_points=None):
+    def from_scratch(cls, spot_prices, swap_points=None, **kwargs):
         """
 
         Parameters
@@ -365,6 +369,7 @@ class FXTradingEnvironment:
             see FXTradingEnvironment
         swap_points : dict or pandas.DataFrame
             see FXTradingEnvironment
+        kwargs : Any
 
         Returns
         -------
@@ -395,9 +400,25 @@ class FXTradingEnvironment:
                 str(swap_points.__class__) +
                 " not implemented!")
 
-        res = cls(spot_prices, swap_points)
+        res = cls(spot_prices, swap_points, **kwargs)
 
         return res
+
+    @staticmethod
+    def spread_scaler(df_ba, df_mid, scale):
+        # calculate spread
+        ba_spread = pd.concat(
+            {p: df_ba[p] - df_mid for p in ["bid", "ask"]},
+            axis=1
+        )
+
+        # scale spread
+        ba_spread_scaled = ba_spread * scale
+
+        # reinstall
+        df_new = df_mid + ba_spread_scaled
+
+        return df_new
 
     def with_scaled_costs(self, scale=1.0):
         """Get a version of `self` with scaled bid-ask spread.
@@ -407,24 +428,13 @@ class FXTradingEnvironment:
         res : FXTradingEnvironment
 
         """
-        def spread_scaler(df_ba, df_mid):
-            # calculate spread
-            ba_spread = pd.concat(
-                {p: df_ba[p] - df_mid for p in ["bid", "ask"]},
-                axis=1
-            )
-
-            # scale spread
-            ba_spread_scaled = ba_spread * scale
-
-            # reinstall
-            df_new = df_mid + ba_spread_scaled
-
-            return df_new
-
         res = FXTradingEnvironment(
-            spot_prices=spread_scaler(self.spot_prices, self.mid_spot_prices),
-            swap_points=spread_scaler(self.swap_points, self.mid_swap_points)
+            spot_prices=self.spread_scaler(self.spot_prices,
+                                           self.mid_spot_prices,
+                                           scale=scale),
+            swap_points=self.spread_scaler(self.swap_points,
+                                           self.mid_swap_points,
+                                           scale=scale)
         )
 
         return res
@@ -438,7 +448,7 @@ class FXTradingEnvironment:
 
         self.swap_points = res
 
-    def remove_bid_ask_violation(self):
+    def remove_bid_ask_violation(self, correct=False):
         """
         """
         violations = pd.concat(
@@ -446,8 +456,29 @@ class FXTradingEnvironment:
              for c in ["bid", "ask"]},
             axis=1, names=self.spot_prices.columns.names
         )
-        self.spot_prices = self.spot_prices.where(~violations)
-        self.swap_points = self.swap_points.where(~violations)
+
+        if correct:
+            spot_ba = pd.concat(
+                {p: self.spot_prices[p] - self.mid_spot_prices
+                 for p in ["bid", "ask"]},
+                axis=1
+            )
+            swap_ba = pd.concat(
+                {p: self.swap_points[p] - self.mid_swap_points
+                 for p in ["bid", "ask"]},
+                axis=1
+            )
+            self.spot_prices = self.spot_prices.where(~violations).fillna(
+                self.mid_spot_prices + spot_ba.rolling(252, min_periods=1)\
+                    .mean().shift(1)
+            )
+            self.swap_points = self.swap_points.where(~violations).fillna(
+                self.mid_swap_points + swap_ba.rolling(252, min_periods=1)\
+                    .mean().shift(1)
+            )
+        else:
+            self.spot_prices = self.spot_prices.where(~violations)
+            self.swap_points = self.swap_points.where(~violations)
 
     def align_spot_and_swap(self):
         """
@@ -500,6 +531,54 @@ class FXTradingEnvironment:
         self.swap_points = self.swap_points.drop(*args, axis=1,
                                                  level="currency",
                                                  **kwargs)
+
+    def to_another_counter_currency(self, new_counter_currency):
+        """
+
+        Parameters
+        ----------
+        new_counter_currency
+
+        Returns
+        -------
+
+        """
+        if new_counter_currency.lower() == self.counter_currency:
+            return self
+
+        s = np.log(self.spot_prices)
+        f = np.log(self.spot_prices + self.swap_points)
+
+        s_new = pd.concat({
+            bid_or_ask: into_currency(grp[bid_or_ask],
+                                      new_cur=new_counter_currency,
+                                      counter_cur=self.counter_currency)
+            for bid_or_ask, grp in s.groupby(axis=1, level=0)
+        }, axis=1, names=s.columns.names)
+        ask = s_new.loc[:, ("ask", self.counter_currency)].copy()
+        bid = s_new.loc[:, ("bid", self.counter_currency)].copy()
+        s_new.loc[:, ("ask", self.counter_currency)] = bid
+        s_new.loc[:, ("bid", self.counter_currency)] = ask
+
+        f_new = pd.concat({
+            bid_or_ask: into_currency(grp[bid_or_ask],
+                                      new_cur=new_counter_currency,
+                                      counter_cur=self.counter_currency)
+            for bid_or_ask, grp in f.groupby(axis=1, level=0)
+        }, axis=1, names=f.columns.names)
+        ask = f_new.loc[:, ("ask", self.counter_currency)]\
+            .rename(columns={"ask": "bid"})
+        bid = f_new.loc[:, ("bid", self.counter_currency)] \
+            .rename(columns={"bid": "ask"})
+        f_new.loc[:, ("ask", self.counter_currency)] = bid
+        f_new.loc[:, ("bid", self.counter_currency)] = ask
+
+        res = FXTradingEnvironment(
+            spot_prices=np.exp(s_new),
+            swap_points=np.exp(f_new) - np.exp(s_new),
+            counter_currency=new_counter_currency).with_scaled_costs(0.5)
+
+        return res
 
 
 class FXTrading:
