@@ -52,10 +52,10 @@ def rank_sort(returns, signals, n_portfolios=None, legsize=None,
             raise ValueError("Only one of legsize and n_portfolios can live!")
 
         # number of portfolios will be e.g. np.ceil(9/4) = 3
-        n_portfolios = int(np.ceil(signals.shape[1] / legsize))
+        n_portfolios = int(np.ceil(n / legsize))
 
         # to achieve this, we need this many fakes to be added:
-        for f in range(max(n % legsize - 1, 0)):
+        for f in range(max(n_portfolios * legsize - n, 0)):
             returns, signals = add_fake_signal(returns, signals)
 
         return rank_sort(returns, signals, n_portfolios)
