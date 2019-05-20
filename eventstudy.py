@@ -810,7 +810,7 @@ class EventStudy:
             res = (x.mean(axis=1, level="assets") * wght).sum(axis=1)
             return res
 
-        if method == "simple":
+        if method == "equal":
             return simple_avg
         elif method == "count_weighted":
             return count_weighted_avg

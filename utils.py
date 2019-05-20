@@ -522,45 +522,46 @@ def apply_between_events(data, events, func, lag=None, **kwargs):
     res
 
     """
-    # works on pandas.Series
-    if isinstance(data, pd.Series):
-        # lag: defaults
-        if lag is None:
-            lag = Day(1)
+    if isinstance(data, pd.DataFrame):
+        if not isinstance(lag, (dict, pd.Series)):
+            lag = {colname: lag for colname in data.columns}
 
-        if isinstance(lag, (int, np.integer)):
-            add_lag = Day(1)*lag
-        elif isinstance(lag, DateOffset):
-            add_lag = lag*1
-
-        # watch out for nan in `events`
-        data_a, _ = data.align(events.dropna(), axis=0, join="outer")
-
-        # space for data
-        res = data_a * np.nan
-
-        # fill forward-like
-        for t in events.dropna().index[::-1]:
-            res.loc[(t + add_lag):] = res.loc[(t + add_lag):].fillna(
-                func(data_a.loc[(t + add_lag):])
-            )
-
-        # add the very start
-        res = res.fillna(func(data_a))
-
-    # else recursion
-    elif isinstance(data, pd.DataFrame):
-        assert data.columns.equals(events.columns)
-        assert isinstance(lag, (dict, pd.Series))
+        # apply to each columns
         res = {
-            c: apply_between_events(data.loc[:, c], events.loc[:, c],
-                                 func, lag[c])
-            for c in data.columns
+            colname: apply_between_events(col, events[colname], func,
+                                          lag[colname])
+            for colname, col in data.iteritems()
         }
+
+        # concat
         res = pd.concat(res, axis=1)
 
-    else:
-        res = None
+        res.columns.name = data.columns.name
+
+        return res
+
+    # works on pandas.Series
+    if lag is None:
+        lag = Day(1)
+    elif isinstance(lag, (int, np.integer)):
+        lag = Day(1) * lag
+    elif isinstance(lag, DateOffset):
+        lag = lag * 1
+
+    # watch out for nan in `events`
+    data_a, _ = data.align(events.dropna(), axis=0, join="outer")
+
+    # space for data
+    res = data_a * np.nan
+
+    # fill forward-like
+    for t in events.dropna().index[::-1]:
+        res.loc[(t + lag):] = res.loc[(t + lag):].fillna(
+            func(data_a.loc[(t + lag):])
+        )
+
+    # add the very start
+    res = res.fillna(func(data_a))
 
     return res
 

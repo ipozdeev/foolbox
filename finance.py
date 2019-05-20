@@ -694,7 +694,12 @@ class PolicyExpectation:
         e_proxy_rate = map_expected_rate(e_proxy_rate)
 
         # difference, reindex with meeting dates
-        dr = (e_proxy_rate - proxy_rate).shift(lag).loc[self.meetings.index]
+        dr = pd.read_pickle(
+            "/home/ipozdeev/Documents/research/data/pickles/" +
+            "ir_minus_proxy_on_rate.p").loc[:, e_proxy_rate.name] \
+            .rolling(2, min_periods=1).mean()\
+            .shift(lag).loc[self.meetings.index]/100
+        # dr = (e_proxy_rate - proxy_rate).shift(lag).loc[self.meetings.index]
 
         # call to direction classifier
         res = self.classify_direction(dr, h_low=h_low, h_high=h_high)

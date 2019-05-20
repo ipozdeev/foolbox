@@ -3,7 +3,7 @@ import numpy as np
 from scipy import linalg
 from collections import OrderedDict
 
-from econometrics import _estimators
+from foolbox.econometrics import _estimators
 
 
 class Equations:
