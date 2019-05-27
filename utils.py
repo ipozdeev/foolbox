@@ -504,14 +504,15 @@ def resample_between_events(data, events, fun, mask=None):
     return res
 
 
-def apply_between_events(data, events, func, lag=None, **kwargs):
+def apply_between_events(data, events, func1d, lag=None, **kwargs):
     """
 
     Parameters
     ----------
     data
-    events
-    func : callable
+    events : pandas.DataFrame or pandas.Series
+        can be with or without empty rows
+    func1d : callable
     lag : int/DateOffset or dict/pandas.Series thereof
         if dict, {key: value} for key in data.columns
     kwargs : dict
@@ -528,7 +529,7 @@ def apply_between_events(data, events, func, lag=None, **kwargs):
 
         # apply to each columns
         res = {
-            colname: apply_between_events(col, events[colname], func,
+            colname: apply_between_events(col, events[colname], func1d,
                                           lag[colname])
             for colname, col in data.iteritems()
         }
@@ -557,11 +558,11 @@ def apply_between_events(data, events, func, lag=None, **kwargs):
     # fill forward-like
     for t in events.dropna().index[::-1]:
         res.loc[(t + lag):] = res.loc[(t + lag):].fillna(
-            func(data_a.loc[(t + lag):])
+            func1d(data_a.loc[(t + lag):])
         )
 
     # add the very start
-    res = res.fillna(func(data_a))
+    res = res.fillna(func1d(data_a))
 
     return res
 
