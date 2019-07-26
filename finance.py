@@ -1059,7 +1059,7 @@ class PolicyExpectation:
         #     bbox_to_anchor=((1+0.01)/1.1, (0.05+0.01)/1.1))
         # this_ax.legend_.remove()
 
-        fig.suptitle("roc curves", fontsize=12)
+        fig.suptitle("roc mba", fontsize=12)
 
         if out_path is not None:
             fig.savefig(out_path+"roc_lag_"+str(lag)+\

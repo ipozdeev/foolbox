@@ -117,7 +117,7 @@ class FixedIncome:
 
     @property
     def lengths_of_overnight(self):
-        """number of days to multiply rate with: uses function from utils.py"""
+        """number of days to multiply rate with: uses function from data_utils.py"""
         return self.get_lengths_of_overnight(self.lifetime_period)
 
     @property

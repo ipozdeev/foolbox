@@ -107,6 +107,12 @@ def rank_sort(returns, signals, n_portfolios=None, legsize=None,
         portfolios["p" + str(p+1)] = this_portf.mean(axis=1)
         portfolios["p" + str(p+1)].name = "p" + str(p+1)
 
+    portfolios["portfolio_high"] = portfolios["portfolio" + str(n_portfolios)]
+    portfolios["portfolio_low"] = portfolios["portfolio1"]
+
+    portfolios["p_high"] = portfolios["p" + str(n_portfolios)]
+    portfolios["p_low"] = portfolios["p1"]
+
     return portfolios
 
 
@@ -137,7 +143,7 @@ def get_factor_portfolios(portfolios, hml=False, hml_ascending=True):
     """
 
     # Infer the number of portfolios:
-    n_portfolios = int(len(portfolios) / 2)  # two dataframes for a portfolio
+    n_portfolios = int((len(portfolios)) / 2) - 2
 
     temp_list = []                 # create a list to collect dataframes
     for p in range(n_portfolios):  # iterate through number of portfolis
