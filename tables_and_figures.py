@@ -2,9 +2,7 @@ import pandas as pd
 import numpy as np
 import statsmodels.api as sm
 from scipy import stats
-from foolbox.econometrics.linear_models import OLS
 from foolbox.econometrics._estimators import nw_cov
-import matplotlib
 import matplotlib.pyplot as plt
 plt.rc("font", family="serif", size=12)
 
@@ -112,79 +110,6 @@ def fama_macbeth_second(Y, betas):
         alphas.loc[idx,:] = row-(x2.dot(B)).squeeze()
 
     return lambdas, alphas
-
-
-def descriptives(data, scale=12, use_statsmodels=False, cov_lags=1):
-    """Estimates frequency-adjusted descriptive statistics for each series in
-    the input DataFrame, by default assumes monthly inputs and annualized
-    output.
-
-    The statistics include: mean, standard error of mean, median, standard
-    deviation, skewness, kurtosis, Sharpe ratio, first order autocorrelation
-    coefficient and it's standard error
-
-    Parameters
-    ----------
-    data: pandas.DataFrame
-        of series to describe
-    scale: float
-        controls frequency conversion, e.g. to annualize monthly data, set
-        scale=12 (default)
-    use_statsmodels : bool
-        True to use statsmodels (faster)
-    cov_lags : int
-        max lags for robust covariance estimation
-
-    Returns
-    -------
-    out: pandas.DataFrame
-        with frequency-adjusted descriptive statistics for each column in data.
-
-    """
-    # Ibo nehuy
-    if isinstance(data, pd.Series):
-        data = data.to_frame("xyz")
-
-    # Names for rows in the output DataFrame
-    rows = ["mean", "se_mean", "tstat", "median", "std", "q95",
-            "q05", "skewness", "kurtosis", "sharpe", "ac1", "count"]
-
-    # Generate the output DataFrame
-    out = pd.DataFrame(index=rows, columns=data.columns, dtype=float)
-
-    # compute what can be computed in vectorized form
-    out.loc["mean", :] = data.mean() * scale
-    out.loc["median", :] = data.median() * scale
-    out.loc["std", :] = data.std() * np.sqrt(scale)
-    out.loc["q95", :] = data.quantile(0.95) * scale
-    out.loc["q05", :] = data.quantile(0.05) * scale
-    out.loc["skewness", :] = data.skew()
-    out.loc["kurtosis", :] = data.kurtosis()
-    out.loc["sharpe", :] = out.loc["mean"].div(out.loc["std"])
-    out.loc["count", :] = data.count()
-
-    # Iterate over input's columns, computing statistics
-    for c, c_col in data.iteritems():
-        endog = c_col.dropna().values
-        exog = np.ones(shape=(len(endog),))
-        if use_statsmodels:
-            mod = sm.OLS(endog, exog)
-            mod_fit = mod.fit(cov_type='HAC', cov_kwds={"maxlags": cov_lags})
-            se_mean = mod_fit.bse
-        else:
-            mod = ec.linear_models.OLS(y=endog, x=exog, add_constant=False)
-            se_mean = mod.get_diagnostics(hac=True).loc["se", "const"]
-
-        out.loc["se_mean", c] = se_mean[0] * scale
-        out.loc["tstat", c] = out.loc["mean", c] / out.loc["se_mean", c]
-
-        # autocorrelation with HAC-adjusted standard error, suppress inntercept
-
-        ac = c_col.corr(c_col.shift(1))
-        out.loc["ac1", c] = ac
-        # out.loc["se_ac1", c] = se_ac[0]
-
-    return out
 
 
 def ts_ap_tests(y, X, scale=12, cov_lags=1):
