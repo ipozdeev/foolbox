@@ -6,6 +6,7 @@ import warnings
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 import matplotlib.lines as mlines
+from scipy.stats import mode
 
 from foolbox.econometrics.linear_models import OLS
 from foolbox.visuals import *
@@ -21,52 +22,70 @@ class EventStudy:
     periods before each event, ends 1 day before, starts again 1 day
     after and stops 5 days after.
 
+    Parameters
+    ----------
+    data : pandas.DataFrame or pandas.Series
+        of returns (need to be summable)
+    events : list or pandas.DataFrame or pandas.Series
+        of events (if a pandas object, must be indexed with dates)
+    event_window : tuple
+        of int (a,d) where each element is a relative (in
+        periods) date to explore patterns in `data` `a` periods before and
+        `d`.periods after each event
+    blackout_window : list-like
+    cross_asset_weights : str
+        method for calculating the average across assets; "equal" or
+        "by_event" are supported
+
     """
 
-    def __init__(self, data, events, window, cross_asset_weights="equal"):
+    def __init__(self, data, events, event_window, blackout_window=None,
+                 cross_asset_weights="equal", period_len=None):
         """
-        Parameters
-        ----------
-        data : pandas.DataFrame or pandas.Series
-            of returns (need to be summable)
-        events : list or pandas.DataFrame or pandas.Series
-            of events (if a pandas object, must be indexed with dates)
-        window : tuple
-            of int (a,b,c,d) or (a,d) where each element is a relative (in
-            periods) date to explore patterns in `data` either (for the case
-            of a 4-tuple) from a to b and c to d or (for the case of a
-            2-tuple) from a to d.
-        cross_asset_weights : str
-            method for calculating the average across assets; "equal" or
-            "by_event" are supported
         """
         # window is either a 4-tuple covering zero or a 2-tuple
-        assert ((len(window) == 4) & (window[0] < 0 < window[-1])) | \
-               (len(window) == 2)
+        assert ((len(event_window) == 4) & (event_window[0] < 0 < event_window[-1])) | \
+               (len(event_window) == 2)
 
         # property-based stuff
         self._timeline = None
+        self.blackout_window = blackout_window
 
         # always a 4-tuple will be returned here, even if a 2-tuple is supplied
-        self._window = window
+        self._window = event_window
         self._the_mean = None
 
         # indexes better be all of the same type (PeriodIndexes are fine and
         #   need not be converted)
-        data_idx = isinstance(data.index, (pd.DatetimeIndex, pd.PeriodIndex))
-        evt_idx = isinstance(data.index, (pd.DatetimeIndex, pd.PeriodIndex))
+        assert isinstance(data.index, (pd.DatetimeIndex, pd.PeriodIndex))
+        assert isinstance(data.index, (pd.DatetimeIndex, pd.PeriodIndex))
 
-        if data_idx | evt_idx:
-            data.index = data.index.map(pd.to_datetime)
-            events.index = events.index.map(pd.to_datetime)
+        # if data_idx | evt_idx:
+        #     data.index = data.index.map(pd.to_datetime)
+        #     events.index = events.index.map(pd.to_datetime)
 
         # data types better be float
         data = data.astype(float)
+        events = events.astype(float)
 
         # rename, align
         data, events = EventStudyFactory.align_for_event_study(data, events)
 
+        if period_len is None:
+            period_len = mode(data.index[1:] - data.index[:-1])[0][0]
+
+        self.period_len = period_len
+
+        if data.columns.name is None:
+            data.columns.name = "asset"
+        if data.index.name is None:
+            data.index.name = "date"
         self.data = data
+
+        if events.columns.name is None:
+            events.columns.name = "asset"
+        if events.index.name is None:
+            events.index.name = "date"
         self.events = events
 
         # parameters
@@ -109,10 +128,121 @@ class EventStudy:
 
         return self._the_mean
 
+    def mark_timeline(self, time_zero=True):
+        """
+
+        Returns
+        -------
+
+        """
+        dates_df = pd.DataFrame.from_dict(
+            {c: self.data.index for c in self.data.columns},
+            orient="columns"
+        )
+        dates_df.index = self.data.index
+
+        evt_dates = dates_df.where(self.events.notnull())
+
+        if time_zero:
+            count_before = 0
+        else:
+            count_before = 1
+
+        count_after = 0
+
+        # grow dates like yeast around event dates
+        for _p in range(max(np.abs(self.window))):
+            if count_before < self.window[0] * -1:
+                evt_dates = evt_dates.bfill(limit=1)
+                count_before += 1
+            if count_after <= self.window[-1]:
+                evt_dates = evt_dates.ffill(limit=1)
+                count_after += 1
+
+        res = evt_dates.astype(bool).where(evt_dates.notnull())
+
+        return res
+
+    def pivot(self, time_zero=True):
+        """
+
+        Parameters
+        ----------
+        time_zero : bool
+            True to show data at event dates as period '0', otherwise as
+            period '-1'
+
+        Returns
+        -------
+        pandas.DataFrame
+
+        """
+        dates_df = pd.DataFrame.from_dict(
+            {c: self.data.index for c in self.data.columns},
+            orient="columns"
+        )
+        dates_df.index = self.data.index
+
+        evt_dates = dates_df.where(self.events.notnull())
+
+        if time_zero:
+            count_before = 0
+        else:
+            count_before = 1
+
+        count_after = 0
+
+        # grow dates like yeast around event dates
+        for _p in range(max(np.abs(self.window))):
+            if count_before < self.window[0] * -1:
+                evt_dates = evt_dates.bfill(limit=1)
+                count_before += 1
+            if count_after <= self.window[-1]:
+                evt_dates = evt_dates.ffill(limit=1)
+                count_after += 1
+
+        # time, in periods since the closest event
+        d_periods = (dates_df - evt_dates).applymap(pd.Timedelta) / \
+            pd.Timedelta(self.period_len)
+
+        # # if events occur at precise Timestamps, the event date indexes
+        # #   return in the period prior to the event
+        if not time_zero:
+            d_periods = d_periods.mask(d_periods <= 0, d_periods-1)
+
+        # concat
+        dt_period_pairs = pd.concat(
+            (evt_dates, d_periods),
+            axis=1,
+            keys=["evt_dt", "d_periods"]
+        ).stack(level=1)
+
+        res = pd.concat(
+            (dt_period_pairs,
+             self.data.stack().rename("val") \
+             .reindex(index=dt_period_pairs.index)),
+            axis=1
+        )
+
+        # put d_periods on the x-axis, assets/dates on the y-axis
+        res = res \
+            .set_index(["evt_dt", "d_periods"], append=True) \
+            .droplevel("date", axis=0) \
+            .squeeze() \
+            .unstack(level=[0, 1])
+
+        # delete periods outside the event window
+        res = res.loc[self.window[0]:self.window[-1]]
+
+        # sort
+        res = res.sort_index(axis=0).sort_index(axis=1)
+
+        return res
+
     def cs_mean(self, df):
         """Calculate cross-sectional mean.
 
-        Weighting is different based on `self.cross_asset_weights`.
+        Weighting is different based on `self.cross_asset_weights
 
         Parameters
         ----------
@@ -512,7 +642,7 @@ class EventStudy:
             this_evt_study = EventStudy(
                 data=shuff_data,
                 events=self.events,
-                window=self._window,
+                event_window=self._window,
                 cross_asset_weights=self.cross_asset_weights)
 
             # calculate the mean based on the reshuffled dataframe
@@ -729,7 +859,7 @@ class EventStudy:
             mlines.Line2D([], [], linewidth=1.5, color=color_blue,
                           label="individual CAR"),
             mlines.Line2D([], [], linewidth=2, color=color_red,
-                          label="cross-currency CAR"),
+                          label="cross-name CAR"),
             mlines.Line2D([], [], linestyle="none", color="k", marker='o',
                           markersize=4, markerfacecolor="k",
                           markeredgecolor="k",
@@ -871,6 +1001,7 @@ class EventStudyFactory:
                                   values=data.name)
 
         return data_pivoted
+
 
     @staticmethod
     def mark_timeline(data, events, window):
