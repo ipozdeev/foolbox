@@ -218,7 +218,7 @@ class CanadaTradingCalendar(AbstractHolidayCalendar):
         ]
 
 def get_bank_calendar(iso):
-    """Retrieve calendar for currency `iso`.
+    """Retrieve calendar for name `iso`.
 
     Parameters
     ----------
