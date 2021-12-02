@@ -2,8 +2,8 @@ import pandas as pd
 import numpy as np
 import warnings
 
-from foolbox.backtesting.sorting import rank_sort
-from foolbox.backtesting.weights import position_flags_to_weights
+from .sorting import rank_sort
+from .weights import position_flags_to_weights, rescale_weights
 
 
 class Backtesting:
@@ -32,7 +32,7 @@ class Backtesting:
         ----------
         strategy : TradingStrategy
         breakdown : bool
-            True to break down into high, low and hml
+            True to break down into high, low and hml portfolios
 
         Returns
         -------
@@ -231,6 +231,32 @@ class TradingStrategy:
 
         # meta info for the no of portfolios
         res.n_portfolios = n_portfolios
+
+        return res
+
+    @classmethod
+    def long_short_rank(cls, sort_values, leverage="net"):
+        """Construct strategy by sorting assets into `n_portfolios`.
+
+        Parameters
+        ----------
+        sort_values : pandas.DataFrame
+            of values to sort, ALREADY SHIFTED AS DESIRED
+        leverage : str
+            'net', 'unlimited' or 'zero'
+
+        Returns
+        -------
+        res : FXTradingStrategy
+
+        """
+        # sort
+        rnk = sort_values.rank(axis=1, pct=True)
+        pf = rnk.sub(rnk.mean(axis=1), axis=0)
+
+        wght = rescale_weights(pf, leverage=leverage)
+
+        res = cls(position_weights=wght, leverage=leverage)
 
         return res
 

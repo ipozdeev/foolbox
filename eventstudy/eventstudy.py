@@ -28,149 +28,94 @@ class EventStudy:
         of returns (need to be summable)
     events : list or pandas.DataFrame or pandas.Series
         of events (if a pandas object, must be indexed with dates)
-    event_window : tuple
-        of int (a,d) where each element is a relative (in
-        periods) date to explore patterns in `data` `a` periods before and
-        `d`.periods after each event
-    blackout_window : list-like
-    cross_asset_weights : str
-        method for calculating the average across assets; "equal" or
-        "by_event" are supported
 
     """
 
-    def __init__(self, data, events, event_window, blackout_window=None,
-                 cross_asset_weights="equal", period_len=None):
+    def __init__(self, data, events):
         """
         """
-        # window is either a 4-tuple covering zero or a 2-tuple
-        assert ((len(event_window) == 4) & (event_window[0] < 0 < event_window[-1])) | \
-               (len(event_window) == 2)
+        # case when some event dates are not in `data`: this will lead to
+        #   conflichts on reshaping
+        if len(data.index.union(events.dropna(how="all").index)) > len(data):
+            raise ValueError("Some event dates are not present in `data`. "
+                             "Align `data` and `events` first.")
 
-        # property-based stuff
-        self._timeline = None
-        self.blackout_window = blackout_window
+        if isinstance(data, pd.Series):
+            # to a DataFrame
+            data = data.to_frame()
 
-        # always a 4-tuple will be returned here, even if a 2-tuple is supplied
-        self._window = event_window
-        self._the_mean = None
+            if isinstance(events, pd.Series):
+                # events must be an equally-named frame
+                events = events.to_frame(data.columns[0])
 
-        # indexes better be all of the same type (PeriodIndexes are fine and
-        #   need not be converted)
-        assert isinstance(data.index, (pd.DatetimeIndex, pd.PeriodIndex))
-        assert isinstance(data.index, (pd.DatetimeIndex, pd.PeriodIndex))
+        else:
+            if isinstance(events, pd.Series):
+                # the same events for all data columns
+                events = pd.concat([events, ] * data.shape[1], axis=1,
+                                   keys=data.columns)
+            else:
+                if data.shape[1] > events.shape[1]:
+                    warnings.warn("`data` and `events` have several "
+                                  "different columns which will be removed.")
 
-        # if data_idx | evt_idx:
-        #     data.index = data.index.map(pd.to_datetime)
-        #     events.index = events.index.map(pd.to_datetime)
+        events, data = events.align(data, axis=1, join="inner")
 
         # data types better be float
-        data = data.astype(float)
-        events = events.astype(float)
-
-        # rename, align
-        data, events = EventStudyFactory.align_for_event_study(data, events)
-
-        if period_len is None:
-            period_len = mode(data.index[1:] - data.index[:-1])[0][0]
-
-        self.period_len = period_len
-
-        if data.columns.name is None:
-            data.columns.name = "asset"
-        if data.index.name is None:
-            data.index.name = "date"
-        self.data = data
-
-        if events.columns.name is None:
-            events.columns.name = "asset"
-        if events.index.name is None:
-            events.index.name = "date"
-        self.events = events
+        self.data = data.astype(float)
+        self.events = events.astype(float)
 
         # parameters
         self.assets = self.data.columns
-        self.cross_asset_weights = cross_asset_weights
 
-        # construct index of holding days, e.g. [-3, -2, -1, 1, 2] for
-        #   window = (-3, 2)
-        ta, tb, tc, td = self.window
-        self.event_index = np.unique(
-            np.concatenate((np.arange(ta, tb + 1), np.arange(tc, td + 1)))
-        )
+        # cache
+        self.event_window_cache = dict()
 
-    @property
-    def window(self):
-        """Return a 4-tuple, broadcast if necessary."""
-        if len(self._window) == 4:
-            return self._window
-        else:
-            return self._window * 2
+    def mark_event_windows(self, window):
+        """Draw windows around each event.
 
-    @property
-    def mask_between_events(self):
-        res = self.timeline.xs("inter_evt", axis=1, level=1, drop_level=True)
-
-        return res
-
-    @property
-    def timeline(self):
-        if self._timeline is None:
-            self._timeline = EventStudyFactory.mark_timeline(
-                self.data, self.events, self.window)
-
-        return self._timeline
-
-    @property
-    def the_mean(self):
-        if self._the_mean is None:
-            self._the_mean = self.cs_mean(self.get_car())
-
-        return self._the_mean
-
-    def mark_timeline(self, time_zero=True):
-        """
+        For each event in `events`, surrounds the corresponding date with
+        indexes from the start to the end of `window`.
 
         Returns
         -------
 
         """
-        dates_df = pd.DataFrame.from_dict(
-            {c: self.data.index for c in self.data.columns},
-            orient="columns"
-        )
-        dates_df.index = self.data.index
+        if tuple(window) in self.event_window_cache:
+            return self.event_window_cache[tuple(window)]
 
-        evt_dates = dates_df.where(self.events.notnull())
+        events_reidx = self.events.reindex_like(self.data)
+        events_reidx = events_reidx.notnull().replace(False, np.nan)
 
-        if time_zero:
-            count_before = 0
-        else:
-            count_before = 1
+        # remove asset-date pairs which can be classified as both pre- and
+        # post-events
+        mask_confusing = \
+            events_reidx.bfill(limit=-window[0]).fillna(False).astype(bool) & \
+            events_reidx.ffill(limit=window[1]).fillna(False).astype(bool) & \
+            events_reidx.isnull()
 
-        count_after = 0
+        res = events_reidx\
+            .bfill(limit=-window[0])\
+            .ffill(limit=window[1])\
+            .mask(mask_confusing, False)\
+            .fillna(0).astype(bool)
 
-        # grow dates like yeast around event dates
-        for _p in range(max(np.abs(self.window))):
-            if count_before < self.window[0] * -1:
-                evt_dates = evt_dates.bfill(limit=1)
-                count_before += 1
-            if count_after <= self.window[-1]:
-                evt_dates = evt_dates.ffill(limit=1)
-                count_after += 1
-
-        res = evt_dates.astype(bool).where(evt_dates.notnull())
+        self.event_window_cache[tuple(window)] = res
 
         return res
 
-    def pivot(self, time_zero=True):
-        """
+    def pivot(self, window, event_date_index=0):
+        """Reshape the variables to have around-event indexes for index.
 
         Parameters
         ----------
-        time_zero : bool
-            True to show data at event dates as period '0', otherwise as
-            period '-1'
+        window : tuple
+            of int (a,d) where each element is a relative (in
+            periods) date to explore patterns in `data` `a` periods before and
+            `d` periods after each event
+        event_date_index : int
+            how the return at the precise event time is treated: 0 to exclude
+            it from calculation of the dynamics, -1 to count it as happening
+            before the event, 1 to count it as post-event
 
         Returns
         -------
@@ -184,35 +129,30 @@ class EventStudy:
         dates_df.index = self.data.index
 
         evt_dates = dates_df.where(self.events.notnull())
+        periods = self.events.mask(self.events.notnull(), event_date_index) \
+            .reindex_like(dates_df)
 
-        if time_zero:
-            count_before = 0
-        else:
-            count_before = 1
-
-        count_after = 0
+        count_bef = -1
+        count_aft = int(event_date_index == 1)
 
         # grow dates like yeast around event dates
-        for _p in range(max(np.abs(self.window))):
-            if count_before < self.window[0] * -1:
+        for _p in range(max(np.abs(window))):
+            if count_bef >= window[0]:
+                periods = periods.fillna((periods - 1).bfill(limit=1))
                 evt_dates = evt_dates.bfill(limit=1)
-                count_before += 1
-            if count_after <= self.window[-1]:
+                count_bef -= 1
+            if count_aft <= window[-1]:
+                periods = periods.fillna((periods + 1).ffill(limit=1))
                 evt_dates = evt_dates.ffill(limit=1)
-                count_after += 1
+                count_aft += 1
 
-        # time, in periods since the closest event
-        d_periods = (dates_df - evt_dates).applymap(pd.Timedelta) / \
-            pd.Timedelta(self.period_len)
-
-        # # if events occur at precise Timestamps, the event date indexes
-        # #   return in the period prior to the event
-        if not time_zero:
-            d_periods = d_periods.mask(d_periods <= 0, d_periods-1)
+        evt_w = self.mark_event_windows(window)
+        evt_dates = evt_dates.where(evt_w)
+        periods = periods.where(evt_w)
 
         # concat
         dt_period_pairs = pd.concat(
-            (evt_dates, d_periods),
+            (evt_dates, periods),
             axis=1,
             keys=["evt_dt", "d_periods"]
         ).stack(level=1)
@@ -232,197 +172,84 @@ class EventStudy:
             .unstack(level=[0, 1])
 
         # delete periods outside the event window
-        res = res.loc[self.window[0]:self.window[-1]]
+        res = res.loc[window[0]:window[-1]]
 
         # sort
         res = res.sort_index(axis=0).sort_index(axis=1)
 
         return res
 
-    def cs_mean(self, df):
-        """Calculate cross-sectional mean.
-
-        Weighting is different based on `self.cross_asset_weights
+    @staticmethod
+    def event_weighted_mean(df) -> pd.Series:
+        """Calculate the mean weighted by the number of events for each asset.
 
         Parameters
         ----------
         df : pandas.DataFrame
-            with (asset, event) for columns
-
-        Returns
-        -------
-        res : pandas.Series
-
         """
-        func = self.mean_fun(method=self.cross_asset_weights)
-
-        res = func(df)
+        res = df.mean(axis=1, level=0) \
+            .mul(df.count(axis=1, level=0)) \
+            .div(df.count(axis=1, level=0).sum(axis=1))
 
         return res
 
-    def reindex(self, freq, inplace=False, **kwargs):
-        """Reindex by frequency.
-
-        Worth doing if one suspects the data is not evenly indexed.
+    def run(self, window, event_date_index=0, mean_type="simple",
+            ci_type=None):
+        """
 
         Parameters
         ----------
-        freq : str
-            valid pandas frequency e.g. 'B'
-        inplace : bool
-            False to return a new EventStudy instance
-        kwargs : dict
-            arguments to pandas.DataFrame.reindex()
+        window : tuple
+            of int (a,d) where each element is a relative (in
+            periods) date to explore patterns in `data` `a` periods before and
+            `d` periods after each event
+        event_date_index : int
+            how the return at the precise event time is treated: 0 to exclude
+            it from calculation of the dynamics, -1 to count it as happening
+            before the event, 1 to count it as post-event
+        mean_type : str
+        ci_type : str
 
         Returns
         -------
 
         """
-        new_idx = pd.date_range(self.data.index[0], self.data.index[-1],
-                                freq=freq)
-        new_data = self.data.reindex(index=new_idx, **kwargs)
+        pvt = self.pivot(window, event_date_index)
 
-        if inplace:
-            self.data = new_data
+        # cumulative returns
+        car = pvt.cumsum()
+
+        # average cumulative returns
+        if mean_type == "simple":
+            acar = car.mean(axis=1)
         else:
-            return EventStudy(new_data, self.events, self._window,
-                              self.cross_asset_weights)
+            acar = car.mean(axis=1, level=0)\
+                .mul(car.count(axis=1, level=0))\
+                .div(car.count(axis=1, level=0).sum(axis=1))
 
-    @staticmethod
-    def exclude_overlaps(events, data, window):
-        """Exclude overlapping data.
+        # ci
+        evt_wds = self.mark_event_windows(self.data, self.events,
+                                          window, event_date_index)
+        mu = self.data.where(evt_wds.isnull()).ewm(alpha=0.9).mean().ffill()\
+            .stack().swaplevel().reindex(index=car.columns)
+        v = self.data.where(evt_wds.isnull()).ewm(alpha=0.9).var().ffill()\
+            .stack().swaplevel().reindex(index=car.columns)
 
-        This is probably not needed, as overlaps are taken care of in
-        mark_timeline.
+        if mean_type == "simple":
+            ci_mult = np.sqrt(v.mean())
+        else:
+            ci_mult = np.sqrt(
+                v.mean(level=0)\
+                    .mul(v.count(level=0) ** 2)\
+                    .div((v.count(level=0) ** 2).sum())\
+                    .sum()
+            )
 
-        Parameters
-        ----------
-        events : pandas.Series
-        data : pandas.DataFrame or pandas.Series
-            only need to take the index and reindex `events` accordingly
-        window : tuple
-
-        Returns
-        -------
-        new_evt : pandas.Series
-            of events without overlaps
-        evt_diff : pandas.Index
-            index of dropped events
-
-        """
-        ta, tb, tc, td = window
-
-        overlaps = pd.Series(0, index=data.index)
-
-        for t in events.index:
-            # t = events.index[0]
-            tmp_series = pd.Series(index=data.index)
-            tmp_series.loc[t] = 1
-
-            tmp_series = tmp_series.fillna(method="bfill", limit=-ta).fillna(0)
-
-            overlaps += tmp_series
-
-        # set values in rows corresponding to overlaps to nan
-        overlaps.ix[overlaps > 1] *= np.nan
-
-        # catch deleted events
-        evt_diff = events.index.difference(overlaps.dropna().index)
-
-        # remove events where overlaps occur
-        new_evt = events.where(overlaps < 2).dropna()
-
-        return new_evt, evt_diff
-
-    def get_ar(self):
-        """Calculate abnormal returns.
-
-        Returns
-        -------
-        res : pandas.DataFrame
-
-        """
-        res = self._get_ar(self.data, self.timeline)
-
-        return res
-
-    def get_car(self):
-        """Calculate cumulative abnormal returns.
-
-        Returns
-        -------
-        res : pandas.DataFrame
-
-        """
-        # get abnormal returns first
-        ar = self.get_ar()
-
-        # cumulate
-        res = self._get_car(ar, self.window)
-
-        return res
-
-    @staticmethod
-    def _get_ar(data, timeline):
-        """Pivot data based on timeline to arrive at abnormal returns.
-
-        Returns
-        -------
-        ar : pandas.DataFrame
-            of abnormal returns, indexed by window, column'ed by
-            a MultiIndex of [0] asset names, [1] event ids (dates)
-        """
-        ar = dict()
-
-        # loop over columns in `data`, pivot for each
-        for c_name, c_val in data.iteritems():
-            ar[c_name] = EventStudyFactory.pivot_with_timeline(
-                data=c_val, timeline=timeline[c_name])
-
-        # concat all assets to a df with MultiIndex
-        ar = pd.concat(ar, axis=1)
-
-        # name the MultiIndex
-        ar.columns.names = ["assets", "events"]
-
-        return ar
-
-    @staticmethod
-    def _get_car(ar, window):
-        """Calculate cumulative abnormal return from abnormal returns.
-
-        `window` can be of the form (-10, -1, 1, 5) - standard case - or of
-        the form (-10, -1, -10, -1) - transformed version of window (-10, -1)
-
-        Parameters
-        ----------
-        ar : pandas.DataFrame
-        window : tuple
-            of 4 elements
-
-        Returns
-        -------
-        car : pandas.DataFrame
-            of cumulative abnormal returns, indexed by window, column'ed by
-            a MultiIndex of [0] asset names, [1] event ids (dates)
-
-        """
-        ta, tb, tc, td = window
-
-        car_before = None
-        car_after = None
-
-        # 'upwards'
-        if ta < 0:
-            car_before = ar.loc[:tb, :].iloc[::-1, :].cumsum().iloc[::-1, :]
-        if td > 0:
-            # 'downwards'
-            car_after = ar.loc[tc:, :].cumsum()
-
-        # concat both
-        car = pd.concat((car_before, car_after), axis=0)
-
-        return car
+        ci = acar.loc[event_date_index] + \
+            np.array(acar.loc[event_date_index:].index).reshape(-1, 1) * mu + \
+            np.sqrt(
+                np.array(pvt_g20.loc[1:].index).reshape(-1, 1) * vr * 2.0) * \
+            np.array([[-1, 1]])
 
     def get_ci(self, ps, method="simple", **kwargs):
         """Calculate confidence bands for the average CAR.

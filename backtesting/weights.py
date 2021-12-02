@@ -1,4 +1,5 @@
 import numpy as np
+import pandas as pd
 
 
 def rescale_weights(weights, leverage="net"):
@@ -6,7 +7,7 @@ def rescale_weights(weights, leverage="net"):
 
     Parameters
     ----------
-    weights : pandas.DataFrame
+    weights : pandas.Series or pandas.DataFrame
         of position flags in form of +1, -1 and 0
     leverage : str
         'zero' to make position weights sum up to zero;
@@ -14,29 +15,28 @@ def rescale_weights(weights, leverage="net"):
             to one each (sum(abs(negative positions)) = 1);
         'unlimited' for unlimited leverage.
     """
+    if isinstance(weights, pd.DataFrame):
+        return weights.apply(rescale_weights, leverage=leverage)
+
     # weights are understood to be fractions of portfolio value
     if leverage.startswith("zero"):
         # NB: dangerous, because meaningless whenever there are long/sort
         #   positions only
         # make sure that pandas does not sum all nan's to zero
-        row_lev = np.abs(weights).apply(axis=1, func=np.nansum)
+        row_lev = np.abs(weights).sum()
 
         # divide by leverage
-        pos_weights = weights.divide(row_lev, axis=0)
+        pos_weights = weights.divide(row_lev)
 
     elif leverage.startswith("net"):
         # deleverage positive and negative positions separately
-        row_lev_pos = weights.where(weights > 0)\
-            .apply(axis=1, func=np.nansum)
-        row_lev_neg = -1 * weights.where(weights < 0)\
-            .apply(axis=1, func=np.nansum)
+        row_lev_pos = weights.where(weights > 0).sum()
+        row_lev_neg = -1 * weights.where(weights < 0).sum()
 
         # divide by leverage
         pos_weights = \
-            weights.where(weights < 0).divide(
-                row_lev_neg, axis=0).fillna(
-                    weights.where(weights > 0).divide(
-                        row_lev_pos, axis=0))
+            weights.where(weights < 0).divide(row_lev_neg)\
+                .fillna(weights.where(weights > 0).divide(row_lev_pos))
 
     elif leverage.startswith("unlim"):
         pos_weights = np.sign(weights)

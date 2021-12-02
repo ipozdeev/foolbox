@@ -331,19 +331,19 @@ class FXTradingEnvironment:
         Parameters
         ----------
         spot_prices : pandas.DataFrame
-            in units of a common counter currency, which is then becomes the
-            denomination currency
-            indexed by time, columned by a `MultiIndex` of (bid/ask, currency)
+            in units of a common counter name, which is then becomes the
+            denomination name
+            indexed by time, columned by a `MultiIndex` of (bid/ask, name)
         swap_points : pandas.DataFrame
             of swap points, such that swap_points + spot = forward;
-            indexed by time, columned by a `MultiIndex` of (bid/ask, currency)
+            indexed by time, columned by a `MultiIndex` of (bid/ask, name)
         counter_currency : str
         """
         self.spot_prices = spot_prices
         self.swap_points = swap_points
 
-        self.spot_prices.columns.names = ["bid_or_ask", "currency"]
-        self.swap_points.columns.names = ["bid_or_ask", "currency"]
+        self.spot_prices.columns.names = ["bid_or_ask", "name"]
+        self.swap_points.columns.names = ["bid_or_ask", "name"]
 
         self.counter_currency = counter_currency.lower()
 
@@ -357,7 +357,7 @@ class FXTradingEnvironment:
 
     @property
     def currencies(self):
-        return self.spot_prices.columns.get_level_values("currency").unique()
+        return self.spot_prices.columns.get_level_values("name").unique()
 
     @classmethod
     def from_scratch(cls, spot_prices, swap_points=None, **kwargs):
@@ -526,10 +526,10 @@ class FXTradingEnvironment:
         """
         """
         self.spot_prices = self.spot_prices.drop(*args, axis=1,
-                                                 level="currency",
+                                                 level="name",
                                                  **kwargs)
         self.swap_points = self.swap_points.drop(*args, axis=1,
-                                                 level="currency",
+                                                 level="name",
                                                  **kwargs)
 
     def to_another_counter_currency(self, new_counter_currency):
@@ -796,7 +796,7 @@ class FXPortfolio:
         # start with balance = 1.0
         self.balance = 1.0
         # currencies
-        self.currencies = [p.currency for p in positions]
+        self.currencies = [p.name for p in positions]
         # represent positions as a pandas.Series
         self.positions = pd.Series(
             data=positions,
@@ -810,10 +810,10 @@ class FXPortfolio:
         Parameters
         ----------
         bid_ask_prices : pd.DataFrame
-            of quotes, indexed by currency names, column'ed by ['bid', 'ask']
+            of quotes, indexed by name names, column'ed by ['bid', 'ask']
         """
         # 1) from each position, get unrealized p&l
-        # concat positions and prices (index by currency names)
+        # concat positions and prices (index by name names)
         both = pd.concat((self.positions, bid_ask_prices), axis=1)
 
         # function to apply over rows
@@ -835,7 +835,7 @@ class FXPortfolio:
         0. skip if changes in position weights are all zero
         i. close positions to be closed, drain realized p&l onto balance
         ii. determine liquidation value: this much can be reallocated
-        iii. determine how much is to be bought/sold, in units of base currency
+        iii. determine how much is to be bought/sold, in units of base name
         iv. transact in each position accordingly
 
         Parameters
@@ -843,7 +843,7 @@ class FXPortfolio:
         dpw : pandas.Series
             indexed by currencies
         bid_ask_prices : pandas.DataFrame
-            indexed by currency names, columned with ['bid', 'ask']
+            indexed by name names, columned with ['bid', 'ask']
 
         Returns
         -------
@@ -885,11 +885,11 @@ class FXPortfolio:
         Parameters
         ----------
         dp : pandas.Series
-            indexed with currency names, e.g. 'aud'
+            indexed with name names, e.g. 'aud'
         bid_ask_prices : pandas.DataFrame
-            indexed with currency names
+            indexed with name names
         """
-        # loop over names of dp, transact in respective currency
+        # loop over names of dp, transact in respective name
         for cur, p in dp.iteritems():
             new_r = self.positions[cur].transact(p, bid_ask_prices.loc[cur])
 
@@ -936,7 +936,7 @@ class FXPortfolio:
 
 
 class FXPosition:
-    """Position in foreign currency vs.
+    """Position in foreign name vs.
 
     Parameters
     ----------
@@ -951,19 +951,43 @@ class FXPosition:
         self.currency = currency
 
         # see property below
-        self.is_open = False
+        self.quantity = 0
+        self.avg_price = 0
+        self.expiry_dt = None
+        self.open_dt = None
 
     @property
     def is_open(self):
         return self.quantity != 0
 
-    @is_open.setter
-    def is_open(self, value):
-        if not value:
-            self.quantity = 0.0
-            self.avg_price = 0.0
-        else:
-            raise ValueError("Impossible operation; use .transact() instead.")
+    # @is_open.setter
+    # def is_open(self, value):
+    #     if not value:
+    #         self.quantity = 0.0
+    #         self.avg_price = 0.0
+    #     else:
+    #         raise ValueError("Impossible operation; use .transact() instead.")
+
+    def open(self, open_dt, quantity, open_price, expiry_dt):
+        """
+
+        Parameters
+        ----------
+        open_dt
+        quantity
+        open_price
+        expiry_dt
+
+        Returns
+        -------
+
+        """
+        assert quantity != 0.0
+
+        self.open_dt = open_dt
+        self.quantity = quantity
+        self.expiry_dt = expiry_dt
+        self.avg_price = open_price
 
     @property
     def position_sign(self):
@@ -987,7 +1011,7 @@ class FXPosition:
 
     @staticmethod
     def choose_bid_or_ask(qty, bid_ask_prices):
-        """Choose bid or ask depending on the sign of `qty`
+        """Choose bid or ask depending on the sign of `quantity`
 
         Parameters
         ----------
@@ -1008,7 +1032,7 @@ class FXPosition:
 
         return res
 
-    def transact(self, qty, bid_ask_prices):
+    def transact(self, quantity, bid_ask_prices, fee):
         """Transact.
 
         Discriminates between cases of (partial) closing and refilling, since
@@ -1016,52 +1040,61 @@ class FXPosition:
 
         Parameters
         ----------
-        bid_ask_prices : pandas.Series
-            indexed by ['bid', 'ask']
+        quantity : float
+        bid_ask_prices : float
+        feen : float
+
         """
-        if np.abs(qty) < self._tolerance:
+        if np.abs(quantity) < self._tolerance:
             return
 
-        # deterimine transaction price: buy at ask, sell at bid
-        transaction_price = self.choose_bid_or_ask(qty, bid_ask_prices)
-
-        if (self.position_sign == np.sign(qty)) | (not self.is_open):
+        if (self.position_sign == np.sign(quantity)) | (not self.is_open):
             # refill if position not open or if signs match
-            res = self.refill(qty, transaction_price)
+            res = self.refill(quantity, self.choose_bid_or_ask(), fee)
+
         else:
             # otherwise partially close, or close and reopen
-            if (np.abs(self.quantity) - np.abs(qty)) < self._tolerance:
-                rest_qty = qty + self.quantity
+            if (np.abs(self.quantity) - np.abs(quantity)) < self._tolerance:
+                rest_qty = quantity + self.quantity
                 res = self.close(bid_ask_prices)
                 self.transact(rest_qty, bid_ask_prices)
             else:
-                res = self.drain(qty, transaction_price)
+                res = self.drain(quantity, price)
 
         return res
 
-    def refill(self, qty, price):
+    def refill(self, quantity, price, fee=0.0) -> float:
         """
         cannot result in new quantity being 0
 
+        returns the negative of the fee paid
+
+        Parameters
+        ----------
+        quantity : float
+        price : float
+        fee : float
+
         Returns
         -------
-        None
+        float
         """
-        # if np.abs(qty) < self._tolerance:
+        # if np.abs(quantity) < self._tolerance:
         #     return
 
-        assert (self.position_sign == np.sign(qty)) | (not self.is_open)
+        assert (self.position_sign == np.sign(quantity)) | (not self.is_open)
 
         # total quantity
-        total_qty = self.quantity + qty
+        total_qty = self.quantity + quantity
 
-        self.avg_price = (self.avg_price*self.quantity + price*qty) / total_qty
+        self.avg_price = (self.avg_price * self.quantity + price * quantity) / \
+            total_qty
 
-        self.quantity += qty
+        self.quantity += quantity
 
-        return
+        return -fee
 
-    def drain(self, qty, price):
+    def drain(self, quantity, price, fee=0.0):
         """Partially close the position.
 
         Returns
@@ -1069,19 +1102,19 @@ class FXPosition:
         res : float
             p&l, if any
         """
-        # if np.abs(qty) < self._tolerance:
+        # if np.abs(quantity) < self._tolerance:
         #     return 0.0
-        assert (self.position_sign != np.sign(qty)) & self.is_open
+        assert (self.position_sign != np.sign(quantity)) & self.is_open
 
-        if np.abs(self.quantity) < np.abs(qty):
+        if np.abs(self.quantity) < np.abs(quantity):
             raise ValueError("Amount drained exceed position size; use " +
                              ".transact() instead")
 
         # calculate p&l
-        res = np.abs(qty) * (price - self.avg_price) * self.position_sign
+        res = np.abs(quantity) * (price - self.avg_price) * self.position_sign
 
         # change quantity
-        self.quantity += qty
+        self.quantity += quantity
 
         if np.abs(self.quantity) < self._tolerance:
             self.quantity = 0.0

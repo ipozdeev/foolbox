@@ -2,6 +2,32 @@ import pandas as pd
 import numpy as np
 
 
+def distance_sort(signals):
+    """Sort based on the distance to the mean signal.
+
+    Parameters
+    ----------
+    signals : pandas.DataFrame
+
+    Returns
+    -------
+    pandas.DataFrame
+
+    """
+    ws = signals.sub(signals.mean(axis=1), axis=0)
+
+    # rescale weights
+    ws_short = ws.where(ws < 0).div(
+        ws.where(ws < 0).sum(axis=1, min_count=1).abs(),
+        axis=0
+    )
+    ws_long = ws.where(ws >= 0).div(
+        ws.where(ws >= 0).sum(axis=1, min_count=1).abs(), axis=0)
+    ws = ws_short.fillna(ws_long)
+
+    return ws
+
+
 def rank_sort(signals, n_portfolios=None, legsize=None):
     """
 
@@ -45,15 +71,21 @@ def rank_sort(signals, n_portfolios=None, legsize=None):
         res = rank_sort(signals_, n_portfolios)
 
         # remove fakes
-        res = res.loc[:, (slice(None), signals.columns)] \
-            .where(signals.notnull(), axis=1, level=1)\
-            .fillna(0)
+        # res = res.loc[:, (slice(None), signals.columns)] \
+        #     .where(signals.notnull(), axis=1, level=1)\
+        #     .fillna(0)
+
+        res = pd.concat(
+            {k: v[k][signals.columns].where(signals.notnull())
+             for k, v in res.groupby(axis=1, level=0)},
+            axis=1
+        )
 
         return res
 
     # Get signal ranks row by row
     signal_ranks = signals.rank(axis=1, numeric_only=True, pct=True,
-                                method="average")
+                                method="first")
 
     # -----------------------------------------------------------------------
     # init space for bins
@@ -98,7 +130,7 @@ def rank_sort(signals, n_portfolios=None, legsize=None):
                  "p{:d}".format(n_portfolios): "p_high"}
     )
 
-    res = res.fillna(0)
+    res = res.fillna(0).where(signals.notnull())
 
     return res
 
@@ -133,6 +165,9 @@ def add_fake_signal(signals, n=1, fillna=False):
         res = res.fillna(
             pd.concat([med, ] * res.shape[1], axis=1, keys=res.columns)
         )
+
+    res = res.rename_axis(index=signals.index.name,
+                          columns=signals.columns.name)
 
     return res
 
