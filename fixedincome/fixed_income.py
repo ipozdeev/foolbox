@@ -348,7 +348,7 @@ class LIBOR(FixedIncome):
 
     @classmethod
     def from_iso(cls, iso, maturity):
-        """Return OIS class instance with specifications of name `iso`."""
+        """Return OIS class instance with specifications of currency `iso`."""
         # calendars
         calendars = {
             "usd": USTradingCalendar(),
@@ -837,7 +837,7 @@ class OIS(FixedIncome):
 
     @classmethod
     def from_iso(cls, iso, maturity):
-        """Return OIS class instance with specifications of name `iso`."""
+        """Return OIS class instance with specifications of currency `iso`."""
         # calendars
         calendars = {
             "usd": USTradingCalendar(),
@@ -848,7 +848,9 @@ class OIS(FixedIncome):
             "gbp": UKTradingCalendar(),
             "jpy": None,
             "nzd": NewZealandTradingCalendar(),
-            "sek": SwedenTradingCalendar()
+            "sek": SwedenTradingCalendar(),
+            "rub": RussiaTradingCalendar(),
+            "try": None
         }
 
         all_settings = {
@@ -903,6 +905,18 @@ class OIS(FixedIncome):
             "usd": {"value_dt_lag": 2,
                     "fixing_lag": 1,
                     "day_count_float": "act/360",
+                    "day_roll": "modified following",
+                    "new_rate_lag": 1},
+
+            "rub": {"value_dt_lag": 0,
+                    "fixing_lag": 1,
+                    "day_count_float": "act/365",
+                    "day_roll": "modified following",
+                    "new_rate_lag": 1},
+
+            "try": {"value_dt_lag": 1,
+                    "fixing_lag": 1,
+                    "day_count_float": "act/365",
                     "day_roll": "modified following",
                     "new_rate_lag": 1}
         }

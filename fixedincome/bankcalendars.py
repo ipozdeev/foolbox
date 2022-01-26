@@ -217,8 +217,30 @@ class CanadaTradingCalendar(AbstractHolidayCalendar):
             month=12, day=26, observance=next_monday_or_tuesday)
         ]
 
+
+class RussiaTradingCalendar(AbstractHolidayCalendar):
+    """
+    """
+    rules = [
+        Holiday("NewYearsDay1", month=1, day=1, observance=next_monday),
+        Holiday("NewYearsDay2", month=1, day=2, observance=next_monday),
+        Holiday("NewYearsDay3", month=1, day=3, observance=next_monday),
+        Holiday("NewYearsDay4", month=1, day=4, observance=next_monday),
+        Holiday("NewYearsDay5", month=1, day=5, observance=next_monday),
+        Holiday("NewYearsDay6", month=1, day=6, observance=next_monday),
+        Holiday("NewYearsDay7", month=1, day=8, observance=next_monday),
+        Holiday("Christmas", month=1, day=7, observance=next_monday),
+        Holiday("Defender", month=2, day=23, observance=next_monday),
+        Holiday("Women", month=3, day=8, observance=next_monday),
+        Holiday("May1", month=5, day=1, observance=next_monday),
+        Holiday("Victory", month=5, day=9, observance=next_monday),
+        Holiday("National", month=6, day=12, observance=next_monday),
+        Holiday("Unity", month=11, day=4, observance=next_monday)
+    ]
+
+
 def get_bank_calendar(iso):
-    """Retrieve calendar for name `iso`.
+    """Retrieve calendar for currency `iso`.
 
     Parameters
     ----------
@@ -232,7 +254,8 @@ def get_bank_calendar(iso):
         "nzd": NewZealandTradingCalendar,
         "aud": AustraliaTradingCalendar,
         "gbp": UKTradingCalendar,
-        "sek": SwedenTradingCalendar
+        "sek": SwedenTradingCalendar,
+        "rub": RussiaTradingCalendar
     }
 
     return calendar_dict[iso]
